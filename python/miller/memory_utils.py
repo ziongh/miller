@@ -61,6 +61,7 @@ def get_checkpoint_path(timestamp: int) -> Path:
     Get full path for checkpoint file based on timestamp.
 
     Creates path: .memories/YYYY-MM-DD/HHMMSS_XXXX.json
+    Uses UTC timezone for consistency with Julie.
 
     Args:
         timestamp: Unix timestamp (seconds since epoch)
@@ -75,7 +76,8 @@ def get_checkpoint_path(timestamp: int) -> Path:
         >>> assert ".memories" in str(path)
         >>> assert path.suffix == ".json"
     """
-    dt = datetime.fromtimestamp(timestamp)
+    from datetime import timezone
+    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     date_dir = dt.strftime("%Y-%m-%d")
     filename = generate_checkpoint_filename()
     return Path(".memories") / date_dir / filename
