@@ -3,6 +3,9 @@ Miller MCP Server - FastMCP implementation
 
 Provides MCP tools for code indexing and semantic search.
 Uses Miller's Rust core for parsing and Python ML stack for embeddings.
+
+CRITICAL: This is an MCP server - NEVER use print() statements!
+stdout/stderr are reserved for JSON-RPC protocol. Use logger instead.
 """
 
 from pathlib import Path
@@ -13,6 +16,13 @@ from fastmcp import FastMCP
 
 from miller.storage import StorageManager
 from miller.embeddings import EmbeddingManager, VectorStore
+from miller.workspace import WorkspaceScanner
+from miller.logging_config import setup_logging, get_logger
+import asyncio
+
+# Initialize logging FIRST (before any other operations)
+logger = setup_logging()
+logger.info("Starting Miller MCP Server initialization...")
 
 # Import Rust core
 try:
@@ -23,138 +33,47 @@ except ImportError:
 
 
 # Initialize Miller components
-mcp = FastMCP("Miller Code Intelligence Server")
+logger.info("Initializing Miller components...")
+# Set long timeout for ML/indexing operations (5 minutes)
+# Default 60s is too short for embedding generation and large workspace indexing
+mcp = FastMCP("Miller Code Intelligence Server", request_timeout=300)
 storage = StorageManager(db_path=".miller/indexes/symbols.db")
 vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
 embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+logger.info("✓ Core components initialized")
+
+# Initialize workspace scanner for automatic indexing
+workspace_root = Path.cwd()
+logger.info(f"Workspace root: {workspace_root}")
+scanner = WorkspaceScanner(
+    workspace_root=workspace_root,
+    storage=storage,
+    embeddings=embeddings,
+    vector_store=vector_store
+)
+logger.info("✓ WorkspaceScanner initialized")
 
 
-# Helper functions
-
-def _normalize_path(path: str) -> str:
-    r"""
-    Normalize file path to remove Windows UNC prefix.
-
-    Rust's path canonicalization adds \\?\ prefix on Windows for absolute paths.
-    We strip this to match the path format used everywhere else.
-    """
-    if path.startswith('\\\\?\\'):
-        return path[4:]  # Strip \\?\
-    return path
-
-
-def _compute_file_hash(content: str) -> str:
-    """Compute SHA-256 hash of file content."""
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()
-
-
-def _index_file_impl(file_path: str) -> Dict[str, Any]:
-    """
-    Index a single file (internal implementation).
-
-    Returns dict with stats for reporting.
-    """
-    path = Path(file_path)
-
-    if not path.exists():
-        return {
-            "success": False,
-            "error": f"File not found: {file_path}",
-            "symbols": 0
-        }
-
-    # Read file
+# Background auto-indexing (runs after server starts)
+async def startup_indexing():
+    """Check if indexing needed and run in background."""
     try:
-        content = path.read_text(encoding='utf-8')
+        logger.info("Checking if workspace indexing needed...")
+        if await scanner.check_if_indexing_needed():
+            logger.info("Workspace needs indexing - starting background indexing")
+            stats = await scanner.index_workspace()
+            logger.info(
+                f"Indexing complete: {stats['indexed']} indexed, "
+                f"{stats['updated']} updated, {stats['skipped']} skipped, "
+                f"{stats['deleted']} deleted, {stats['errors']} errors"
+            )
+        else:
+            logger.info("Workspace already indexed - ready for search")
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Failed to read file: {str(e)}",
-            "symbols": 0
-        }
-
-    # Detect language
-    language = miller_core.detect_language(file_path)
-    if not language:
-        return {
-            "success": False,
-            "error": "Could not detect language",
-            "symbols": 0
-        }
-
-    # Extract symbols
-    try:
-        result = miller_core.extract_file(content, language, file_path)
-    except Exception as e:
-        return {
-            "success": False,
-            "error": f"Extraction failed: {str(e)}",
-            "symbols": 0
-        }
-
-    # Compute file hash
-    file_hash = _compute_file_hash(content)
-
-    # Store in SQLite
-    storage.add_file(
-        file_path=file_path,
-        language=language,
-        content=content,
-        hash=file_hash,
-        size=len(content)
-    )
-
-    # Store symbols (path normalization happens in storage layer)
-    symbol_count = storage.add_symbols_batch(result.symbols)
-
-    # Store identifiers
-    storage.add_identifiers_batch(result.identifiers)
-
-    # Store relationships
-    storage.add_relationships_batch(result.relationships)
-
-    # Generate embeddings
-    if result.symbols:
-        vectors = embeddings.embed_batch(result.symbols)
-
-        # Store in LanceDB
-        vector_store.update_file_symbols(file_path, result.symbols, vectors)
-
-    return {
-        "success": True,
-        "symbols": symbol_count,
-        "identifiers": len(result.identifiers),
-        "relationships": len(result.relationships),
-        "language": language
-    }
+        logger.error(f"Auto-indexing failed: {e}", exc_info=True)
 
 
 # MCP Tool implementations (plain functions for testing)
-
-def index_file(file_path: str) -> str:
-    """
-    Index a source code file.
-
-    Extracts symbols, generates embeddings, and stores in database.
-
-    Args:
-        file_path: Path to file to index
-
-    Returns:
-        Success message with indexing stats
-    """
-    result = _index_file_impl(file_path)
-
-    if not result["success"]:
-        return f"Error: {result['error']}"
-
-    return (
-        f"Success: Indexed {file_path}\n"
-        f"  Language: {result['language']}\n"
-        f"  Symbols: {result['symbols']}\n"
-        f"  Identifiers: {result['identifiers']}\n"
-        f"  Relationships: {result['relationships']}"
-    )
 
 
 def fast_search(
@@ -262,7 +181,6 @@ def get_symbols(file_path: str) -> List[Dict[str, Any]]:
 
 
 # Register tools with FastMCP
-mcp.tool()(index_file)
 mcp.tool()(fast_search)
 mcp.tool()(fast_goto)
 mcp.tool()(get_symbols)
@@ -275,7 +193,7 @@ __all__ = [
     "storage",
     "vector_store",
     "embeddings",
-    "index_file",
+    "scanner",
     "fast_search",
     "fast_goto",
     "get_symbols"
@@ -283,6 +201,18 @@ __all__ = [
 
 
 # Server entry point
-if __name__ == "__main__":
-    # Run MCP server
+def main():
+    """Main entry point for Miller MCP server."""
+    logger.info("Starting Miller MCP server...")
+
+    # Run startup indexing before starting server
+    # This ensures workspace is indexed before first client request
+    logger.info("Running startup indexing check...")
+    asyncio.run(startup_indexing())
+
+    logger.info("Miller MCP server ready - waiting for client connection")
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
