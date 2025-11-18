@@ -85,7 +85,7 @@ class TestIndexFileTool:
 
         # FastMCP should have this tool registered
         tools = await mcp.get_tools()
-        tool_names = [t.name for t in tools]
+        tool_names = list(tools.keys())  # get_tools() returns dict
         assert "index_file" in tool_names
 
     def test_index_file_indexes_python_file(self, test_workspace):
@@ -172,7 +172,7 @@ class TestSearchTool:
         from miller.server import mcp
 
         tools = await mcp.get_tools()
-        tool_names = [t.name for t in tools]
+        tool_names = list(tools.keys())  # get_tools() returns dict
         assert "fast_search" in tool_names
 
     def test_search_text_mode(self, test_workspace):
@@ -245,7 +245,7 @@ class TestGotoTool:
         from miller.server import mcp
 
         tools = await mcp.get_tools()
-        tool_names = [t.name for t in tools]
+        tool_names = list(tools.keys())  # get_tools() returns dict
         assert "fast_goto" in tool_names
 
     def test_goto_finds_symbol_definition(self, test_workspace):
@@ -285,7 +285,7 @@ class TestGetSymbolsTool:
         from miller.server import mcp
 
         tools = await mcp.get_tools()
-        tool_names = [t.name for t in tools]
+        tool_names = list(tools.keys())  # get_tools() returns dict
         assert "get_symbols" in tool_names
 
     def test_get_symbols_returns_file_structure(self, test_workspace):
@@ -323,7 +323,7 @@ class TestWorkspaceIndexing:
 
         # Optional: may implement later
         tools = await mcp.get_tools()
-        tool_names = [t.name for t in tools]
+        tool_names = list(tools.keys())  # get_tools() returns dict
         # Just check that core tools exist
         assert "index_file" in tool_names
 

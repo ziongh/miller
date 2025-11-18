@@ -51,3 +51,41 @@ def temp_file(tmp_path):
         file_path.write_text(content)
         return file_path
     return _create_file
+
+
+@pytest.fixture(autouse=True)
+def clean_server_storage():
+    """
+    Clean server storage before each test.
+
+    This fixture runs automatically before each test to ensure
+    tests don't interfere with each other by using fresh in-memory databases.
+    """
+    from miller import server
+    from miller.storage import StorageManager
+    from miller.embeddings import VectorStore
+
+    # Close old connections if they exist
+    if hasattr(server.storage, 'conn'):
+        server.storage.conn.close()
+    if hasattr(server.vector_store, 'close'):
+        try:
+            server.vector_store.close()
+        except:
+            pass
+
+    # Replace global instances with fresh in-memory databases
+    server.storage = StorageManager(db_path=":memory:")
+    server.vector_store = VectorStore(db_path=":memory:")
+    # Keep same embeddings manager (model loading is expensive)
+
+    yield
+
+    # Cleanup: close connections
+    if hasattr(server.storage, 'conn'):
+        server.storage.conn.close()
+    if hasattr(server.vector_store, 'close'):
+        try:
+            server.vector_store.close()
+        except:
+            pass

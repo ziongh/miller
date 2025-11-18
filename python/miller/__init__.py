@@ -7,18 +7,13 @@ tree-sitter parsing with Python's superior ML ecosystem.
 
 __version__ = "0.1.0"
 
-# Import will fail until we build the Rust extension
+# Import Rust extension module (built as miller.miller_core by maturin)
 try:
-    from miller._miller_core import __version__ as core_version
-    __rust_version__ = core_version
-except ImportError:
-    __rust_version__ = None
-
-# Import Rust core (for direct access)
-try:
-    from miller import _miller_core as miller_core
+    from miller import miller_core
+    __rust_version__ = miller_core.__version__
 except ImportError:
     miller_core = None
+    __rust_version__ = None
 
 # Export main modules
 from miller import storage, embeddings, server

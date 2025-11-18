@@ -16,6 +16,18 @@ class StorageError(Exception):
     pass
 
 
+def _normalize_path(path: str) -> str:
+    r"""
+    Normalize file path to remove Windows UNC prefix.
+
+    Rust's path canonicalization adds \\?\ prefix on Windows for absolute paths.
+    We strip this to ensure FK constraints work correctly.
+    """
+    if path and path.startswith('\\\\?\\'):
+        return path[4:]  # Strip \\?\
+    return path
+
+
 class StorageManager:
     """
     Manages SQLite database for symbol storage.
@@ -244,7 +256,7 @@ class StorageManager:
                 sym.name,
                 sym.kind,
                 sym.language,
-                sym.file_path,
+                _normalize_path(sym.file_path),  # Normalize path for FK constraints
                 sym.signature,
                 sym.start_line,
                 sym.start_column,
@@ -317,7 +329,7 @@ class StorageManager:
                 ident.name,
                 ident.kind,
                 ident.language,
-                ident.file_path,
+                _normalize_path(ident.file_path),  # Normalize path for FK constraints
                 ident.start_line,
                 ident.start_column,
                 ident.end_line,
@@ -365,7 +377,7 @@ class StorageManager:
                 rel.from_symbol_id,
                 rel.to_symbol_id,
                 rel.kind,
-                rel.file_path,
+                _normalize_path(rel.file_path),  # Normalize path for FK constraints
                 rel.line_number,
                 rel.confidence,
                 None,  # metadata (TODO: serialize)

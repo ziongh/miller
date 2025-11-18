@@ -31,6 +31,18 @@ embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto"
 
 # Helper functions
 
+def _normalize_path(path: str) -> str:
+    r"""
+    Normalize file path to remove Windows UNC prefix.
+
+    Rust's path canonicalization adds \\?\ prefix on Windows for absolute paths.
+    We strip this to match the path format used everywhere else.
+    """
+    if path.startswith('\\\\?\\'):
+        return path[4:]  # Strip \\?\
+    return path
+
+
 def _compute_file_hash(content: str) -> str:
     """Compute SHA-256 hash of file content."""
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
@@ -92,7 +104,7 @@ def _index_file_impl(file_path: str) -> Dict[str, Any]:
         size=len(content)
     )
 
-    # Store symbols
+    # Store symbols (path normalization happens in storage layer)
     symbol_count = storage.add_symbols_batch(result.symbols)
 
     # Store identifiers
