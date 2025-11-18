@@ -11,6 +11,7 @@ stdout/stderr are reserved for JSON-RPC protocol. Use logger instead.
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal
 import hashlib
+from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
@@ -32,17 +33,16 @@ except ImportError:
     miller_core = None
 
 
-# Initialize Miller components
+# Initialize Miller components (order matters for dependencies)
 logger.info("Initializing Miller components...")
-# Note: FastMCP doesn't have request_timeout parameter
-# Timeout handling is managed by the underlying transport layer
-mcp = FastMCP("Miller Code Intelligence Server")
+
+# 1. Create core components
 storage = StorageManager(db_path=".miller/indexes/symbols.db")
 vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
 embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
 logger.info("✓ Core components initialized")
 
-# Initialize workspace scanner for automatic indexing
+# 2. Initialize workspace scanner (needed by lifespan handler)
 workspace_root = Path.cwd()
 logger.info(f"Workspace root: {workspace_root}")
 scanner = WorkspaceScanner(
@@ -53,27 +53,56 @@ scanner = WorkspaceScanner(
 )
 logger.info("✓ WorkspaceScanner initialized")
 
-# Track if lazy indexing has run
-_indexing_complete = False
+# 3. Define lifespan handler (Julie pattern - background indexing)
+# This follows Julie's pattern: handshake completes immediately,
+# then indexing runs in background without blocking MCP protocol
+@asynccontextmanager
+async def lifespan(app):
+    """
+    FastMCP lifespan handler - startup and shutdown hooks.
+
+    Startup: Launch background indexing AFTER server starts
+    Shutdown: Cleanup (currently none needed)
+    """
+    # STARTUP: Launch background indexing task (non-blocking)
+    logger.info("🚀 Miller server starting - spawning background indexing task")
+
+    async def background_indexing():
+        """Background task that runs indexing after server starts."""
+        try:
+            # Small delay to ensure server is fully ready
+            await asyncio.sleep(0.5)
+
+            logger.info("🔍 Checking if workspace indexing needed...")
+            if await scanner.check_if_indexing_needed():
+                logger.info("📚 Workspace needs indexing - starting background indexing")
+                stats = await scanner.index_workspace()
+                logger.info(
+                    f"✅ Indexing complete: {stats['indexed']} indexed, "
+                    f"{stats['updated']} updated, {stats['skipped']} skipped, "
+                    f"{stats['deleted']} deleted, {stats['errors']} errors"
+                )
+            else:
+                logger.info("✅ Workspace already indexed - ready for search")
+        except Exception as e:
+            logger.error(f"❌ Background indexing failed: {e}", exc_info=True)
+
+    # Spawn background task (non-blocking - server continues)
+    indexing_task = asyncio.create_task(background_indexing())
+
+    yield  # Server runs here
+
+    # SHUTDOWN: Wait for background task to complete if still running
+    if not indexing_task.done():
+        logger.info("⏳ Waiting for background indexing to complete...")
+        await indexing_task
 
 
-# Background auto-indexing (runs after server starts)
-async def startup_indexing():
-    """Check if indexing needed and run in background."""
-    try:
-        logger.info("Checking if workspace indexing needed...")
-        if await scanner.check_if_indexing_needed():
-            logger.info("Workspace needs indexing - starting background indexing")
-            stats = await scanner.index_workspace()
-            logger.info(
-                f"Indexing complete: {stats['indexed']} indexed, "
-                f"{stats['updated']} updated, {stats['skipped']} skipped, "
-                f"{stats['deleted']} deleted, {stats['errors']} errors"
-            )
-        else:
-            logger.info("Workspace already indexed - ready for search")
-    except Exception as e:
-        logger.error(f"Auto-indexing failed: {e}", exc_info=True)
+# 4. Create FastMCP server with lifespan handler
+# Note: FastMCP doesn't have request_timeout parameter
+# Timeout handling is managed by the underlying transport layer
+mcp = FastMCP("Miller Code Intelligence Server", lifespan=lifespan)
+logger.info("✓ FastMCP server created with lifespan handler")
 
 
 # MCP Tool implementations (plain functions for testing)
@@ -94,19 +123,10 @@ def fast_search(
 
     Returns:
         List of matching symbols with metadata
+
+    Note: Indexing runs automatically in background via lifespan handler.
+          Early searches may return empty results if indexing hasn't completed.
     """
-    global _indexing_complete
-
-    # Lazy indexing: index on first search if needed
-    if not _indexing_complete:
-        logger.info("First search - running lazy indexing...")
-        try:
-            asyncio.run(startup_indexing())
-            _indexing_complete = True
-        except Exception as e:
-            logger.error(f"Lazy indexing failed: {e}", exc_info=True)
-            # Continue anyway - return whatever results we have
-
     results = vector_store.search(query, method=method, limit=limit)
 
     # Format results for MCP
@@ -217,13 +237,17 @@ __all__ = [
 
 # Server entry point
 def main():
-    """Main entry point for Miller MCP server."""
-    logger.info("Starting Miller MCP server...")
+    """
+    Main entry point for Miller MCP server.
 
-    # Skip startup indexing - index on-demand when first search is called
-    # Running indexing before mcp.run() blocks the server from accepting connections
-    # which causes Claude Code CLI connection timeouts
-    logger.info("Miller MCP server ready - indexing will run on first search")
+    Follows Julie's proven startup pattern:
+    1. Server starts immediately
+    2. MCP handshake completes in milliseconds
+    3. Background indexing runs via lifespan handler (non-blocking)
+    """
+    logger.info("🚀 Starting Miller MCP server...")
+    logger.info("📡 Server will respond to MCP handshake immediately")
+    logger.info("📚 Background indexing will start after connection established")
 
     # Suppress FastMCP banner to keep stdout clean for MCP protocol
     mcp.run(show_banner=False)
