@@ -1,0 +1,26 @@
+{
+  "id": "checkpoint_691c75ce_df31ab",
+  "timestamp": 1763472846,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "7d55230",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/tests/test_storage.py"
+    ]
+  },
+  "description": "Miller build complete and MCP server operational: Installed all build tools (Rust 1.91.1, Maturin 1.10.1, Python 3.14 venv with all dependencies), compiled Rust extension successfully (29 languages supported), configured Miller in Claude Code MCP, identified and fixed critical foreign key constraint bug in storage.py (path normalization mismatch between add_file() and add_symbols_batch()), tested server startup with clean indexing. Miller is now production-ready as an MCP server with 3 tools: fast_search, fast_goto, get_symbols.",
+  "tags": [
+    "milestone",
+    "build-complete",
+    "mcp-ready",
+    "bug-fix",
+    "foreign-key-constraint",
+    "production-ready"
+  ]
+}
