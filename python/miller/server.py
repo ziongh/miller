@@ -18,6 +18,7 @@ from fastmcp import FastMCP
 from miller.storage import StorageManager
 from miller.embeddings import EmbeddingManager, VectorStore
 from miller.workspace import WorkspaceScanner
+from miller.watcher import FileWatcher, FileEvent
 from miller.logging_config import setup_logging, get_logger
 import asyncio
 
@@ -53,7 +54,7 @@ scanner = WorkspaceScanner(
 )
 logger.info("✓ WorkspaceScanner initialized")
 
-# 3. Define lifespan handler (Julie pattern - background indexing)
+# 3. Define lifespan handler (Julie pattern - background indexing + file watching)
 # This follows Julie's pattern: handshake completes immediately,
 # then indexing runs in background without blocking MCP protocol
 @asynccontextmanager
@@ -61,18 +62,49 @@ async def lifespan(app):
     """
     FastMCP lifespan handler - startup and shutdown hooks.
 
-    Startup: Launch background indexing AFTER server starts
-    Shutdown: Cleanup (currently none needed)
+    Startup: Launch background indexing AFTER server starts, then start file watcher
+    Shutdown: Stop file watcher and cleanup
     """
     # STARTUP: Launch background indexing task (non-blocking)
     logger.info("🚀 Miller server starting - spawning background indexing task")
 
+    # File watcher reference (initialized after initial indexing)
+    file_watcher = None
+
+    async def on_files_changed(events: List[tuple[FileEvent, Path]]):
+        """
+        Callback for file watcher - re-indexes changed files in real-time.
+
+        Args:
+            events: List of (event_type, file_path) tuples from watcher
+        """
+        for event_type, file_path in events:
+            try:
+                if event_type == FileEvent.DELETED:
+                    # Convert to relative path for storage
+                    rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
+                    storage.delete_file(rel_path)
+                    logger.info(f"🗑️  Deleted from index: {rel_path}")
+                else:
+                    # Re-index file (handles CREATED and MODIFIED)
+                    success = await scanner._index_file(file_path)
+                    rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
+                    if success:
+                        action = "Indexed" if event_type == FileEvent.CREATED else "Updated"
+                        logger.info(f"✏️  {action}: {rel_path}")
+                    else:
+                        logger.warning(f"⚠️  Failed to index: {rel_path}")
+            except Exception as e:
+                logger.error(f"❌ Error processing file change {file_path}: {e}", exc_info=True)
+
     async def background_indexing():
-        """Background task that runs indexing after server starts."""
+        """Background task that runs initial indexing, then starts file watcher."""
+        nonlocal file_watcher
         try:
             # Small delay to ensure server is fully ready
             await asyncio.sleep(0.5)
 
+            # Initial indexing
             logger.info("🔍 Checking if workspace indexing needed...")
             if await scanner.check_if_indexing_needed():
                 logger.info("📚 Workspace needs indexing - starting background indexing")
@@ -84,18 +116,39 @@ async def lifespan(app):
                 )
             else:
                 logger.info("✅ Workspace already indexed - ready for search")
+
+            # Start file watcher for real-time updates
+            logger.info("👁️  Starting file watcher for real-time indexing...")
+            file_watcher = FileWatcher(
+                workspace_path=workspace_root,
+                indexing_callback=on_files_changed,
+                ignore_patterns={".git", "*.pyc", "__pycache__", "node_modules", ".miller"},
+                debounce_delay=0.2,
+            )
+            file_watcher.start()
+            logger.info("✅ File watcher active - workspace changes will be indexed automatically")
+
         except Exception as e:
-            logger.error(f"❌ Background indexing failed: {e}", exc_info=True)
+            logger.error(f"❌ Background indexing/watcher startup failed: {e}", exc_info=True)
 
     # Spawn background task (non-blocking - server continues)
     indexing_task = asyncio.create_task(background_indexing())
 
     yield  # Server runs here
 
-    # SHUTDOWN: Wait for background task to complete if still running
+    # SHUTDOWN: Stop file watcher and wait for background task
+    logger.info("🛑 Miller server shutting down...")
+
+    if file_watcher and file_watcher.is_running():
+        logger.info("⏹️  Stopping file watcher...")
+        file_watcher.stop()
+        logger.info("✅ File watcher stopped")
+
     if not indexing_task.done():
         logger.info("⏳ Waiting for background indexing to complete...")
         await indexing_task
+
+    logger.info("👋 Miller server shutdown complete")
 
 
 # 4. Create FastMCP server with lifespan handler
@@ -244,10 +297,12 @@ def main():
     1. Server starts immediately
     2. MCP handshake completes in milliseconds
     3. Background indexing runs via lifespan handler (non-blocking)
+    4. File watcher starts after initial indexing (real-time updates)
     """
     logger.info("🚀 Starting Miller MCP server...")
     logger.info("📡 Server will respond to MCP handshake immediately")
     logger.info("📚 Background indexing will start after connection established")
+    logger.info("👁️  File watcher will activate for real-time workspace updates")
 
     # Suppress FastMCP banner to keep stdout clean for MCP protocol
     mcp.run(show_banner=False)
