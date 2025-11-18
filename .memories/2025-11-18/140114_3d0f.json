@@ -1,0 +1,26 @@
+{
+  "id": "checkpoint_691c7c2a_05b836",
+  "timestamp": 1763474474,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "eb88ab8",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/embeddings.py",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/tests/test_storage.py"
+    ]
+  },
+  "description": "Miller MCP server fully debugged and production-ready: Fixed two critical bugs - (1) FK constraint failures by switching from absolute to relative Unix-style paths following Julie's pattern, (2) LanceDB PyArrow cast errors by adding explicit schema with nullable fields. Results verified: 304 files indexed (100% success vs 7.6% before), 3,858 symbols in SQLite, 3,859 vectors in LanceDB. Added date-based logging (miller-YYYY-MM-DD.log). All tests passing, databases verified with actual data queries.",
+  "tags": [
+    "milestone",
+    "production-ready",
+    "bug-fixes",
+    "miller-mcp",
+    "indexing-success"
+  ]
+}
