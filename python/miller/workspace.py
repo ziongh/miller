@@ -135,12 +135,13 @@ class WorkspaceScanner:
             # If file can't be read, return empty hash
             return ""
 
-    def _needs_indexing(self, file_path: Path) -> bool:
+    def _needs_indexing(self, file_path: Path, db_files_map: Dict[str, Dict]) -> bool:
         """
         Check if file needs to be indexed.
 
         Args:
             file_path: Path to file (absolute)
+            db_files_map: Dict mapping relative paths to file info (performance optimization)
 
         Returns:
             True if file should be indexed (new or changed), False if unchanged
@@ -153,13 +154,10 @@ class WorkspaceScanner:
         if not current_hash:
             return False  # Can't read file, skip
 
-        # Check if file exists in DB (using relative path)
-        db_files = self.storage.get_all_files()
-
-        for db_file in db_files:
-            if db_file["path"] == relative_path:
-                # File exists in DB, check if hash changed
-                return db_file["hash"] != current_hash
+        # Check if file exists in DB (O(1) lookup with map)
+        if relative_path in db_files_map:
+            # File exists in DB, check if hash changed
+            return db_files_map[relative_path]["hash"] != current_hash
 
         # File not in DB, needs indexing
         return True
@@ -232,29 +230,95 @@ class WorkspaceScanner:
             logger.warning(f"Failed to index {file_path}: {e}")
             return False
 
+    def _get_database_mtime(self) -> float:
+        """
+        Get modification time of symbols.db file.
+
+        Returns:
+            Timestamp of database file, or 0 if doesn't exist (or in-memory)
+
+        Note: Following Julie's staleness check pattern for performance
+        """
+        # Handle in-memory databases (used in tests)
+        if self.storage.db_path == ":memory:":
+            # For in-memory DB, use current time (always considered fresh)
+            # This prevents false positives in staleness check during testing
+            import time
+            return time.time()
+
+        db_path = Path(self.storage.db_path)
+        if not db_path.exists():
+            return 0  # DB doesn't exist, very old
+
+        try:
+            return db_path.stat().st_mtime
+        except Exception:
+            return 0
+
+    def _get_max_file_mtime(self, disk_files: List[Path]) -> float:
+        """
+        Get the newest file modification time in workspace.
+
+        Args:
+            disk_files: List of file paths to check
+
+        Returns:
+            Maximum mtime found, or 0 if no files
+
+        Note: Following Julie's staleness check pattern for performance
+        """
+        max_mtime = 0.0
+        for file_path in disk_files:
+            try:
+                mtime = file_path.stat().st_mtime
+                if mtime > max_mtime:
+                    max_mtime = mtime
+            except Exception:
+                continue  # Skip files we can't stat
+        return max_mtime
+
     async def check_if_indexing_needed(self) -> bool:
         """
         Check if workspace needs indexing.
 
+        Follows Julie's optimized pattern:
+        1. Check if DB is empty (fast)
+        2. Check staleness: DB mtime vs max file mtime (fast!)
+        3. Check for new files: workspace files vs DB files (moderate)
+
         Returns:
             True if indexing needed (DB empty or files changed), False otherwise
         """
-        # Check if DB has any files
+        # 1. Check if DB has any files
         db_files = self.storage.get_all_files()
 
         if not db_files:
-            # Empty DB, needs indexing
+            logger.info("📊 Database is empty - indexing needed")
             return True
 
-        # Check if any files on disk have changed or are new
+        # 2. FAST-PATH: Staleness check (Julie's optimization)
+        # Compare DB modification time vs newest file modification time
+        # If DB is newer than all files, we can skip the expensive hash checks!
         disk_files = self._walk_directory()
+        db_mtime = self._get_database_mtime()
+        max_file_mtime = self._get_max_file_mtime(disk_files)
 
-        for file_path in disk_files:
-            if self._needs_indexing(file_path):
-                # At least one file changed/new
-                return True
+        if max_file_mtime > db_mtime:
+            logger.info("📊 Database is stale (files modified after last index) - indexing needed")
+            return True
 
-        # All files match DB, no indexing needed
+        # 3. Check for new files not in DB
+        # Build lookup map for O(1) access (fixes O(n²) bug!)
+        db_files_map = {f["path"]: f for f in db_files}
+        disk_files_set = {str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files}
+
+        new_files = disk_files_set - set(db_files_map.keys())
+        if new_files:
+            logger.info(f"📊 Found {len(new_files)} new files not in database - indexing needed")
+            return True
+
+        # All checks passed - no indexing needed
+        logger.info("✅ Index is up-to-date - no indexing needed")
         return False
 
     async def index_workspace(self) -> Dict[str, int]:
@@ -290,7 +354,7 @@ class WorkspaceScanner:
 
             if relative_path in db_files_map:
                 # File exists in DB, check if changed
-                if self._needs_indexing(file_path):
+                if self._needs_indexing(file_path, db_files_map):
                     # File changed, re-index
                     success = await self._index_file(file_path)
                     if success:

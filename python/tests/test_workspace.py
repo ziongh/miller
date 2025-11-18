@@ -153,7 +153,8 @@ class TestChangeDetection:
 
         # File not in DB
         file_path = test_workspace / "src" / "main.py"
-        assert scanner._needs_indexing(file_path) is True
+        db_files_map = {f["path"]: f for f in storage.get_all_files()}
+        assert scanner._needs_indexing(file_path, db_files_map) is True
 
     def test_needs_indexing_for_changed_file(self, test_workspace):
         """Test that files with changed content need re-indexing."""
@@ -170,8 +171,10 @@ class TestChangeDetection:
         original_content = file_path.read_text()
         original_hash = hashlib.sha256(original_content.encode()).hexdigest()
 
+        # Use relative path to match production behavior
+        relative_path = str(file_path.relative_to(test_workspace)).replace("\\", "/")
         storage.add_file(
-            str(file_path), "python", original_content, original_hash, len(original_content)
+            relative_path, "python", original_content, original_hash, len(original_content)
         )
 
         # Modify file
@@ -181,7 +184,8 @@ class TestChangeDetection:
         scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
 
         # Should need re-indexing (hash changed)
-        assert scanner._needs_indexing(file_path) is True
+        db_files_map = {f["path"]: f for f in storage.get_all_files()}
+        assert scanner._needs_indexing(file_path, db_files_map) is True
 
     def test_skips_unchanged_file(self, test_workspace):
         """Test that unchanged files are skipped."""
@@ -198,12 +202,15 @@ class TestChangeDetection:
         content = file_path.read_text()
         file_hash = hashlib.sha256(content.encode()).hexdigest()
 
-        storage.add_file(str(file_path), "python", content, file_hash, len(content))
+        # Use relative path to match production behavior
+        relative_path = str(file_path.relative_to(test_workspace)).replace("\\", "/")
+        storage.add_file(relative_path, "python", content, file_hash, len(content))
 
         scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
 
         # Should NOT need re-indexing (hash matches)
-        assert scanner._needs_indexing(file_path) is False
+        db_files_map = {f["path"]: f for f in storage.get_all_files()}
+        assert scanner._needs_indexing(file_path, db_files_map) is False
 
 
 class TestWorkspaceIndexing:
@@ -237,7 +244,7 @@ class TestWorkspaceIndexing:
         embeddings = EmbeddingManager(device="cpu")
         vector_store = VectorStore(db_path=":memory:")
 
-        # Index all files manually first
+        # Index all files manually first (using relative paths like production code)
         for py_file in test_workspace.rglob("*.py"):
             if "node_modules" in str(py_file):
                 continue
@@ -247,7 +254,9 @@ class TestWorkspaceIndexing:
             language = miller_core.detect_language(str(py_file))
 
             if language:
-                storage.add_file(str(py_file), language, content, file_hash, len(content))
+                # Convert to relative Unix-style path (matches production behavior)
+                relative_path = str(py_file.relative_to(test_workspace)).replace("\\", "/")
+                storage.add_file(relative_path, language, content, file_hash, len(content))
 
         scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
 
