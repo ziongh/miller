@@ -1,0 +1,25 @@
+{
+  "id": "checkpoint_691c7928_b06ac4",
+  "timestamp": 1763473704,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "eb88ab8",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/tests/test_storage.py"
+    ]
+  },
+  "description": "Fixed FOREIGN KEY constraint bug in Miller workspace indexing: Root cause was using absolute file paths instead of relative Unix-style paths. Miller was storing absolute paths like /Users/murphy/source/miller/src/lib.rs but should use relative paths like src/lib.rs (following Julie's pattern). Changes: (1) workspace.py:_index_file() now converts absolute paths to relative Unix-style paths before passing to Rust extraction and storage, (2) _needs_indexing() uses relative paths for DB lookups, (3) index_workspace() converts disk_files_set to relative paths to match DB keys. Benefits: 70% token savings, cross-platform compatibility, portable databases. Old databases removed - ready for clean re-index.",
+  "tags": [
+    "critical-fix",
+    "foreign-key-bug",
+    "relative-paths",
+    "julie-pattern",
+    "workspace-indexing"
+  ]
+}

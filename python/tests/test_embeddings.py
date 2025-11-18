@@ -275,6 +275,236 @@ def process_payment():
         assert "old_name" not in names
 
 
+class TestTantivyFTS:
+    """Test Tantivy full-text search integration (Phase 1 of FTS migration)."""
+
+    def test_fts_index_is_created_on_init(self):
+        """Test that Tantivy FTS index is created when VectorStore initializes."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        # Create store and add symbols
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = "def calculate_user_age(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Verify FTS index exists
+        # LanceDB should have created FTS index on name, signature, doc_comment
+        # We'll verify by doing an FTS search (implementation will use query_type="fts")
+        assert store._table is not None
+        assert store._fts_index_created is True  # New attribute we'll add
+
+    def test_fts_search_uses_bm25_scoring(self):
+        """Test that FTS search returns BM25 relevance scores, not just 1.0."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = '''
+def calculate_user_age():
+    """Calculate the age of a user based on birthdate."""
+    pass
+
+def get_user_profile():
+    """Fetch user profile data from database."""
+    pass
+
+def delete_old_files():
+    """Remove temporary files from disk."""
+    pass
+'''
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Text search with FTS should return BM25 scores
+        results = store.search(query="user", method="text", limit=10)
+
+        assert len(results) >= 2  # Should find calculate_user_age and get_user_profile
+
+        # BM25 scores should vary based on relevance (not all 1.0)
+        scores = [r["score"] for r in results]
+        assert not all(s == 1.0 for s in scores), "Scores should vary with BM25 ranking"
+
+        # Higher relevance terms should score higher
+        # "get_user_profile" mentions "user" twice (name + doc), should rank high
+        user_profile_result = next((r for r in results if r["name"] == "get_user_profile"), None)
+        assert user_profile_result is not None
+        assert user_profile_result["score"] > 0.0
+
+    def test_fts_search_no_sql_injection(self):
+        """Test that FTS search is safe from SQL injection attacks."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = "def safe_function(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Try SQL injection attack
+        malicious_query = "'; DROP TABLE symbols; --"
+
+        # Should handle safely (no exception, no data loss)
+        results = store.search(query=malicious_query, method="text", limit=10)
+
+        # Search should return empty results (no match), not crash
+        assert isinstance(results, list)  # No exception raised
+
+        # Verify table still exists (wasn't dropped)
+        safe_results = store.search(query="safe", method="text", limit=10)
+        assert len(safe_results) > 0  # Can still find symbols
+
+    def test_fts_phrase_search(self):
+        """Test phrase search with quotes (exact phrase matching)."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = '''
+def calculate_user_age():
+    """Calculate the age of a user."""
+    pass
+
+def get_user_data():
+    """Get data for a user account."""
+    pass
+'''
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Phrase search: "age of a user" should match calculate_user_age doc comment
+        results = store.search(query='"age of a user"', method="text", limit=10)
+
+        assert len(results) > 0
+        # Should find calculate_user_age (contains exact phrase in doc)
+        names = [r["name"] for r in results]
+        assert "calculate_user_age" in names
+
+    def test_fts_stemming_support(self):
+        """Test that stemming works (search 'running' finds 'run', 'runs', 'runner')."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = '''
+def run_process():
+    """Runs the background process."""
+    pass
+
+def runner_thread():
+    """Running thread manager."""
+    pass
+
+def start_execution():
+    """Start the execution."""
+    pass
+'''
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Search for "running" - should find "run", "runs", "running", "runner" (stemmed)
+        results = store.search(query="running", method="text", limit=10)
+
+        assert len(results) >= 2  # Should find run_process and runner_thread
+        names = [r["name"] for r in results]
+
+        # Stemming should match variations
+        assert "run_process" in names  # "run" stems to "run"
+        assert "runner_thread" in names  # "runner" stems to "run"
+
+        # Should NOT find non-related terms
+        assert "start_execution" not in names  # No "run" stem
+
+    def test_fts_hybrid_search_with_rrf(self):
+        """Test hybrid search uses Reciprocal Rank Fusion (RRF) for merging."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = '''
+def calculate_age():
+    """Compute user age from birthdate."""
+    pass
+
+def get_user():
+    """Fetch user account data."""
+    pass
+
+def process_payment():
+    """Handle payment transactions."""
+    pass
+'''
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Hybrid search should combine text (keyword "user") + semantic (age concepts)
+        results = store.search(query="user age", method="hybrid", limit=10)
+
+        assert len(results) >= 2
+
+        # Both calculate_age and get_user should rank highly
+        names = [r["name"] for r in results]
+        assert "calculate_age" in names or "get_user" in names
+
+        # Scores should reflect RRF fusion (not simple deduplication)
+        # RRF produces different scores than simple text or semantic alone
+        for r in results:
+            assert "score" in r
+            assert 0.0 <= r["score"] <= 1.0
+
+    def test_fts_index_updates_on_file_change(self):
+        """Test that FTS index is updated when file symbols change."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+
+        # Initial indexing
+        code1 = "def old_function(): pass"
+        result1 = miller_core.extract_file(code1, "python", "test.py")
+        vectors1 = embeddings.embed_batch(result1.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result1.symbols, vectors1)
+
+        # Update file with new symbols
+        code2 = "def new_function(): pass"
+        result2 = miller_core.extract_file(code2, "python", "test.py")
+        vectors2 = embeddings.embed_batch(result2.symbols)
+
+        store.update_file_symbols("test.py", result2.symbols, vectors2)
+
+        # FTS search should find new symbol, not old
+        results = store.search(query="new_function", method="text", limit=10)
+        names = [r["name"] for r in results]
+
+        assert "new_function" in names
+
+        # Old function should be gone from FTS index
+        old_results = store.search(query="old_function", method="text", limit=10)
+        old_names = [r["name"] for r in old_results]
+        assert "old_function" not in old_names
+
+
 class TestPerformance:
     """Test embedding and search performance."""
 

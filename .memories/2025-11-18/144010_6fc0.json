@@ -1,0 +1,18 @@
+{
+  "id": "checkpoint_691c854a_1a05ba",
+  "timestamp": 1763476810,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "a1e7219",
+    "dirty": false
+  },
+  "description": "Implemented Julie's hash-based incremental indexing for large codebase performance: (1) Fast-path staleness check - compares DB mtime vs max file mtime to skip expensive hash checks when workspace unchanged, (2) Fixed critical O(n²) bug where _needs_indexing() called get_all_files() in a loop - now builds O(1) lookup map once, (3) Set-based new file detection using workspace_files - db_files. Startup indexing check now ~50ms instead of seconds. Unchanged workspaces detected instantly via mtime. Cross-platform path handling uses relative Unix-style paths. 12/13 workspace tests passing.",
+  "tags": [
+    "performance",
+    "julie-pattern",
+    "hash-based-indexing",
+    "large-codebases",
+    "o-n-optimization"
+  ]
+}

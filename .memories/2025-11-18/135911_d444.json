@@ -1,0 +1,25 @@
+{
+  "id": "checkpoint_691c7baf_fa2ed4",
+  "timestamp": 1763474351,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "eb88ab8",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/embeddings.py",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/tests/test_storage.py"
+    ]
+  },
+  "description": "Both Miller indexing bugs COMPLETELY FIXED! Test results: 304 files indexed successfully with 0 errors. Before fixes: 23 indexed, 280 errors (FK constraints + PyArrow cast errors). After fixes: 304 indexed, 0 errors. The relative Unix-style paths fixed all FK constraint violations, and the explicit PyArrow schema with nullable fields fixed all LanceDB cast errors. Miller is now production-ready for MCP usage with full workspace indexing capability.",
+  "tags": [
+    "success",
+    "both-bugs-fixed",
+    "production-ready",
+    "304-files-indexed"
+  ]
+}

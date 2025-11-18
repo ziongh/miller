@@ -1,0 +1,26 @@
+{
+  "id": "checkpoint_691c8020_9f684a",
+  "timestamp": 1763475488,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "6d425f8",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/embeddings.py",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/tests/test_storage.py"
+    ]
+  },
+  "description": "Fixed Miller MCP startup crash: Removed invalid request_timeout parameter from FastMCP.__init__() and suppressed stdout/stderr during SentenceTransformer model loading. FastMCP doesn't accept request_timeout (was causing TypeError). SentenceTransformer writes download progress to stdout which breaks MCP JSON-RPC protocol. Solution: (1) Removed request_timeout=300 from FastMCP initialization, (2) Wrapped model loading with redirect_stdout/redirect_stderr to os.devnull. Tests pass, server starts cleanly, databases created successfully (symbols.db + vectors.lance).",
+  "tags": [
+    "bug-fix",
+    "mcp-startup",
+    "fastmcp",
+    "stdout-pollution",
+    "production-ready"
+  ]
+}

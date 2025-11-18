@@ -1,0 +1,22 @@
+{
+  "id": "checkpoint_691ca924_3c6edb",
+  "timestamp": 1763485988,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "a1e7219",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/server.py"
+    ]
+  },
+  "description": "Integrated file watcher into Miller server: Added real-time indexing via file watcher in lifespan handler. Server now: (1) starts immediately, (2) indexes workspace in background, (3) starts file watcher for live updates, (4) handles CREATED/MODIFIED/DELETED events automatically. Watcher ignores .git, *.pyc, __pycache__, node_modules, .miller. Graceful shutdown with watcher cleanup. Real-time code intelligence complete!",
+  "tags": [
+    "file-watcher",
+    "integration",
+    "real-time-indexing",
+    "server-lifecycle",
+    "production-ready"
+  ]
+}

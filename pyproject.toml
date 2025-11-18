@@ -32,6 +32,8 @@ dependencies = [
     "pandas>=2.0",
     "torch>=2.0",
     "pathspec>=0.11",      # .gitignore parsing
+    "watchdog>=6.0",       # File system monitoring (verified 2025-11-18: latest is 6.0.0)
+    "tantivy>=0.25",       # Tantivy FTS for LanceDB (verified 2025-11-18: latest is 0.25.0)
 ]
 
 [project.scripts]

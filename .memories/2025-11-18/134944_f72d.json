@@ -1,0 +1,24 @@
+{
+  "id": "checkpoint_691c7978_1e38fb",
+  "timestamp": 1763473784,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "eb88ab8",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/tests/test_storage.py"
+    ]
+  },
+  "description": "Improved Miller logging: Changed from single rotating log file (miller.log) to daily date-based log files (miller-YYYY-MM-DD.log). Uses TimedRotatingFileHandler with midnight rotation, keeps 30 days of logs by default. Benefits: (1) easier to find logs from specific days, (2) automatic cleanup of old logs, (3) prevents single log file from growing indefinitely. Updated logging_config.py and removed old log files.",
+  "tags": [
+    "logging",
+    "daily-rotation",
+    "file-management",
+    "improvement"
+  ]
+}

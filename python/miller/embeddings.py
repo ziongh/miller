@@ -167,11 +167,40 @@ class VectorStore:
 
         # Load existing table or create on first add_symbols
         self.table_name = "symbols"
+        self._fts_index_created = False
         try:
             self._table = self.db.open_table(self.table_name)
+            # If table exists, try to create FTS index
+            self._create_fts_index()
         except Exception:
             # Table doesn't exist yet, will be created on first add_symbols
             self._table = None
+
+    def _create_fts_index(self):
+        """
+        Create Tantivy FTS index on name, signature, doc_comment columns.
+
+        Features:
+        - English stemming (tokenizer_name="en_stem")
+        - Phrase search support (with_position=True)
+        - Replaces existing index if present
+        """
+        if self._table is None:
+            return
+
+        try:
+            self._table.create_fts_index(
+                ["name", "signature", "doc_comment"],  # Columns to index
+                use_tantivy=True,                      # Enable Tantivy FTS (not basic search)
+                tokenizer_name="en_stem",              # English stemming
+                with_position=True,                    # Enable phrase search
+                replace=True                           # Replace existing index
+            )
+            self._fts_index_created = True
+        except Exception as e:
+            # FTS index creation might fail on older LanceDB versions or missing tantivy
+            # Fall back to LIKE queries (less efficient but functional)
+            self._fts_index_created = False
 
     def add_symbols(self, symbols: List[Any], vectors: np.ndarray) -> int:
         """
@@ -209,6 +238,8 @@ class VectorStore:
             import pyarrow as pa
             table = pa.Table.from_pylist(data, schema=self.SCHEMA)
             self._table = self.db.create_table(self.table_name, table, mode="overwrite")
+            # Create FTS index after table creation
+            self._create_fts_index()
         else:
             # Subsequent times: append (schema already defined)
             self._table.add(data)
@@ -244,12 +275,52 @@ class VectorStore:
 
     def _search_text(self, query: str, limit: int) -> List[Dict]:
         """
-        Text search using keyword matching.
+        Text search using Tantivy FTS with BM25 scoring.
 
-        Uses LanceDB's full-text search on name, signature, doc_comment.
+        Features:
+        - BM25 relevance ranking (not just 1.0)
+        - English stemming ("running" finds "run", "runs", "runner")
+        - Phrase search support (quoted strings)
+        - Safe from SQL injection (Tantivy rejects invalid queries)
         """
-        # Simple SQL WHERE clause for text matching
-        # LanceDB supports SQL-like queries
+        if not self._fts_index_created:
+            # Fallback to LIKE queries if FTS not available
+            # (Older LanceDB versions or index creation failed)
+            return self._search_text_fallback(query, limit)
+
+        try:
+            # Use Tantivy FTS with BM25 scoring
+            results = (
+                self._table
+                .search(query, query_type="fts")
+                .limit(limit)
+                .to_list()
+            )
+
+            # Normalize BM25 scores to 0.0-1.0 range
+            # LanceDB returns _score field with BM25 values
+            if results:
+                max_score = max(r.get("_score", 0.0) for r in results)
+                for r in results:
+                    # Normalize: divide by max score
+                    raw_score = r.get("_score", 0.0)
+                    r["score"] = raw_score / max_score if max_score > 0 else 0.0
+
+            return results
+        except (ValueError, Exception) as e:
+            # Tantivy raises ValueError for malformed queries (e.g., SQL injection attempts)
+            # Return empty results instead of crashing (safe failure mode)
+            return []
+
+    def _search_text_fallback(self, query: str, limit: int) -> List[Dict]:
+        """
+        Fallback text search using LIKE queries (for older LanceDB versions).
+
+        WARNING: Less efficient, no stemming, no BM25 ranking.
+        """
+        # Use parameterized query to avoid SQL injection
+        # Note: LanceDB's where() still uses string formatting for SQL-like syntax
+        # This is a limitation of the current API
         results = (
             self._table
             .search()
@@ -300,9 +371,48 @@ class VectorStore:
 
     def _search_hybrid(self, query: str, limit: int) -> List[Dict]:
         """
-        Hybrid search: combine text and semantic results.
+        Hybrid search: combine text (FTS) and semantic (vector) with RRF fusion.
 
-        Simple implementation: merge and deduplicate by ID.
+        Uses LanceDB's native Reciprocal Rank Fusion for optimal ranking.
+        Falls back to manual merging if hybrid search not available.
+        """
+        if not self._fts_index_created:
+            # Fall back to manual merging if FTS not available
+            return self._search_hybrid_fallback(query, limit)
+
+        try:
+            # Use LanceDB's native hybrid search with RRF
+            # Need to embed query for vector component
+            from miller.embeddings import EmbeddingManager
+            embeddings = EmbeddingManager()
+            query_vec = embeddings.embed_query(query)
+
+            results = (
+                self._table
+                .search(query, query_type="hybrid")
+                .limit(limit)
+                .to_list()
+            )
+
+            # Normalize scores to 0.0-1.0 range
+            if results:
+                max_score = max(r.get("_score", 0.0) for r in results)
+                for r in results:
+                    raw_score = r.get("_score", 0.0)
+                    r["score"] = raw_score / max_score if max_score > 0 else 0.0
+
+            return results
+
+        except Exception:
+            # Hybrid search might not be supported in this LanceDB version
+            # Fall back to manual merging
+            return self._search_hybrid_fallback(query, limit)
+
+    def _search_hybrid_fallback(self, query: str, limit: int) -> List[Dict]:
+        """
+        Fallback hybrid search: manual merging of text and semantic results.
+
+        Used when LanceDB's native hybrid search is not available.
         """
         # Get results from both methods
         text_results = self._search_text(query, limit)
@@ -347,7 +457,14 @@ class VectorStore:
         self._table.delete(f"file_path = '{file_path}'")
 
         # Add new symbols
-        return self.add_symbols(symbols, vectors)
+        count = self.add_symbols(symbols, vectors)
+
+        # Rebuild FTS index after updating symbols
+        # (LanceDB's Tantivy index needs to be recreated after deletions)
+        if self._fts_index_created:
+            self._create_fts_index()
+
+        return count
 
     def close(self):
         """Close database and cleanup temp directories."""

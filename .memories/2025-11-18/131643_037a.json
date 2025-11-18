@@ -1,0 +1,26 @@
+{
+  "id": "checkpoint_691c71bb_2864ee",
+  "timestamp": 1763471803,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "7d55230",
+    "dirty": true,
+    "files_changed": [
+      "pyproject.toml",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/tests/test_storage.py"
+    ]
+  },
+  "description": "CRITICAL MCP fixes complete: Removed ALL print() statements (they pollute stdio and break JSON-RPC protocol), removed tqdm dependency (progress bars write to stdout), added proper file-based logging to .miller/logs/miller.log with rotation. Created logging_config.py module, updated server.py/workspace.py/ignore_patterns.py to use logging.getLogger(). Added comprehensive integration tests (test_integration.py) that validate full workflow: startup → indexing → search → incremental updates → deletion cleanup. All logging goes to file ONLY - stdout reserved for MCP protocol. Ready for production MCP usage.",
+  "tags": [
+    "critical",
+    "mcp-protocol",
+    "logging",
+    "stdio-fix",
+    "integration-tests",
+    "production-ready"
+  ]
+}
