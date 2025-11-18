@@ -13,3 +13,14 @@ try:
     __rust_version__ = core_version
 except ImportError:
     __rust_version__ = None
+
+# Import Rust core (for direct access)
+try:
+    from miller import _miller_core as miller_core
+except ImportError:
+    miller_core = None
+
+# Export main modules
+from miller import storage, embeddings, server
+
+__all__ = ["miller_core", "storage", "embeddings", "server"]
