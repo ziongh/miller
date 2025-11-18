@@ -31,15 +31,18 @@ See [QUICKSTART.md](QUICKSTART.md) for detailed setup instructions.
 
 ```bash
 # 1. Install Rust
-winget install Rustlang.Rustup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# 2. Set up Python environment
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e ".[dev]"
+# 2. Install UV (modern Python package manager - 10-100x faster than pip!)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 3. Build and test
+# 3. Set up Python environment and build
+uv venv                      # Create venv (<1 second!)
+source .venv/bin/activate
+uv pip install maturin pytest
 maturin develop --release
+
+# 4. Test
 pytest python/tests/ -v
 ```
 
@@ -47,13 +50,24 @@ pytest python/tests/ -v
 
 This is a **TDD project** - tests are written before implementation. See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
-```bash
-# TDD workflow (auto-rebuild and test on file changes)
-make dev
+### Why UV?
 
-# Or manually:
-maturin develop --release  # After Rust changes
-pytest python/tests/       # After Python changes
+Miller uses **[uv](https://github.com/astral-sh/uv)** instead of pip for:
+- ⚡ **10-100x faster** installations (Rust-powered)
+- 🧠 **Smart caching** across projects
+- 🔧 **Better dependency resolution**
+- 🐍 **Python version management** built-in
+
+```bash
+# TDD workflow
+# After Rust changes:
+maturin develop --release
+
+# After Python changes:
+pytest python/tests/
+
+# Install new dependency (use uv instead of pip):
+uv pip install package-name
 ```
 
 ## Memory Tools

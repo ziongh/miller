@@ -164,19 +164,39 @@ logger.info("✓ FastMCP server created with lifespan handler")
 
 def fast_search(
     query: str,
-    method: Literal["text", "semantic", "hybrid"] = "hybrid",
+    method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 50
 ) -> List[Dict[str, Any]]:
     """
-    Search indexed code.
+    Search indexed code using text, semantic, or hybrid methods.
+
+    Method selection (default: auto):
+    - auto: Detects query type automatically (RECOMMENDED)
+      * Has special chars (: < > [ ]) → pattern search (code idioms)
+      * Natural language → hybrid search (text + semantic)
+    - text: Full-text search with stemming (general code search)
+    - pattern: Code idioms (: BaseClass, ILogger<, [Fact], etc.)
+    - semantic: Vector similarity (conceptual matches)
+    - hybrid: Combines text + semantic with RRF fusion
+
+    Examples:
+        # Auto-detection (recommended)
+        fast_search("authentication logic")        # Auto → hybrid
+        fast_search(": BaseClass")                 # Auto → pattern
+        fast_search("ILogger<UserService>")        # Auto → pattern
+        fast_search("[Fact]")                      # Auto → pattern
+
+        # Manual override
+        fast_search("map<int, string>", method="text")  # Force text
+        fast_search("user auth", method="semantic")     # Force semantic
 
     Args:
-        query: Search query
-        method: Search method (text, semantic, hybrid)
+        query: Search query (code patterns, keywords, or natural language)
+        method: Search method (auto-detects by default)
         limit: Maximum results to return
 
     Returns:
-        List of matching symbols with metadata
+        List of matching symbols with scores and metadata
 
     Note: Indexing runs automatically in background via lifespan handler.
           Early searches may return empty results if indexing hasn't completed.

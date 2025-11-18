@@ -1,0 +1,48 @@
+{
+  "description": "Set up UV and GitHub Actions for Miller distribution. Migrated from venv to uv (10-100x faster). Created CI workflow (tests on 3 platforms \u00d7 3 Python versions) and wheels workflow (builds binary wheels for macOS Universal, Linux x86_64/ARM64, Windows x64/ARM64). Set up PyPI trusted publishing for one-command releases. Documented entire distribution strategy in docs/DISTRIBUTION.md.",
+  "git": {
+    "branch": "main",
+    "commit": "a437e91",
+    "dirty": true,
+    "files_changed": [
+      ".julieignore",
+      ".memories/plans/plan_implement-checkpointrecallplan-tools-in-miller-julie-compatible.json",
+      "README.md",
+      "python/miller/embeddings.py",
+      "python/miller/ignore_patterns.py",
+      "python/miller/server.py",
+      "python/miller/workspace.py",
+      ".github/",
+      ".memories/2025-11-18/124215_de9a.json",
+      ".memories/2025-11-18/124348_36fc.json",
+      ".memories/2025-11-18/125434_fede.json",
+      ".memories/2025-11-18/132517_615f.json",
+      ".memories/2025-11-18/140635_54de.json",
+      ".memories/2025-11-18/141302_e014.json",
+      ".memories/2025-11-18/151005_9ebe.json",
+      ".memories/2025-11-18/152952_94e6.json",
+      ".memories/2025-11-18/153520_99f4.json",
+      ".memories/2025-11-18/154105_f9f4.json",
+      ".memories/2025-11-18/155050_41e1.json",
+      ".memories/plans/plan_implement-pattern-search-with-auto-detection.json",
+      "check_device.py",
+      "docs/DISTRIBUTION.md",
+      "docs/SEARCH_FOUNDATION_ANALYSIS.md",
+      "docs/SEARCH_TOOL_DESIGN.md",
+      "docs/TANTIVY_LANCEDB_RESEARCH.md",
+      "python/miller/search_contract.py",
+      "python/tests/test_pattern_search.py",
+      "python/tests/test_pattern_search_poc.py"
+    ]
+  },
+  "id": "decision_d10fd90a_008a9f",
+  "tags": [
+    "distribution",
+    "ci-cd",
+    "uv",
+    "github-actions",
+    "pypi"
+  ],
+  "timestamp": 1763507314,
+  "type": "decision"
+}

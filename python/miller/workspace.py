@@ -162,9 +162,92 @@ class WorkspaceScanner:
         # File not in DB, needs indexing
         return True
 
+    async def _index_file_timed(self, file_path: Path):
+        """
+        Index a single file with timing instrumentation.
+
+        Args:
+            file_path: Path to file (absolute)
+
+        Returns:
+            Tuple of (success, extraction_time, embedding_time, db_time)
+        """
+        import time
+
+        if miller_core is None:
+            return (False, 0.0, 0.0, 0.0)
+
+        try:
+            # Convert to relative Unix-style path (like Julie does)
+            relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
+
+            # Read file
+            content = file_path.read_text(encoding="utf-8")
+
+            # Detect language
+            language = miller_core.detect_language(str(file_path))
+            if not language:
+                return (False, 0.0, 0.0, 0.0)
+
+            # Phase 1: Tree-sitter extraction
+            extraction_start = time.time()
+            result = miller_core.extract_file(
+                content=content,
+                language=language,
+                file_path=relative_path
+            )
+            extraction_time = time.time() - extraction_start
+
+            # Compute file hash
+            file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+            # Phase 2: Database writes (symbols, identifiers, relationships)
+            db_start = time.time()
+
+            # Store file metadata
+            self.storage.add_file(
+                file_path=relative_path,
+                language=language,
+                content=content,
+                hash=file_hash,
+                size=len(content)
+            )
+
+            # Store symbols
+            if result.symbols:
+                self.storage.add_symbols_batch(result.symbols)
+
+            # Store identifiers
+            if result.identifiers:
+                self.storage.add_identifiers_batch(result.identifiers)
+
+            # Store relationships
+            if result.relationships:
+                self.storage.add_relationships_batch(result.relationships)
+
+            db_time = time.time() - db_start
+
+            # Phase 3: Generate embeddings
+            embedding_time = 0.0
+            if result.symbols:
+                embedding_start = time.time()
+                import numpy as np
+                vectors = self.embeddings.embed_batch(result.symbols)
+
+                # Store in LanceDB (using relative path)
+                self.vector_store.update_file_symbols(relative_path, result.symbols, vectors)
+                embedding_time = time.time() - embedding_start
+
+            return (True, extraction_time, embedding_time, db_time)
+
+        except Exception as e:
+            # Log error but continue with other files
+            logger.warning(f"Failed to index {file_path}: {e}")
+            return (False, 0.0, 0.0, 0.0)
+
     async def _index_file(self, file_path: Path) -> bool:
         """
-        Index a single file.
+        Index a single file (without timing instrumentation).
 
         Args:
             file_path: Path to file (absolute)
@@ -336,18 +419,32 @@ class WorkspaceScanner:
         Returns:
             Dict with indexing statistics
         """
+        import time
+        start_time = time.time()
+
         stats = IndexStats()
 
-        # Get current state
+        # Track cumulative timings
+        total_extraction_time = 0.0
+        total_embedding_time = 0.0
+        total_db_time = 0.0
+        total_vector_time = 0.0  # LanceDB vector store writes
+
+        # Phase 1: File discovery
+        discovery_start = time.time()
         disk_files = self._walk_directory()
         db_files = self.storage.get_all_files()
+        discovery_time = time.time() - discovery_start
+
+        logger.info(f"📁 File discovery: {len(disk_files)} files found in {discovery_time:.2f}s")
 
         # Build lookup for DB files (uses relative paths)
         db_files_map = {f["path"]: f for f in db_files}
         # Convert disk files to relative Unix-style paths to match DB
         disk_files_set = {str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files}
 
-        # Index new/changed files
+        # Phase 2: Index new/changed files
+        files_to_process = []
         for file_path in disk_files:
             # Convert to relative path for DB lookup
             relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
@@ -355,28 +452,155 @@ class WorkspaceScanner:
             if relative_path in db_files_map:
                 # File exists in DB, check if changed
                 if self._needs_indexing(file_path, db_files_map):
-                    # File changed, re-index
-                    success = await self._index_file(file_path)
-                    if success:
-                        stats.updated += 1
-                    else:
-                        stats.errors += 1
+                    files_to_process.append((file_path, "updated"))
                 else:
                     # File unchanged, skip
                     stats.skipped += 1
             else:
                 # New file, index
-                success = await self._index_file(file_path)
-                if success:
-                    stats.indexed += 1
-                else:
+                files_to_process.append((file_path, "indexed"))
+
+        if files_to_process:
+            logger.info(f"🔄 Processing {len(files_to_process)} files (new/changed), skipping {stats.skipped} unchanged")
+
+        # Process files in batches for optimal GPU utilization
+        BATCH_SIZE = 50  # Process 50 files at a time for better GPU batching
+
+        for batch_idx in range(0, len(files_to_process), BATCH_SIZE):
+            batch = files_to_process[batch_idx:batch_idx + BATCH_SIZE]
+
+            # Phase 2a: Extract symbols from all files in batch
+            batch_data = []  # List of (file_path, action, symbols, relative_path, content, language, hash)
+            for file_path, action in batch:
+                try:
+                    relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
+                    content = file_path.read_text(encoding="utf-8")
+                    language = miller_core.detect_language(str(file_path))
+
+                    extraction_start = time.time()
+                    result = miller_core.extract_file(content=content, language=language, file_path=relative_path)
+                    total_extraction_time += time.time() - extraction_start
+
+                    file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                    batch_data.append((file_path, action, result, relative_path, content, language, file_hash))
+                except Exception as e:
+                    logger.warning(f"Failed to extract {file_path}: {e}")
                     stats.errors += 1
 
-        # Clean up deleted files
+            if not batch_data:
+                continue
+
+            # Phase 2b: Batch embed ALL symbols from this batch of files at once
+            all_symbols = []
+            symbol_file_map = []  # Track which file each symbol belongs to
+            for _, _, result, relative_path, _, _, _ in batch_data:
+                if result.symbols:
+                    for sym in result.symbols:
+                        all_symbols.append(sym)
+                        symbol_file_map.append(relative_path)
+
+            # Single embedding call for entire batch of files
+            all_vectors = None
+            if all_symbols:
+                embedding_start = time.time()
+                all_vectors = self.embeddings.embed_batch(all_symbols)
+                total_embedding_time += time.time() - embedding_start
+
+            # Phase 2c: Write to database and vector store
+            for file_path, action, result, relative_path, content, language, file_hash in batch_data:
+                try:
+                    db_start = time.time()
+
+                    # Add file metadata
+                    self.storage.add_file(
+                        file_path=relative_path,
+                        language=language,
+                        content=content,
+                        hash=file_hash,
+                        size=len(content)
+                    )
+
+                    # Add symbols, identifiers, relationships
+                    if result.symbols:
+                        self.storage.add_symbols_batch(result.symbols)
+                    if result.identifiers:
+                        self.storage.add_identifiers_batch(result.identifiers)
+                    if result.relationships:
+                        self.storage.add_relationships_batch(result.relationships)
+
+                    total_db_time += time.time() - db_start
+
+                    # Add vectors to LanceDB (extract this file's vectors from the big batch)
+                    if result.symbols and all_vectors is not None:
+                        vector_start = time.time()
+
+                        # Find vectors for this file
+                        file_vectors = []
+                        for i, sym_file in enumerate(symbol_file_map):
+                            if sym_file == relative_path:
+                                file_vectors.append(all_vectors[i])
+
+                        if file_vectors:
+                            import numpy as np
+                            file_vectors_array = np.array(file_vectors)
+                            # Defer FTS index rebuild (do it once at the end)
+                            self.vector_store.update_file_symbols(
+                                relative_path,
+                                result.symbols,
+                                file_vectors_array,
+                                rebuild_index=False  # Don't rebuild 298 times!
+                            )
+
+                        total_vector_time += time.time() - vector_start
+
+                    # Update stats
+                    if action == "updated":
+                        stats.updated += 1
+                    else:
+                        stats.indexed += 1
+
+                except Exception as e:
+                    logger.warning(f"Failed to index {file_path}: {e}")
+                    stats.errors += 1
+
+            # Log progress after each batch
+            processed = min(batch_idx + BATCH_SIZE, len(files_to_process))
+            logger.info(f"   📊 Progress: {processed}/{len(files_to_process)} files processed")
+
+        # Rebuild FTS index once after all files processed
+        # (Much faster than rebuilding 298 times - was O(N²), now O(N))
+        if files_to_process:
+            logger.info("🔨 Rebuilding FTS index (one-time operation)...")
+            rebuild_start = time.time()
+            self.vector_store.rebuild_fts_index()
+            rebuild_time = time.time() - rebuild_start
+            logger.info(f"✅ FTS index rebuilt in {rebuild_time:.2f}s")
+            total_vector_time += rebuild_time
+
+        # Phase 3: Clean up deleted files
+        cleanup_start = time.time()
         for db_file_path in db_files_map.keys():
             if db_file_path not in disk_files_set:
                 # File deleted from disk, remove from DB
                 self.storage.delete_file(db_file_path)
                 stats.deleted += 1
+        cleanup_time = time.time() - cleanup_start
+
+        # Final timing summary
+        total_time = time.time() - start_time
+
+        logger.info("=" * 60)
+        logger.info("📊 Indexing Performance Summary")
+        logger.info("=" * 60)
+        logger.info(f"⏱️  Total time: {total_time:.2f}s")
+        logger.info(f"📁 File discovery: {discovery_time:.2f}s ({discovery_time/total_time*100:.1f}%)")
+        if stats.indexed + stats.updated > 0:
+            logger.info(f"🔍 Tree-sitter extraction: {total_extraction_time:.2f}s ({total_extraction_time/total_time*100:.1f}%)")
+            logger.info(f"🧠 Embedding generation: {total_embedding_time:.2f}s ({total_embedding_time/total_time*100:.1f}%)")
+            logger.info(f"💾 SQLite writes: {total_db_time:.2f}s ({total_db_time/total_time*100:.1f}%)")
+            logger.info(f"🗂️  LanceDB writes: {total_vector_time:.2f}s ({total_vector_time/total_time*100:.1f}%)")
+            logger.info(f"🗑️  Cleanup: {cleanup_time:.2f}s ({cleanup_time/total_time*100:.1f}%)")
+            logger.info(f"📈 Throughput: {(stats.indexed + stats.updated) / total_time:.1f} files/sec")
+        logger.info("=" * 60)
 
         return stats.to_dict()

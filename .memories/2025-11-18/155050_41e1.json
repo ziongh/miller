@@ -1,0 +1,44 @@
+{
+  "description": "Added comprehensive performance timing and logging to workspace indexing. Tracks and reports: file discovery time, tree-sitter extraction time, embedding generation time, database write time, cleanup time, and overall throughput (files/sec). Logs progress every 50 files. Displays percentage breakdown showing where time is spent. Enables direct performance comparison with Julie. New _index_file_timed() method instruments each indexing phase separately.",
+  "git": {
+    "branch": "main",
+    "commit": "a437e91",
+    "dirty": true,
+    "files_changed": [
+      ".julie/.gitignore",
+      ".memories/plans/plan_implement-checkpointrecallplan-tools-in-miller-julie-compatible.json",
+      "python/miller/embeddings.py",
+      "python/miller/ignore_patterns.py",
+      "python/miller/server.py",
+      "python/miller/workspace.py",
+      ".memories/2025-11-18/124215_de9a.json",
+      ".memories/2025-11-18/124348_36fc.json",
+      ".memories/2025-11-18/125434_fede.json",
+      ".memories/2025-11-18/132517_615f.json",
+      ".memories/2025-11-18/140635_54de.json",
+      ".memories/2025-11-18/141302_e014.json",
+      ".memories/2025-11-18/151005_9ebe.json",
+      ".memories/2025-11-18/152952_94e6.json",
+      ".memories/2025-11-18/153520_99f4.json",
+      ".memories/2025-11-18/154105_f9f4.json",
+      ".memories/plans/plan_implement-pattern-search-with-auto-detection.json",
+      "check_device.py",
+      "docs/SEARCH_FOUNDATION_ANALYSIS.md",
+      "docs/SEARCH_TOOL_DESIGN.md",
+      "docs/TANTIVY_LANCEDB_RESEARCH.md",
+      "python/miller/search_contract.py",
+      "python/tests/test_pattern_search.py",
+      "python/tests/test_pattern_search_poc.py"
+    ]
+  },
+  "id": "checkpoint_4b54dec8_7d0641",
+  "tags": [
+    "performance-logging",
+    "benchmarking",
+    "timing-instrumentation",
+    "julie-comparison",
+    "optimization"
+  ],
+  "timestamp": 1763502650,
+  "type": "checkpoint"
+}
