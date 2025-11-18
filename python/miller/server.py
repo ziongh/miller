@@ -34,9 +34,9 @@ except ImportError:
 
 # Initialize Miller components
 logger.info("Initializing Miller components...")
-# Set long timeout for ML/indexing operations (5 minutes)
-# Default 60s is too short for embedding generation and large workspace indexing
-mcp = FastMCP("Miller Code Intelligence Server", request_timeout=300)
+# Note: FastMCP doesn't have request_timeout parameter
+# Timeout handling is managed by the underlying transport layer
+mcp = FastMCP("Miller Code Intelligence Server")
 storage = StorageManager(db_path=".miller/indexes/symbols.db")
 vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
 embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
@@ -52,6 +52,9 @@ scanner = WorkspaceScanner(
     vector_store=vector_store
 )
 logger.info("✓ WorkspaceScanner initialized")
+
+# Track if lazy indexing has run
+_indexing_complete = False
 
 
 # Background auto-indexing (runs after server starts)
@@ -92,6 +95,18 @@ def fast_search(
     Returns:
         List of matching symbols with metadata
     """
+    global _indexing_complete
+
+    # Lazy indexing: index on first search if needed
+    if not _indexing_complete:
+        logger.info("First search - running lazy indexing...")
+        try:
+            asyncio.run(startup_indexing())
+            _indexing_complete = True
+        except Exception as e:
+            logger.error(f"Lazy indexing failed: {e}", exc_info=True)
+            # Continue anyway - return whatever results we have
+
     results = vector_store.search(query, method=method, limit=limit)
 
     # Format results for MCP
@@ -205,13 +220,13 @@ def main():
     """Main entry point for Miller MCP server."""
     logger.info("Starting Miller MCP server...")
 
-    # Run startup indexing before starting server
-    # This ensures workspace is indexed before first client request
-    logger.info("Running startup indexing check...")
-    asyncio.run(startup_indexing())
+    # Skip startup indexing - index on-demand when first search is called
+    # Running indexing before mcp.run() blocks the server from accepting connections
+    # which causes Claude Code CLI connection timeouts
+    logger.info("Miller MCP server ready - indexing will run on first search")
 
-    logger.info("Miller MCP server ready - waiting for client connection")
-    mcp.run()
+    # Suppress FastMCP banner to keep stdout clean for MCP protocol
+    mcp.run(show_banner=False)
 
 
 if __name__ == "__main__":

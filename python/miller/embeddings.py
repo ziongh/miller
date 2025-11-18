@@ -7,10 +7,14 @@ Uses sentence-transformers for encoding and LanceDB for vector storage.
 
 import numpy as np
 import torch
+import pyarrow as pa
 from typing import List, Dict, Optional, Any, Literal
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
 import lancedb
+import sys
+import os
+from contextlib import redirect_stdout, redirect_stderr
 
 
 class EmbeddingManager:
@@ -42,8 +46,13 @@ class EmbeddingManager:
         else:
             self.device = device
 
-        # Load model
-        self.model = SentenceTransformer(model_name, device=self.device)
+        # Load model (suppress stdout/stderr to keep MCP protocol clean)
+        # SentenceTransformer downloads models and writes progress to stdout,
+        # which breaks MCP's JSON-RPC protocol (stdout must be clean)
+        with open(os.devnull, 'w') as devnull:
+            with redirect_stdout(devnull), redirect_stderr(devnull):
+                self.model = SentenceTransformer(model_name, device=self.device)
+
         self.model_name = model_name
 
         # Get embedding dimension from model
@@ -118,6 +127,20 @@ class VectorStore:
     - Metadata storage (symbol fields)
     """
 
+    # Explicit PyArrow schema with nullable fields for optional symbol attributes
+    SCHEMA = pa.schema([
+        pa.field("id", pa.string(), nullable=False),
+        pa.field("name", pa.string(), nullable=False),
+        pa.field("kind", pa.string(), nullable=False),
+        pa.field("language", pa.string(), nullable=False),
+        pa.field("file_path", pa.string(), nullable=False),
+        pa.field("signature", pa.string(), nullable=True),      # Optional
+        pa.field("doc_comment", pa.string(), nullable=True),    # Optional
+        pa.field("start_line", pa.int32(), nullable=True),      # Optional
+        pa.field("end_line", pa.int32(), nullable=True),        # Optional
+        pa.field("vector", pa.list_(pa.float32(), 384), nullable=False),  # 384-dim embeddings
+    ])
+
     def __init__(self, db_path: str = ".miller/indexes/vectors.lance"):
         """
         Initialize LanceDB connection.
@@ -142,9 +165,13 @@ class VectorStore:
         # Connect to LanceDB
         self.db = lancedb.connect(actual_path)
 
-        # Table will be created on first add_symbols
+        # Load existing table or create on first add_symbols
         self.table_name = "symbols"
-        self._table = None
+        try:
+            self._table = self.db.open_table(self.table_name)
+        except Exception:
+            # Table doesn't exist yet, will be created on first add_symbols
+            self._table = None
 
     def add_symbols(self, symbols: List[Any], vectors: np.ndarray) -> int:
         """
@@ -178,10 +205,12 @@ class VectorStore:
 
         # Create or append to table
         if self._table is None:
-            # First time: create table
-            self._table = self.db.create_table(self.table_name, data, mode="overwrite")
+            # First time: create table with explicit schema to handle nullable fields
+            import pyarrow as pa
+            table = pa.Table.from_pylist(data, schema=self.SCHEMA)
+            self._table = self.db.create_table(self.table_name, table, mode="overwrite")
         else:
-            # Subsequent times: append
+            # Subsequent times: append (schema already defined)
             self._table.add(data)
 
         return len(data)
