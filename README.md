@@ -19,10 +19,11 @@ Python (Orchestration)          Rust (Performance)
 ## Features
 
 - 🚀 **31 Language Support**: Python, JavaScript, TypeScript, Rust, Go, Java, C#, and more
-- 🔍 **Dual Search**: FTS5 text search + semantic vector search
+- 🔍 **Hybrid Search**: Tantivy FTS (BM25) + semantic vector search (dual-mode)
 - 🎯 **LSP-Quality**: Go-to-definition, find-references, symbol outline
 - 🧠 **GPU-Accelerated**: sentence-transformers with CUDA support
 - 📦 **Zero-Copy Bridge**: PyO3 for Rust ↔ Python with no serialization overhead
+- 💾 **Development Memory**: checkpoint/recall/plan tools for tracking development progress
 
 ## Quick Start
 
@@ -55,22 +56,104 @@ maturin develop --release  # After Rust changes
 pytest python/tests/       # After Python changes
 ```
 
+## Memory Tools
+
+Miller includes a development memory system for tracking checkpoints, decisions, learnings, and plans throughout your development process.
+
+### Quick Start
+
+```bash
+# Create a checkpoint
+/checkpoint Fixed authentication bug --type decision
+
+# Recall recent memories
+/recall 1hr                    # Last hour
+/recall authentication         # Search by topic
+/recall --type decision        # Filter by type
+
+# Manage plans
+/plan                          # List plans
+```
+
+### MCP Tools
+
+**checkpoint** - Create immutable development memories
+```python
+await checkpoint(ctx, "Implemented search feature", tags=["feature", "search"])
+```
+
+**recall** - Retrieve memories with filtering
+```python
+await recall(ctx, type="decision", since="2025-11-17", limit=10)
+```
+
+**plan** - Manage development plans
+```python
+await plan(ctx, action="save", title="Add Auth", content="## Goal...")
+```
+
+### Features
+
+- ✅ **100% Julie Compatible**: Same JSON schema, file format, directory structure
+- ✅ **4 Memory Types**: checkpoint, decision, learning, observation
+- ✅ **Git Context**: Automatically captures branch, commit, dirty status, changed files
+- ✅ **Tag Support**: Normalized lowercase tags for categorization
+- ✅ **Time Filtering**: ISO 8601 date ranges with timezone support
+- ✅ **Plan Management**: Single-active plan enforcement, lifecycle tracking
+- ✅ **Slash Commands**: Convenient `/checkpoint` and `/recall` CLI interface
+
+### Storage
+
+Memories are stored in `.memories/` directory:
+
+```
+.memories/
+├── 2025-11-18/
+│   ├── 180200_abd3.json    # Checkpoint at 18:02:00 UTC
+│   ├── 181800_9a93.json
+│   └── 182824_4ec9.json
+└── plans/
+    └── plan_add-search.json
+```
+
+All memory files are git-friendly JSON with:
+- Pretty printing (indent=2, sorted keys)
+- Trailing newline for clean diffs
+- UTC timezone for cross-timezone consistency
+
+See `.claude/commands/` for slash command definitions.
+
 ## Documentation
 
 - **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide
 - **[CLAUDE.md](CLAUDE.md)** - Development guidelines (TDD rules!)
 - **[docs/PLAN.md](docs/PLAN.md)** - Detailed migration plan from Julie
+- **[`.memories/`](.memories/)** - Development memory storage
 
 ## Project Status
 
-🚧 **Phase 1: Rust Core Extension** (In Progress)
-- [ ] Copy Julie's extractors
-- [ ] Create PyO3 bindings
-- [ ] Test extraction for 5+ languages
+✅ **Phase 1: Rust Core Extension** (Complete)
+- ✅ Julie's extractors integrated (31 languages)
+- ✅ PyO3 bindings created
+- ✅ Extraction tested and working
 
-⏳ **Phase 2: Storage Layer** (Not Started)
-⏳ **Phase 3: Embeddings** (Not Started)
-⏳ **Phase 4: MCP Server** (Not Started)
+✅ **Phase 2: Storage Layer** (Complete)
+- ✅ SQLite for relations and metadata
+- ✅ LanceDB for vectors and FTS
+- ✅ Tantivy full-text search with BM25 ranking
+
+✅ **Phase 3: Embeddings** (Complete)
+- ✅ sentence-transformers integration
+- ✅ GPU acceleration (CUDA)
+- ✅ Semantic search operational
+
+✅ **Phase 4: MCP Server** (Complete)
+- ✅ FastMCP server with tools
+- ✅ File watcher for real-time indexing
+- ✅ Memory tools (checkpoint/recall/plan)
+- ✅ Slash commands for UX
+
+🚀 **Status**: Production-ready, actively dogfooding Miller for development
 
 ## License
 

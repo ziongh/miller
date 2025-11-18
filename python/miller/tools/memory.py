@@ -35,21 +35,42 @@ async def checkpoint(
     """
     Create immutable development memory checkpoint.
 
+    Checkpoints are stored in `.memories/YYYY-MM-DD/` (UTC timezone) with
+    automatic git context capture (branch, commit, dirty status, changed files).
+
     Args:
         ctx: FastMCP context
-        description: Description of what was accomplished or learned
-        tags: Optional tags for categorization
-        type: Memory type (checkpoint, decision, learning, observation)
+        description: What was accomplished or learned (1-3 sentences)
+        tags: Optional tags for categorization (lowercase, hyphenated)
+        type: Memory type - "checkpoint", "decision", "learning", or "observation"
 
     Returns:
-        Checkpoint ID (e.g., "checkpoint_691cb498_2fc504")
+        Checkpoint ID (format: {type}_{8hex}_{6hex})
 
-    Example:
-        >>> checkpoint_id = await checkpoint(
+    Examples:
+        # Simple checkpoint
+        >>> id = await checkpoint(ctx, "Fixed authentication bug")
+
+        # With tags and type
+        >>> id = await checkpoint(
         ...     ctx,
-        ...     "Fixed authentication bug",
-        ...     tags=["bug", "auth"]
+        ...     "Decided to use PostgreSQL over MongoDB for better transactions",
+        ...     tags=["architecture", "database"],
+        ...     type="decision"
         ... )
+
+        # Learning checkpoint
+        >>> id = await checkpoint(
+        ...     ctx,
+        ...     "Learned that async context managers need __aenter__ and __aexit__",
+        ...     tags=["python", "async"],
+        ...     type="learning"
+        ... )
+
+    Storage:
+        - File: .memories/2025-11-18/182824_4ec9.json
+        - Format: Pretty-printed JSON (indent=2, sorted keys)
+        - Git-friendly: Trailing newline for clean diffs
     """
     # Generate checkpoint ID and timestamp
     checkpoint_id = generate_checkpoint_id(type)
@@ -88,20 +109,49 @@ async def recall(
     """
     Retrieve development memory checkpoints with filtering.
 
+    Scans `.memories/YYYY-MM-DD/` directories and returns memories in reverse
+    chronological order (newest first). Supports time-based and type-based filtering.
+
     Args:
         ctx: FastMCP context
-        type: Filter by memory type (checkpoint, decision, learning, observation)
-        since: Return memories since this date (ISO 8601: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
-        until: Return memories until this date (ISO 8601: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
-        limit: Maximum number of results to return
+        type: Filter by memory type ("checkpoint", "decision", "learning", "observation")
+        since: Memories since this date (ISO 8601: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS")
+               Uses local timezone - automatically converted to UTC for filtering
+        until: Memories until this date (ISO 8601, same format as since)
+        limit: Maximum number of results (default: 10)
 
     Returns:
-        List of checkpoint dictionaries, sorted by timestamp descending (newest first)
+        List of checkpoint dictionaries with keys:
+        - id: Checkpoint ID
+        - timestamp: Unix timestamp (seconds)
+        - type: Memory type
+        - description: Memory description
+        - tags: List of tags
+        - git: Dict with branch, commit, dirty, files_changed
 
-    Example:
-        >>> memories = await recall(ctx, type="decision", limit=5)
-        >>> for memory in memories:
-        ...     print(f"{memory['description']}")
+    Examples:
+        # Get last 10 memories
+        >>> memories = await recall(ctx)
+
+        # Filter by type
+        >>> decisions = await recall(ctx, type="decision", limit=20)
+
+        # Time range filtering
+        >>> recent = await recall(ctx, since="2025-11-17")
+        >>> yesterday = await recall(ctx, since="2025-11-17", until="2025-11-18")
+
+        # Combined filters
+        >>> arch_decisions = await recall(
+        ...     ctx,
+        ...     type="decision",
+        ...     since="2025-11-01",
+        ...     limit=50
+        ... )
+
+    Notes:
+        - Returns empty list [] if no memories found
+        - Gracefully handles corrupt JSON files (skips them)
+        - Date strings in local timezone, converted to UTC automatically
     """
     memories_dir = Path(".memories")
 
@@ -180,42 +230,81 @@ async def plan(
     """
     Manage mutable development plans.
 
+    Plans are stored in `.memories/plans/` as mutable documents that track
+    development goals and progress. Enforces single-active-plan pattern.
+
     Actions:
         - save: Create new plan
         - get: Retrieve specific plan by ID
         - list: See all plans (optionally filter by status)
         - activate: Set as active plan (deactivates all others)
         - update: Modify existing plan (content, status, etc.)
-        - complete: Mark plan as done
+        - complete: Mark plan as done (adds completed_at timestamp)
 
     Args:
         ctx: FastMCP context
-        action: Action to perform (save, get, list, activate, update, complete)
-        title: Plan title (required for save)
+        action: Action to perform (save|get|list|activate|update|complete)
+        title: Plan title (required for save) - converted to slug for ID
         content: Plan content in markdown (optional for save/update)
-        id: Plan ID (required for get, update, activate, complete)
-        status: Plan status (optional for update)
-        activate: Activate after saving (optional for save, defaults to True)
+        id: Plan ID (required for get/update/activate/complete)
+        status: Plan status (optional for update) - "active"|"pending"|"completed"
+        activate: Auto-activate after save (default: True, enforces single-active)
 
     Returns:
-        Depends on action:
-        - save: Plan dict with ID
-        - get: Plan dict
-        - list: List of plan dicts
-        - activate: Success message
+        - save: Plan dict with generated ID
+        - get: Plan dict with all fields
+        - list: List of plan dicts (filtered by status if provided)
+        - activate: Success message dict
         - update: Updated plan dict
-        - complete: Completed plan dict
+        - complete: Completed plan dict (with completed_at timestamp)
 
     Examples:
-        >>> # Create plan
+        # Create and activate a plan
         >>> plan_result = await plan(
         ...     ctx,
         ...     action="save",
-        ...     title="Add Search",
-        ...     content="## Goal\\nImplement search..."
+        ...     title="Add Search Feature",
+        ...     content="## Goal\\nImplement full-text search\\n\\n## Tasks\\n- [ ] FTS index\\n- [ ] UI"
         ... )
-        >>> # Get plan
-        >>> my_plan = await plan(ctx, action="get", id=plan_result["id"])
+        >>> print(plan_result["id"])  # "plan_add-search-feature"
+
+        # List all active plans
+        >>> active_plans = await plan(ctx, action="list", status="active")
+
+        # Get specific plan
+        >>> my_plan = await plan(ctx, action="get", id="plan_add-search-feature")
+
+        # Update plan content
+        >>> updated = await plan(
+        ...     ctx,
+        ...     action="update",
+        ...     id="plan_add-search-feature",
+        ...     content="## Goal\\n...updated content..."
+        ... )
+
+        # Complete a plan
+        >>> completed = await plan(ctx, action="complete", id="plan_add-search-feature")
+        >>> print(completed["completed_at"])  # Unix timestamp
+
+        # Activate different plan (deactivates others)
+        >>> await plan(ctx, action="activate", id="plan_refactor-core")
+
+    Storage:
+        - File: .memories/plans/plan_{slug}.json
+        - Format: Pretty-printed JSON (indent=2, sorted keys)
+        - Single-active enforcement: Only one plan can be active at a time
+
+    Plan Structure:
+        {
+          "id": "plan_add-search-feature",
+          "timestamp": 1763488903,
+          "type": "plan",
+          "title": "Add Search Feature",
+          "status": "active",
+          "content": "## Goal\\n...",
+          "git": {...},
+          "completed_at": 1763490000  // Only if status="completed"
+        }
     """
     plans_dir = Path(".memories/plans")
 
