@@ -48,3 +48,6 @@ Thumbs.db
 # Temp files
 *.tmp
 *.temp
+
+# Debug scripts
+debug_*.py
