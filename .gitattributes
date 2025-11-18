@@ -1,0 +1,36 @@
+# Auto-detect text files and normalize line endings to LF in repo
+* text=auto
+
+# Source code
+*.rs text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Shell scripts
+*.sh text eol=lf
+*.bash text eol=lf
+Makefile text eol=lf
+
+# Config files
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.editorconfig text eol=lf
+
+# Binary files
+*.whl binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.exe binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
