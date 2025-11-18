@@ -20,6 +20,7 @@ from miller.embeddings import EmbeddingManager, VectorStore
 from miller.workspace import WorkspaceScanner
 from miller.watcher import FileWatcher, FileEvent
 from miller.logging_config import setup_logging, get_logger
+from miller.tools.memory import checkpoint, recall, plan
 import asyncio
 
 # Initialize logging FIRST (before any other operations)
@@ -273,6 +274,11 @@ mcp.tool()(fast_search)
 mcp.tool()(fast_goto)
 mcp.tool()(get_symbols)
 
+# Register memory tools
+mcp.tool()(checkpoint)
+mcp.tool()(recall)
+mcp.tool()(plan)
+
 
 # Export functions for direct use (testing)
 # The @mcp.tool() decorator wraps them, but we also need raw access
@@ -284,7 +290,10 @@ __all__ = [
     "scanner",
     "fast_search",
     "fast_goto",
-    "get_symbols"
+    "get_symbols",
+    "checkpoint",
+    "recall",
+    "plan"
 ]
 
 

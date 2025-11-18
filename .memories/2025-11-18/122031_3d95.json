@@ -1,0 +1,20 @@
+{
+  "description": "Test from server integration",
+  "git": {
+    "branch": "main",
+    "commit": "fe0e1bb",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/server.py",
+      ".memories/2025-11-18/180200_abd3.json",
+      ".memories/2025-11-18/181800_9a93.json",
+      "python/miller/memory_utils.py",
+      "python/miller/tools/",
+      "python/tests/test_memory_tools.py"
+    ]
+  },
+  "id": "checkpoint_c77927ce_697a72",
+  "tags": [],
+  "timestamp": 1763490031,
+  "type": "checkpoint"
+}

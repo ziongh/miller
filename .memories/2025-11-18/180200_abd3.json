@@ -1,0 +1,21 @@
+{
+  "id": "checkpoint_691cb498_2fc504",
+  "timestamp": 1763488920,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "cf00e54",
+    "dirty": true,
+    "files_changed": [
+      ".memories/plans/plan_replace-like-queries-with-lancedb-tantivy-fts.json"
+    ]
+  },
+  "description": "Created comprehensive TDD plan for implementing checkpoint/recall/plan tools in Miller with 100% backward compatibility with Julie's .memories system. Plan includes 4 phases: (1) Test Design - write 24 failing tests first covering checkpoint creation, recall filtering, plan management, and backward compatibility, (2) Implementation - create memory_utils.py helpers + implement 3 MCP tools following exact Julie schemas, (3) Validation - verify Miller reads Julie checkpoints and vice versa, (4) Integration - full lifecycle tests + documentation. Key requirements: Same JSON schema, file naming (HHMMSS_XXXX.json), directory structure (.memories/YYYY-MM-DD/), ID format ({type}_{8hex}_{6hex}), and git context capture. Estimated 8 hours of TDD development. Goal: Enable dogfooding Miller to replace Julie while maintaining full .memories compatibility.",
+  "tags": [
+    "tdd-plan",
+    "checkpoint-recall-plan",
+    "julie-compatibility",
+    "dogfooding-prep",
+    "phase-planning"
+  ]
+}

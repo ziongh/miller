@@ -1,0 +1,21 @@
+{
+  "id": "checkpoint_691cb91e_8e75f1",
+  "timestamp": 1763490078,
+  "type": "checkpoint",
+  "git": {
+    "branch": "main",
+    "commit": "fe0e1bb",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/server.py"
+    ]
+  },
+  "description": "Phase 3 Complete: Registered checkpoint/recall/plan MCP tools in Miller server. Added imports in server.py (line 23), registered all three tools with FastMCP using mcp.tool() pattern (lines 278-280), updated __all__ exports (lines 294-296). Integration testing successful: all tools callable from server, checkpoint creates memories, recall retrieves them, plan manages development plans. Test suite: 24/24 passing (100%), memory_utils.py 53% coverage, tools/memory.py 85% coverage. Tools now available via MCP protocol for Claude Desktop integration. Next: Phase 4 validation (Julie compatibility testing, integration tests, documentation).",
+  "tags": [
+    "phase-3-complete",
+    "mcp-tools-registered",
+    "server-integration",
+    "24-tests-passing",
+    "ready-for-validation"
+  ]
+}
