@@ -76,92 +76,44 @@ class TestServerInitialization:
         assert embeddings is not None
 
 
-class TestIndexFileTool:
-    """Test the index_file MCP tool."""
+class TestWorkspaceScanner:
+    """Test automatic workspace scanning and indexing."""
 
-    async def test_index_file_tool_exists(self):
-        """Test that index_file tool is registered."""
-        from miller.server import mcp
+    @pytest.mark.asyncio
+    async def test_scanner_exists(self):
+        """Test that scanner is initialized."""
+        from miller.server import scanner
 
-        # FastMCP should have this tool registered
-        tools = await mcp.get_tools()
-        tool_names = list(tools.keys())  # get_tools() returns dict
-        assert "index_file" in tool_names
+        assert scanner is not None
+        assert scanner.workspace_root is not None
 
-    def test_index_file_indexes_python_file(self, test_workspace):
-        """Test indexing a Python file."""
-        from miller.server import index_file
+    @pytest.mark.asyncio
+    async def test_workspace_indexing_on_startup(self, test_workspace):
+        """Test that workspace is automatically indexed on startup."""
+        from miller.workspace import WorkspaceScanner
+        from miller.storage import StorageManager
+        from miller.embeddings import EmbeddingManager, VectorStore
 
-        file_path = str(test_workspace / "test.py")
-        result = index_file(file_path)
+        # Create fresh components
+        storage = StorageManager(":memory:")
+        embeddings = EmbeddingManager(device="cpu")
+        vector_store = VectorStore(db_path=":memory:")
 
-        # Should return success message with stats
-        assert "Success" in result or "indexed" in result.lower()
-        assert "2" in result or "symbol" in result.lower()  # 2 functions
+        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
 
-    def test_index_file_indexes_javascript_file(self, test_workspace):
-        """Test indexing a JavaScript file."""
-        from miller.server import index_file
+        # Check if indexing needed (should be True for empty DB)
+        needs_indexing = await scanner.check_if_indexing_needed()
+        assert needs_indexing is True
 
-        file_path = str(test_workspace / "lib.js")
-        result = index_file(file_path)
+        # Run indexing
+        stats = await scanner.index_workspace()
 
-        assert "Success" in result or "indexed" in result.lower()
+        # Verify files were indexed
+        assert stats["indexed"] >= 2  # test.py and lib.js
 
-    def test_index_file_stores_in_database(self, test_workspace):
-        """Test that indexed symbols are stored in SQLite."""
-        from miller.server import index_file, storage
-
-        file_path = str(test_workspace / "test.py")
-        index_file(file_path)
-
-        # Check SQLite for symbols
+        # Verify symbols are in database
         sym = storage.get_symbol_by_name("calculate_age")
         assert sym is not None
-        assert sym["kind"] == "function"
-
-    def test_index_file_stores_embeddings(self, test_workspace):
-        """Test that embeddings are stored in LanceDB."""
-        from miller.server import index_file, vector_store
-
-        file_path = str(test_workspace / "test.py")
-        index_file(file_path)
-
-        # Search should find the symbol
-        results = vector_store.search("calculate_age", method="text", limit=5)
-        assert len(results) > 0
-        assert any(r["name"] == "calculate_age" for r in results)
-
-    def test_index_file_handles_nonexistent_file(self):
-        """Test error handling for missing files."""
-        from miller.server import index_file
-
-        result = index_file("/nonexistent/file.py")
-
-        # Should return error message (not crash)
-        assert "error" in result.lower() or "not found" in result.lower()
-
-    def test_index_file_updates_on_reindex(self, test_workspace):
-        """Test that re-indexing updates symbols."""
-        from miller.server import index_file, storage
-
-        file_path = str(test_workspace / "test.py")
-
-        # Index first time
-        index_file(file_path)
-
-        # Modify file
-        (test_workspace / "test.py").write_text("def new_function(): pass")
-
-        # Re-index
-        index_file(file_path)
-
-        # Should find new function, not old ones
-        sym = storage.get_symbol_by_name("new_function")
-        assert sym is not None
-
-        old_sym = storage.get_symbol_by_name("calculate_age")
-        assert old_sym is None  # Should be removed
 
 
 class TestSearchTool:
@@ -317,30 +269,30 @@ class TestGetSymbolsTool:
 class TestWorkspaceIndexing:
     """Test workspace-level indexing."""
 
-    async def test_index_workspace_tool_exists(self):
-        """Test that index_workspace tool exists."""
-        from miller.server import mcp
+    async def test_workspace_scanner_exists(self):
+        """Test that workspace scanner is initialized."""
+        from miller.server import scanner
 
-        # Optional: may implement later
-        tools = await mcp.get_tools()
-        tool_names = list(tools.keys())  # get_tools() returns dict
-        # Just check that core tools exist
-        assert "index_file" in tool_names
+        assert scanner is not None
 
-    def test_batch_indexing_performance(self, test_workspace):
+    @pytest.mark.asyncio
+    async def test_batch_indexing_performance(self, test_workspace):
         """Test that multiple files can be indexed efficiently."""
         import time
-        from miller.server import index_file
+        from miller.workspace import WorkspaceScanner
+        from miller.storage import StorageManager
+        from miller.embeddings import EmbeddingManager, VectorStore
 
-        files = [
-            test_workspace / "test.py",
-            test_workspace / "lib.js",
-        ]
+        storage = StorageManager(":memory:")
+        embeddings = EmbeddingManager(device="cpu")
+        vector_store = VectorStore(db_path=":memory:")
+
+        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
 
         start = time.time()
-        for f in files:
-            index_file(str(f))
+        stats = await scanner.index_workspace()
         elapsed = time.time() - start
 
         # Should complete in reasonable time
-        assert elapsed < 30.0  # 30 seconds for 2 files (generous for CI)
+        assert elapsed < 60.0  # 60 seconds for all files (generous for CI)
+        assert stats["indexed"] >= 2  # At least test.py and lib.js

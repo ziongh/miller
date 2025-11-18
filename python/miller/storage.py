@@ -215,11 +215,14 @@ class StorageManager:
         import time
         timestamp = int(time.time())
 
+        # Normalize path to match symbols table (for FK constraints)
+        normalized_path = _normalize_path(file_path)
+
         self.conn.execute("""
             INSERT OR REPLACE INTO files (
                 path, language, content, hash, size, last_modified, last_indexed
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (file_path, language, content, hash, size, timestamp, timestamp))
+        """, (normalized_path, language, content, hash, size, timestamp, timestamp))
 
         self.conn.commit()
 
@@ -400,6 +403,24 @@ class StorageManager:
             "SELECT * FROM relationships WHERE file_path = ?",
             (file_path,)
         )
+        return [dict(row) for row in cursor.fetchall()]
+
+    # Workspace scanning operations
+
+    def get_all_files(self) -> List[Dict]:
+        """
+        Get all indexed files with metadata for workspace scanning.
+
+        Used for incremental indexing to detect which files have changed.
+
+        Returns:
+            List of dicts with keys: path, hash, language, size, last_indexed
+        """
+        cursor = self.conn.execute("""
+            SELECT path, hash, language, size, last_modified, last_indexed
+            FROM files
+            ORDER BY path
+        """)
         return [dict(row) for row in cursor.fetchall()]
 
     def close(self):

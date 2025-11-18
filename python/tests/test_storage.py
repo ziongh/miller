@@ -324,3 +324,80 @@ class TestBulkOperations:
         cursor = storage.conn.cursor()
         total = cursor.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         assert total == 100
+
+
+class TestWorkspaceScanning:
+    """Test methods for workspace scanning and incremental indexing."""
+
+    def test_get_all_files_returns_empty_for_new_db(self):
+        """Test that get_all_files returns empty list for new database."""
+        from miller.storage import StorageManager
+
+        storage = StorageManager(":memory:")
+        files = storage.get_all_files()
+
+        assert files == []
+
+    def test_get_all_files_returns_indexed_files(self):
+        """Test that get_all_files returns all indexed files with metadata."""
+        from miller.storage import StorageManager
+        from miller import miller_core
+
+        storage = StorageManager(":memory:")
+
+        # Index two files
+        code1 = "def hello(): pass"
+        code2 = "def goodbye(): pass"
+
+        result1 = miller_core.extract_file(code1, "python", "file1.py")
+        result2 = miller_core.extract_file(code2, "python", "file2.py")
+
+        storage.add_file("file1.py", "python", code1, "hash1", len(code1))
+        storage.add_symbols_batch(result1.symbols)
+
+        storage.add_file("file2.py", "python", code2, "hash2", len(code2))
+        storage.add_symbols_batch(result2.symbols)
+
+        # Get all files
+        files = storage.get_all_files()
+
+        assert len(files) == 2
+        assert any(f['path'] == "file1.py" for f in files)
+        assert any(f['path'] == "file2.py" for f in files)
+
+    def test_get_all_files_includes_hash(self):
+        """Test that get_all_files includes file hash for change detection."""
+        from miller.storage import StorageManager
+        from miller import miller_core
+
+        storage = StorageManager(":memory:")
+
+        code = "def test(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+
+        storage.add_file("test.py", "python", code, "abc123hash", len(code))
+        storage.add_symbols_batch(result.symbols)
+
+        files = storage.get_all_files()
+
+        assert len(files) == 1
+        assert files[0]['hash'] == "abc123hash"
+
+    def test_get_all_files_includes_last_indexed(self):
+        """Test that get_all_files includes last_indexed timestamp."""
+        from miller.storage import StorageManager
+        from miller import miller_core
+
+        storage = StorageManager(":memory:")
+
+        code = "def test(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+
+        storage.add_file("test.py", "python", code, "hash1", len(code))
+        storage.add_symbols_batch(result.symbols)
+
+        files = storage.get_all_files()
+
+        assert len(files) == 1
+        assert 'last_indexed' in files[0]
+        assert files[0]['last_indexed'] > 0  # Timestamp should be set
