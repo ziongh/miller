@@ -39,6 +39,7 @@ jobs:
         run: |
           uv venv
           uv pip install maturin pytest pytest-asyncio
+          uv pip install fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
           uv run maturin develop --release
 
       - name: Run tests
