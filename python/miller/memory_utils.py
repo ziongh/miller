@@ -105,14 +105,33 @@ def get_git_context() -> Dict[str, Any]:
         >>> assert "dirty" in context
         >>> assert "files_changed" in context
     """
+    import logging
+    import os
+    logger = logging.getLogger("miller.memory")
+    cwd = os.getcwd()
+    logger.info(f"🔵 get_git_context() called from cwd: {cwd}")
+
     try:
+        # First, find the git root directory
+        git_root_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+            cwd=cwd
+        )
+        git_root = git_root_result.stdout.strip()
+        logger.info(f"🔵 Git root found: {git_root}")
+
         # Get current branch
         branch_result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
             check=True,
-            timeout=2
+            timeout=2,
+            cwd=git_root
         )
         branch = branch_result.stdout.strip()
 
@@ -122,7 +141,8 @@ def get_git_context() -> Dict[str, Any]:
             capture_output=True,
             text=True,
             check=True,
-            timeout=2
+            timeout=2,
+            cwd=git_root
         )
         commit = commit_result.stdout.strip()
 
@@ -132,7 +152,8 @@ def get_git_context() -> Dict[str, Any]:
             capture_output=True,
             text=True,
             check=True,
-            timeout=2
+            timeout=2,
+            cwd=git_root
         )
         dirty = len(status_result.stdout.strip()) > 0
 
@@ -153,8 +174,26 @@ def get_git_context() -> Dict[str, Any]:
             "files_changed": files_changed
         }
 
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         # Graceful fallback if git is not available or not in a repo
+        import logging
+        logger = logging.getLogger("miller.memory")
+        import os
+        cwd = os.getcwd()
+        logger.warning(f"⚠️  Git context failed: {type(e).__name__}: {e} (cwd: {cwd})")
+        return {
+            "branch": "unknown",
+            "commit": "unknown",
+            "dirty": False,
+            "files_changed": []
+        }
+    except Exception as e:
+        # Catch any other unexpected exceptions
+        import logging
+        logger = logging.getLogger("miller.memory")
+        import os
+        cwd = os.getcwd()
+        logger.error(f"❌ Unexpected git context error: {type(e).__name__}: {e} (cwd: {cwd})")
         return {
             "branch": "unknown",
             "commit": "unknown",
