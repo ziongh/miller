@@ -271,16 +271,21 @@ def calculate_user_age():
             max_depth=2
         )
 
-        # Should only return UserService and its methods
+        # Should return UserService and its methods
         names = [s["name"] for s in result]
         assert "UserService" in names
         assert "get_user" in names
         assert "create_user" in names
         assert "delete_user" in names
 
-        # Should NOT return ProductService
-        assert "ProductService" not in names
-        assert "get_product" not in names
+        # Phase 2 enhancement: ProductService MAY appear due to semantic similarity
+        # but if it does, it should have MUCH lower score than UserService
+        user_service = next(s for s in result if s["name"] == "UserService")
+        if "ProductService" in names:
+            product_service = next(s for s in result if s["name"] == "ProductService")
+            # UserService should have significantly higher relevance score
+            assert user_service.get("relevance_score", 1.0) > product_service.get("relevance_score", 0) + 0.2, \
+                "UserService should score much higher than ProductService"
 
     @pytest.mark.asyncio
     async def test_target_partial_match(self, multi_symbol_file):
@@ -477,3 +482,204 @@ class TestErrorHandling:
         # Should return empty list
         assert isinstance(result, list)
         assert len(result) == 0
+
+
+# ==============================================================================
+# Phase 2: ML/Semantic Enhancements - Tests
+# ==============================================================================
+
+
+class TestSemanticRelevanceScores:
+    """Test Task 2.1: Semantic relevance scores when filtering by target"""
+
+    @pytest.fixture
+    def auth_file(self, tmp_path):
+        """Create a file with authentication-related symbols."""
+        test_file = tmp_path / "auth.py"
+        test_file.write_text("""
+def login(username, password):
+    '''User login function.'''
+    pass
+
+def handle_login(request):
+    '''Handle login request.'''
+    pass
+
+def authenticate_user(credentials):
+    '''Authenticate user with credentials.'''
+    pass
+
+def verify_password(password, hash):
+    '''Verify password against hash.'''
+    pass
+
+def logout(user_id):
+    '''Log out user.'''
+    pass
+
+def calculate_tax(amount):
+    '''Calculate tax on amount.'''
+    pass
+""")
+        return test_file
+
+    @pytest.mark.asyncio
+    async def test_relevance_scores_added_when_target_specified(self, auth_file):
+        """When target is specified, should add relevance_score to each result."""
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(auth_file),
+            target="login"
+        )
+
+        # All results should have relevance_score field
+        assert len(result) > 0
+        for symbol in result:
+            assert "relevance_score" in symbol
+            assert isinstance(symbol["relevance_score"], (int, float))
+            assert 0.0 <= symbol["relevance_score"] <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_exact_match_has_highest_score(self, auth_file):
+        """Exact match should have the highest relevance score (1.0)."""
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(auth_file),
+            target="login"
+        )
+
+        # Find "login" function
+        login_sym = next((s for s in result if s["name"] == "login"), None)
+        assert login_sym is not None
+        assert login_sym["relevance_score"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_partial_match_has_high_score(self, auth_file):
+        """Partial matches (contains target) should have high scores (>0.7)."""
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(auth_file),
+            target="login"
+        )
+
+        # Find "handle_login" (contains "login")
+        handle_login = next((s for s in result if s["name"] == "handle_login"), None)
+        assert handle_login is not None
+        assert handle_login["relevance_score"] >= 0.7
+        assert handle_login["relevance_score"] < 1.0  # Less than exact match
+
+    @pytest.mark.asyncio
+    async def test_semantic_match_has_moderate_score(self, auth_file):
+        """Semantically similar symbols should have moderate scores (0.4-0.7)."""
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(auth_file),
+            target="login"
+        )
+
+        # Find "authenticate_user" (semantically related to login)
+        auth_user = next((s for s in result if s["name"] == "authenticate_user"), None)
+        assert auth_user is not None
+        # Should be semantically similar (not exact, but related)
+        assert 0.4 <= auth_user["relevance_score"] < 0.7
+
+    @pytest.mark.asyncio
+    async def test_irrelevant_symbols_have_lower_scores(self, auth_file):
+        """Irrelevant symbols should have lower scores than relevant ones."""
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(auth_file),
+            target="login"
+        )
+
+        # Get scores for different symbol types
+        login_score = next(s["relevance_score"] for s in result if s["name"] == "login")
+        auth_score = next(s["relevance_score"] for s in result if s["name"] == "authenticate_user")
+
+        # If calculate_tax appears, it should have lower score than auth-related symbols
+        names = [s["name"] for s in result]
+        if "calculate_tax" in names:
+            tax_sym = next(s for s in result if s["name"] == "calculate_tax")
+            # Irrelevant symbol should score lower than relevant ones
+            assert tax_sym["relevance_score"] < auth_score, \
+                f"Irrelevant symbol scored too high: {tax_sym['relevance_score']} >= {auth_score}"
+            assert tax_sym["relevance_score"] < login_score, \
+                f"Irrelevant symbol scored higher than exact match: {tax_sym['relevance_score']} >= {login_score}"
+
+    @pytest.mark.asyncio
+    async def test_results_sorted_by_relevance_descending(self, auth_file):
+        """Results should be sorted by relevance_score (highest first)."""
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(auth_file),
+            target="login"
+        )
+
+        # Verify sorted in descending order
+        scores = [s["relevance_score"] for s in result]
+        assert scores == sorted(scores, reverse=True)
+
+        # First result should be "login" (exact match)
+        assert result[0]["name"] == "login"
+        assert result[0]["relevance_score"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_no_relevance_scores_without_target(self, auth_file):
+        """When target not specified, relevance_score should not be added."""
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(auth_file)
+        )
+
+        # Should return symbols without relevance_score
+        assert len(result) > 0
+        for symbol in result:
+            assert "relevance_score" not in symbol
+
+    @pytest.mark.asyncio
+    async def test_relevance_with_signature_similarity(self, tmp_path):
+        """Relevance should consider both name AND signature similarity."""
+        test_file = tmp_path / "api.py"
+        test_file.write_text("""
+def fetch_user_data(user_id):
+    '''Fetch user data from database.'''
+    pass
+
+def get_user(user_id):
+    '''Get user by ID.'''
+    pass
+
+def delete_file(file_path):
+    '''Delete a file.'''
+    pass
+""")
+
+        from miller.server import get_symbols
+
+        result = await get_symbols(
+            file_path=str(test_file),
+            target="user"
+        )
+
+        # Both "fetch_user_data" and "get_user" should have high scores
+        # (they contain "user" in name or are semantically related)
+        user_symbols = [s for s in result if "user" in s["name"].lower()]
+        assert len(user_symbols) >= 2
+        for sym in user_symbols:
+            assert sym["relevance_score"] >= 0.5
+
+        # "delete_file" (if it appears) should have lower score than user-related symbols
+        names = [s["name"] for s in result]
+        if "delete_file" in names:
+            delete_sym = next(s for s in result if s["name"] == "delete_file")
+            user_data_score = next(s["relevance_score"] for s in result if s["name"] == "fetch_user_data")
+            # Irrelevant symbol should score lower than relevant ones
+            assert delete_sym["relevance_score"] < user_data_score, \
+                f"Irrelevant symbol scored too high: {delete_sym['relevance_score']} >= {user_data_score}"

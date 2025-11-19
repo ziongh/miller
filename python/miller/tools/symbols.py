@@ -7,6 +7,7 @@ Better than Julie's implementation with Python/ML enhancements.
 
 from typing import Any, Optional
 from pathlib import Path
+import numpy as np
 
 
 def build_parent_to_children(symbols: list) -> dict[str, list[int]]:
@@ -223,6 +224,133 @@ def symbol_to_dict(symbol, code_bodies: dict[str, str]) -> dict[str, Any]:
     return result
 
 
+def compute_relevance_scores(
+    symbols: list,
+    target: str,
+    embedding_manager
+) -> list[tuple[int, float]]:
+    """
+    Compute relevance scores for symbols based on target query.
+
+    Uses a hybrid approach:
+    1. Exact match bonus (1.0 score)
+    2. Partial/substring match bonus (0.75 base score)
+    3. Semantic similarity via embeddings (0.0-1.0 range)
+
+    Args:
+        symbols: List of symbol objects
+        target: Target query string
+        embedding_manager: EmbeddingManager instance for computing embeddings
+
+    Returns:
+        List of (symbol_index, relevance_score) tuples
+    """
+    if not symbols:
+        return []
+
+    target_lower = target.lower()
+    scores = []
+
+    # Embed target query
+    target_embedding = embedding_manager.embed_query(target)
+
+    # Embed all symbols (includes name + signature + doc_comment)
+    symbol_embeddings = embedding_manager.embed_batch(symbols)
+
+    for idx, symbol in enumerate(symbols):
+        symbol_name = getattr(symbol, "name", "").lower()
+
+        # Strategy 1: Exact match (highest priority)
+        if symbol_name == target_lower:
+            score = 1.0
+        # Strategy 2: Partial/substring match (high priority)
+        elif target_lower in symbol_name:
+            # Partial match gets high score, but less than exact
+            score = 0.75
+        else:
+            # Strategy 3: Semantic similarity via embeddings
+            # Compute cosine similarity (embeddings are already L2-normalized)
+            symbol_emb = symbol_embeddings[idx]
+            cosine_sim = float(np.dot(target_embedding, symbol_emb))
+
+            # Boost slightly to prefer semantic matches over random symbols
+            score = max(0.0, cosine_sim)
+
+        scores.append((idx, score))
+
+    return scores
+
+
+def apply_semantic_filtering(
+    symbols: list,
+    target: str,
+    embedding_manager
+) -> tuple[list, list[float]]:
+    """
+    Apply semantic filtering and ranking to symbols based on target.
+
+    Uses tiered filtering:
+    - Exact/partial matches (substring): threshold 0.3
+    - Pure semantic matches (no substring): threshold 0.60
+
+    Returns matching symbols AND their children (Phase 1 behavior preserved).
+
+    Args:
+        symbols: List of symbol objects
+        target: Target query string
+        embedding_manager: EmbeddingManager instance
+
+    Returns:
+        Tuple of (filtered_symbols, relevance_scores) sorted by relevance
+    """
+    # Compute relevance scores
+    scores = compute_relevance_scores(symbols, target, embedding_manager)
+
+    target_lower = target.lower()
+    matching_indices = set()
+
+    # First pass: Find symbols that match the target (above threshold)
+    for idx, score in scores:
+        symbol_name = getattr(symbols[idx], "name", "").lower()
+
+        # Determine threshold based on whether symbol contains target substring
+        if target_lower in symbol_name:
+            # Substring match - use lenient threshold
+            threshold = 0.3
+        else:
+            # Pure semantic match - use moderate threshold (balance precision/recall)
+            threshold = 0.60
+
+        if score >= threshold:
+            matching_indices.add(idx)
+
+    # Second pass: Include children of matching symbols (Phase 1 behavior)
+    parent_to_children = build_parent_to_children(symbols)
+
+    def include_children(symbol_idx: int):
+        """Recursively include all children of a symbol."""
+        matching_indices.add(symbol_idx)
+        symbol_id = getattr(symbols[symbol_idx], "id", None)
+        if symbol_id and symbol_id in parent_to_children:
+            for child_idx in parent_to_children[symbol_id]:
+                include_children(child_idx)
+
+    # Build final set including all children
+    initial_matches = list(matching_indices)
+    for idx in initial_matches:
+        include_children(idx)
+
+    # Sort by relevance (descending), using original scores
+    score_dict = {idx: score for idx, score in scores}
+    filtered_indices = sorted(matching_indices, key=lambda idx: score_dict.get(idx, 0.0), reverse=True)
+
+    # Extract filtered symbols and scores
+    filtered_symbols = [symbols[idx] for idx in filtered_indices]
+    relevance_scores = [score_dict.get(idx, 0.0) for idx in filtered_indices]
+
+    return filtered_symbols, relevance_scores
+
+
 async def get_symbols_enhanced(
     file_path: str,
     mode: str = "structure",
@@ -276,9 +404,26 @@ async def get_symbols_enhanced(
         # 1. Max depth filter
         symbols = apply_max_depth_filter(symbols, max_depth)
 
-        # 2. Target filter (if specified)
+        # 2. Target filter with semantic relevance (if specified)
+        relevance_scores = None
         if target:
-            symbols = apply_target_filter(symbols, target)
+            # Phase 2 enhancement: Use semantic filtering with embeddings
+            try:
+                embedding_mgr = server.embeddings  # Global embedding manager from server
+                if embedding_mgr is not None:
+                    # Apply semantic filtering (filters + sorts by relevance)
+                    symbols, relevance_scores = apply_semantic_filtering(
+                        symbols, target, embedding_mgr
+                    )
+                else:
+                    # Fallback: basic target filtering (Phase 1 behavior)
+                    symbols = apply_target_filter(symbols, target)
+            except Exception as e:
+                # If embeddings fail, fall back to basic filtering
+                import logging
+                logger = logging.getLogger("miller.tools.symbols")
+                logger.warning(f"Semantic filtering failed, falling back to basic: {e}")
+                symbols = apply_target_filter(symbols, target)
 
         # 3. Apply limit
         symbols, was_truncated = apply_limit(symbols, limit)
@@ -287,7 +432,15 @@ async def get_symbols_enhanced(
         code_bodies = extract_code_bodies(symbols, str(path), mode)
 
         # Convert to dicts
-        result_dicts = [symbol_to_dict(sym, code_bodies) for sym in symbols]
+        result_dicts = []
+        for idx, sym in enumerate(symbols):
+            sym_dict = symbol_to_dict(sym, code_bodies)
+
+            # Add relevance_score if available (Phase 2 enhancement)
+            if relevance_scores is not None and idx < len(relevance_scores):
+                sym_dict["relevance_score"] = relevance_scores[idx]
+
+            result_dicts.append(sym_dict)
 
         return result_dicts
 
