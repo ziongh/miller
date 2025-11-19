@@ -72,32 +72,17 @@ async def checkpoint(
         - Format: Pretty-printed JSON (indent=2, sorted keys)
         - Git-friendly: Trailing newline for clean diffs
     """
-    import logging
-    logger = logging.getLogger("miller.memory")
-
-    logger.info(f"🔵 checkpoint() START - type={type}, desc_len={len(description)}")
-    start_time = time.time()
-
     # Generate checkpoint ID and timestamp
-    logger.info("🔵 Generating checkpoint ID...")
     checkpoint_id = generate_checkpoint_id(type)
     timestamp = int(time.time())
-    logger.info(f"🔵 ID generated: {checkpoint_id}")
 
-    # Get git context
-    logger.info("🔵 Getting git context...")
-    git_start = time.time()
+    # Get git context (fast now with stdin=DEVNULL fix)
     git_context = get_git_context()
-    git_elapsed = time.time() - git_start
-    logger.info(f"🔵 Git context retrieved in {git_elapsed:.2f}s: branch={git_context['branch']}")
 
     # Normalize tags
-    logger.info("🔵 Normalizing tags...")
     normalized_tags = normalize_tags(tags) if tags else []
-    logger.info(f"🔵 Tags normalized: {normalized_tags}")
 
     # Create checkpoint data
-    logger.info("🔵 Creating checkpoint data structure...")
     checkpoint_data = {
         "id": checkpoint_id,
         "timestamp": timestamp,
@@ -108,20 +93,8 @@ async def checkpoint(
     }
 
     # Write checkpoint file
-    logger.info(f"🔵 Writing checkpoint file...")
-    write_start = time.time()
     checkpoint_path = get_checkpoint_path(timestamp)
     write_json_file(checkpoint_path, checkpoint_data)
-    write_elapsed = time.time() - write_start
-    logger.info(f"🔵 Checkpoint written to {checkpoint_path} in {write_elapsed:.2f}s")
-
-    total_elapsed = time.time() - start_time
-    logger.info(f"🔵 checkpoint() COMPLETE in {total_elapsed:.2f}s, returning ID: {checkpoint_id}")
-
-    # Explicitly flush logs before returning to catch if the hang is after return
-    import sys
-    sys.stderr.flush()
-    logger.info(f"🔵 checkpoint() AFTER FLUSH, about to return")
 
     return checkpoint_id
 

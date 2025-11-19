@@ -109,25 +109,28 @@ def get_git_context() -> Dict[str, Any]:
     import os
     logger = logging.getLogger("miller.memory")
     cwd = os.getcwd()
-    logger.info(f"🔵 get_git_context() called from cwd: {cwd}")
 
     try:
         # First, find the git root directory
+        # Match Julie's approach: stdin=DEVNULL prevents hanging on Windows
         git_root_result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
+            stdin=subprocess.DEVNULL,  # CRITICAL: Prevents waiting for input
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             check=True,
             timeout=2,
             cwd=cwd
         )
         git_root = git_root_result.stdout.strip()
-        logger.info(f"🔵 Git root found: {git_root}")
 
-        # Get current branch
+        # Get current branch (Julie uses "branch --show-current")
         branch_result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
+            ["git", "branch", "--show-current"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             check=True,
             timeout=2,
@@ -138,7 +141,9 @@ def get_git_context() -> Dict[str, Any]:
         # Get current commit (short hash)
         commit_result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             check=True,
             timeout=2,
@@ -149,7 +154,9 @@ def get_git_context() -> Dict[str, Any]:
         # Check if working directory is dirty
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             check=True,
             timeout=2,
@@ -176,11 +183,7 @@ def get_git_context() -> Dict[str, Any]:
 
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         # Graceful fallback if git is not available or not in a repo
-        import logging
-        logger = logging.getLogger("miller.memory")
-        import os
-        cwd = os.getcwd()
-        logger.warning(f"⚠️  Git context failed: {type(e).__name__}: {e} (cwd: {cwd})")
+        logger.debug(f"Git context unavailable: {type(e).__name__}: {e}")
         return {
             "branch": "unknown",
             "commit": "unknown",
@@ -189,11 +192,7 @@ def get_git_context() -> Dict[str, Any]:
         }
     except Exception as e:
         # Catch any other unexpected exceptions
-        import logging
-        logger = logging.getLogger("miller.memory")
-        import os
-        cwd = os.getcwd()
-        logger.error(f"❌ Unexpected git context error: {type(e).__name__}: {e} (cwd: {cwd})")
+        logger.warning(f"Unexpected git context error: {type(e).__name__}: {e}")
         return {
             "branch": "unknown",
             "commit": "unknown",
