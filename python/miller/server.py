@@ -52,34 +52,18 @@ async def lifespan(_app):
     FastMCP lifespan handler - startup and shutdown hooks.
 
     Startup:
-      1. Initialize Miller components (AFTER handshake completes)
-      2. Launch background indexing task (non-blocking)
-      3. Start file watcher for real-time updates
+      1. Spawn background task immediately (server becomes ready instantly)
+      2. Background task initializes components (non-blocking)
+      3. Background task runs indexing and starts file watcher
 
     Shutdown: Stop file watcher and cleanup
+
+    This ensures the MCP handshake completes in milliseconds, matching Julie's
+    instant connection. All expensive work happens in background.
     """
     global storage, vector_store, embeddings, scanner, workspace_root
 
-    # PHASE 1: Initialize components (happens AFTER MCP handshake)
-    # This defers expensive ML model loading until after connection is established
-    logger.info("🔧 Initializing Miller components (post-handshake)...")
-
-    storage = StorageManager(db_path=".miller/indexes/symbols.db")
-    vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
-    embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
-
-    workspace_root = Path.cwd()
-    logger.info(f"📁 Workspace root: {workspace_root}")
-
-    scanner = WorkspaceScanner(
-        workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
-    )
-    logger.info("✅ Miller components initialized and ready")
-
-    # PHASE 2: Launch background indexing task (non-blocking)
-    logger.info("🚀 Spawning background indexing task")
-
-    # File watcher reference (initialized after initial indexing)
+    # File watcher reference (initialized by background task)
     file_watcher = None
 
     async def on_files_changed(events: list[tuple[FileEvent, Path]]):
@@ -108,12 +92,32 @@ async def lifespan(_app):
             except Exception as e:
                 logger.error(f"❌ Error processing file change {file_path}: {e}", exc_info=True)
 
-    async def background_indexing():
-        """Background task that runs initial indexing, then starts file watcher."""
+    async def background_initialization_and_indexing():
+        """
+        Background task that initializes components, indexes workspace, and starts file watcher.
+
+        Runs completely in background so server becomes ready immediately.
+        """
         nonlocal file_watcher
+        global storage, vector_store, embeddings, scanner, workspace_root
+
         try:
-            # Small delay to ensure server is fully ready
-            await asyncio.sleep(0.5)
+            # PHASE 1: Initialize components (in background, doesn't block server ready)
+            logger.info("🔧 Initializing Miller components in background...")
+
+            storage = StorageManager(db_path=".miller/indexes/symbols.db")
+            vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
+            embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+
+            workspace_root = Path.cwd()
+            logger.info(f"📁 Workspace root: {workspace_root}")
+
+            scanner = WorkspaceScanner(
+                workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
+            )
+            logger.info("✅ Miller components initialized and ready")
+
+            # PHASE 2: Run initial indexing
 
             # Initial indexing
             logger.info("🔍 Checking if workspace indexing needed...")
@@ -147,12 +151,14 @@ async def lifespan(_app):
             logger.info("✅ File watcher active - workspace changes will be indexed automatically")
 
         except Exception as e:
-            logger.error(f"❌ Background indexing/watcher startup failed: {e}", exc_info=True)
+            logger.error(f"❌ Background initialization/indexing failed: {e}", exc_info=True)
 
-    # Spawn background task (non-blocking - server continues)
-    indexing_task = asyncio.create_task(background_indexing())
+    # Spawn background task immediately (server becomes ready without waiting)
+    logger.info("🚀 Spawning background initialization task...")
+    init_task = asyncio.create_task(background_initialization_and_indexing())
+    logger.info("✅ Server ready for MCP requests (initialization running in background)")
 
-    yield  # Server runs here
+    yield  # Server runs here - client sees "Connected" immediately
 
     # SHUTDOWN: Stop file watcher and wait for background task
     logger.info("🛑 Miller server shutting down...")
@@ -162,9 +168,9 @@ async def lifespan(_app):
         file_watcher.stop()
         logger.info("✅ File watcher stopped")
 
-    if not indexing_task.done():
-        logger.info("⏳ Waiting for background indexing to complete...")
-        await indexing_task
+    if not init_task.done():
+        logger.info("⏳ Waiting for background initialization to complete...")
+        await init_task
 
     logger.info("👋 Miller server shutdown complete")
 
