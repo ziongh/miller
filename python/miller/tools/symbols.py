@@ -8,6 +8,80 @@ Better than Julie's implementation with Python/ML enhancements.
 from typing import Any, Optional
 from pathlib import Path
 import numpy as np
+import re
+
+
+def generate_naming_variants(name: str) -> set[str]:
+    """
+    Generate naming convention variants for cross-language symbol detection.
+
+    Converts between snake_case, camelCase, PascalCase, kebab-case, and lowercase.
+
+    Args:
+        name: Symbol name in any convention
+
+    Returns:
+        Set of all naming variants
+
+    Examples:
+        >>> generate_naming_variants("UserService")
+        {'user_service', 'userService', 'UserService', 'user-service', 'userservice'}
+
+        >>> generate_naming_variants("user_service")
+        {'user_service', 'userService', 'UserService', 'user-service', 'userservice'}
+    """
+    if not name:
+        return set()
+
+    variants = set()
+    variants.add(name)  # Always include original
+
+    # Split into words based on various delimiters and case changes
+    # Handle snake_case, kebab-case, PascalCase, camelCase
+    words = []
+
+    # First, split by underscores and hyphens
+    parts = re.split(r'[_-]', name)
+
+    for part in parts:
+        # Split camelCase/PascalCase within each part
+        # Insert space before uppercase letters (except at start)
+        spaced = re.sub(r'([a-z])([A-Z])', r'\1 \2', part)
+        # Split on spaces
+        word_parts = spaced.split()
+        words.extend(word_parts)
+
+    # Filter out empty strings
+    words = [w.lower() for w in words if w]
+
+    if not words:
+        # Single word, no delimiters
+        words = [name.lower()]
+
+    # Generate all variants
+    if words:
+        # snake_case
+        variants.add('_'.join(words))
+
+        # kebab-case
+        variants.add('-'.join(words))
+
+        # camelCase
+        if len(words) > 1:
+            variants.add(words[0] + ''.join(w.capitalize() for w in words[1:]))
+        else:
+            variants.add(words[0])
+
+        # PascalCase
+        variants.add(''.join(w.capitalize() for w in words))
+
+        # lowercase (no delimiters)
+        variants.add(''.join(words))
+
+        # Also add lowercase version of original
+        variants.add(name.lower())
+
+    return variants
 
 
 def build_parent_to_children(symbols: list) -> dict[str, list[int]]:
@@ -248,6 +322,32 @@ def calculate_doc_quality(doc_comment: Optional[str]) -> str:
         return "excellent"
 
 
+def calculate_importance_tier(importance_score: float) -> str:
+    """
+    Calculate importance tier from PageRank score.
+
+    Tiers:
+    - low: 0.0-0.25 (rarely called, low impact)
+    - medium: 0.25-0.5 (occasionally used)
+    - high: 0.5-0.75 (frequently used, important)
+    - critical: 0.75-1.0 (central to codebase, high impact)
+
+    Args:
+        importance_score: PageRank score (0.0 to 1.0)
+
+    Returns:
+        Importance tier string
+    """
+    if importance_score <= 0.25:
+        return "low"
+    elif importance_score <= 0.5:
+        return "medium"
+    elif importance_score <= 0.75:
+        return "high"
+    else:
+        return "critical"
+
+
 def symbol_to_dict(symbol, code_bodies: dict[str, str]) -> dict[str, Any]:
     """Convert a symbol object to a dictionary.
 
@@ -483,6 +583,204 @@ def find_related_symbols(symbols: list, embedding_manager, top_n: int = 5) -> di
     return related_map
 
 
+def find_cross_language_variants(
+    symbols: list,
+    storage_manager,
+    current_language: str
+) -> dict[str, dict]:
+    """
+    Find cross-language naming variants for symbols.
+
+    For each symbol, generates naming variants (snake_case, camelCase, etc.)
+    and queries the database for symbols with those names in OTHER languages.
+
+    Args:
+        symbols: List of symbol objects
+        storage_manager: StorageManager instance to query database
+        current_language: Language of the current file (to exclude from results)
+
+    Returns:
+        Dict mapping symbol_id -> cross_language_hints dict
+        Each hints dict contains:
+            - has_variants: bool
+            - variants_count: int
+            - languages: list[str] (languages where variants are found, excluding current)
+    """
+    if not storage_manager or not symbols:
+        # Return empty hints for all symbols
+        return {
+            getattr(sym, "id", ""): {
+                "has_variants": False,
+                "variants_count": 0,
+                "languages": []
+            }
+            for sym in symbols
+        }
+
+    variants_map = {}
+
+    try:
+        for symbol in symbols:
+            symbol_id = getattr(symbol, "id", "")
+            symbol_name = getattr(symbol, "name", "")
+
+            if not symbol_name:
+                variants_map[symbol_id] = {
+                    "has_variants": False,
+                    "variants_count": 0,
+                    "languages": []
+                }
+                continue
+
+            # Generate naming variants
+            variants = generate_naming_variants(symbol_name)
+
+            # Query database for symbols with variant names
+            # Exclude current language
+            found_languages = set()
+
+            if variants:
+                # Build query to find symbols with any of the variant names
+                placeholders = ",".join("?" * len(variants))
+                query = f"""
+                    SELECT DISTINCT language
+                    FROM symbols
+                    WHERE name IN ({placeholders})
+                    AND language != ?
+                """
+
+                cursor = storage_manager.conn.cursor()
+                cursor.execute(query, list(variants) + [current_language])
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    found_languages.add(row[0])
+
+            variants_map[symbol_id] = {
+                "has_variants": len(found_languages) > 0,
+                "variants_count": len(found_languages),
+                "languages": sorted(list(found_languages))
+            }
+
+    except Exception:
+        # If query fails, return empty hints for all symbols
+        return {
+            getattr(sym, "id", ""): {
+                "has_variants": False,
+                "variants_count": 0,
+                "languages": []
+            }
+            for sym in symbols
+        }
+
+    return variants_map
+
+
+def calculate_importance_scores(symbols: list, storage_manager) -> tuple[dict[str, float], dict[str, bool]]:
+    """
+    Calculate symbol importance using PageRank on the call graph.
+
+    Uses relationships table to build a directed graph and computes PageRank scores.
+    Also detects entry points (high in-degree, low out-degree).
+
+    Args:
+        symbols: List of symbol objects
+        storage_manager: StorageManager instance to query relationships
+
+    Returns:
+        Tuple of (importance_scores dict, is_entry_point dict)
+        - importance_scores: symbol_id -> PageRank score (0.0 to 1.0)
+        - is_entry_point: symbol_id -> bool (True if entry point)
+    """
+    if not storage_manager or not symbols:
+        # Return default values for all symbols
+        default_score = 1.0 / max(len(symbols), 1)  # Equal distribution
+        return (
+            {getattr(sym, "id", ""): default_score for sym in symbols},
+            {getattr(sym, "id", ""): False for sym in symbols}
+        )
+
+    try:
+        import networkx as nx
+
+        # Build call graph from relationships table
+        symbol_ids = [getattr(sym, "id", None) for sym in symbols]
+        symbol_ids = [sid for sid in symbol_ids if sid]
+
+        if not symbol_ids:
+            return ({}, {})
+
+        # Query relationships for these symbols
+        placeholders = ",".join("?" * len(symbol_ids))
+        query = f"""
+            SELECT from_symbol_id, to_symbol_id
+            FROM relationships
+            WHERE from_symbol_id IN ({placeholders})
+            OR to_symbol_id IN ({placeholders})
+        """
+
+        cursor = storage_manager.conn.cursor()
+        cursor.execute(query, symbol_ids + symbol_ids)
+        edges = cursor.fetchall()
+
+        # Build directed graph
+        G = nx.DiGraph()
+
+        # Add all symbols as nodes (even if no edges)
+        for sid in symbol_ids:
+            G.add_node(sid)
+
+        # Add edges from relationships
+        for from_id, to_id in edges:
+            if from_id and to_id:
+                G.add_edge(from_id, to_id)
+
+        # Compute PageRank scores
+        if len(G.nodes()) > 0:
+            pagerank_scores = nx.pagerank(G, alpha=0.85)
+        else:
+            pagerank_scores = {}
+
+        # Normalize scores to 0-1 range
+        if pagerank_scores:
+            max_score = max(pagerank_scores.values())
+            min_score = min(pagerank_scores.values())
+            score_range = max_score - min_score
+
+            if score_range > 0:
+                normalized_scores = {
+                    node: (score - min_score) / score_range
+                    for node, score in pagerank_scores.items()
+                }
+            else:
+                # All scores equal, use uniform distribution
+                normalized_scores = {node: 0.5 for node in pagerank_scores}
+        else:
+            # No graph, use default
+            default_score = 1.0 / max(len(symbol_ids), 1)
+            normalized_scores = {sid: default_score for sid in symbol_ids}
+
+        # Detect entry points (high in-degree, low out-degree)
+        entry_points = {}
+        for node in G.nodes():
+            in_degree = G.in_degree(node)
+            out_degree = G.out_degree(node)
+
+            # Entry point criteria: called by at least 2 others, calls fewer than it's called by
+            is_entry = in_degree >= 2 and out_degree < in_degree
+            entry_points[node] = is_entry
+
+        return (normalized_scores, entry_points)
+
+    except Exception:
+        # If anything fails, return default values
+        default_score = 1.0 / max(len(symbols), 1)
+        return (
+            {getattr(sym, "id", ""): default_score for sym in symbols},
+            {getattr(sym, "id", ""): False for sym in symbols}
+        )
+
+
 def get_reference_counts(symbols: list, storage_manager) -> dict[str, int]:
     """
     Get reference counts for symbols from the relationships table.
@@ -629,6 +927,27 @@ async def get_symbols_enhanced(
             # If embeddings unavailable, continue without related symbols
             pass
 
+        # 7. Find cross-language variants (Task 2.5)
+        cross_language_map = {}
+        try:
+            storage_mgr = server.storage
+            if storage_mgr is not None:
+                cross_language_map = find_cross_language_variants(symbols, storage_mgr, language)
+        except Exception:
+            # If storage unavailable, continue without cross-language hints
+            pass
+
+        # 8. Calculate symbol importance using PageRank (Task 2.6)
+        importance_scores = {}
+        entry_points = {}
+        try:
+            storage_mgr = server.storage
+            if storage_mgr is not None:
+                importance_scores, entry_points = calculate_importance_scores(symbols, storage_mgr)
+        except Exception:
+            # If calculation fails, use defaults
+            pass
+
         # Convert to dicts
         result_dicts = []
         for idx, sym in enumerate(symbols):
@@ -652,6 +971,20 @@ async def get_symbols_enhanced(
             # Add related symbols suggestions (Phase 2 Task 2.4)
             related_symbols = related_symbols_map.get(symbol_id, [])
             sym_dict["related_symbols"] = related_symbols
+
+            # Add cross-language variant hints (Phase 2 Task 2.5)
+            cross_lang_hints = cross_language_map.get(symbol_id, {
+                "has_variants": False,
+                "variants_count": 0,
+                "languages": []
+            })
+            sym_dict["cross_language_hints"] = cross_lang_hints
+
+            # Add symbol importance ranking (Phase 2 Task 2.6)
+            importance_score = importance_scores.get(symbol_id, 0.5)  # Default to medium
+            sym_dict["importance_score"] = importance_score
+            sym_dict["importance"] = calculate_importance_tier(importance_score)
+            sym_dict["is_entry_point"] = entry_points.get(symbol_id, False)
 
             result_dicts.append(sym_dict)
 
