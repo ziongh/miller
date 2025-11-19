@@ -327,7 +327,7 @@ class FileWatcher:
     ...         if event_type == FileEvent.DELETED:
     ...             await storage.delete_file(file_path)
     ...         else:
-    ...             await index_file(file_path)
+    ...             await scanner._index_file(file_path)
     ...
     >>> watcher = FileWatcher(
     ...     workspace_path=Path("/workspace"),

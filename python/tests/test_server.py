@@ -124,12 +124,13 @@ class TestSearchTool:
         assert "fast_search" in tool_names
 
     @pytest.mark.asyncio
-    async def test_search_text_mode(self, test_workspace):
+    async def test_search_text_mode(self, test_workspace, index_file_helper):
         """Test text search mode."""
-        from miller.server import index_file, fast_search
+        from miller.server import fast_search, storage
 
         # Index files
-        index_file(str(test_workspace / "test.py"))
+        success = await index_file_helper(str(test_workspace / "test.py"))
+        assert success, "Failed to index test file"
 
         # Text search
         results = await fast_search(query="age", method="text", limit=10)
@@ -138,12 +139,12 @@ class TestSearchTool:
         assert any("calculate_age" in str(r) for r in results)
 
     @pytest.mark.asyncio
-    async def test_search_semantic_mode(self, test_workspace):
+    async def test_search_semantic_mode(self, test_workspace, index_file_helper):
         """Test semantic search mode."""
-        from miller.server import index_file, fast_search
+        from miller.server import fast_search
 
         # Index files
-        index_file(str(test_workspace / "test.py"))
+        await index_file_helper(str(test_workspace / "test.py"))
 
         # Semantic search (natural language)
         results = await fast_search(
@@ -157,12 +158,12 @@ class TestSearchTool:
         assert any("calculate_age" in str(r) for r in results)
 
     @pytest.mark.asyncio
-    async def test_search_hybrid_mode(self, test_workspace):
+    async def test_search_hybrid_mode(self, test_workspace, index_file_helper):
         """Test hybrid search mode."""
-        from miller.server import index_file, fast_search
+        from miller.server import fast_search
 
         # Index files
-        index_file(str(test_workspace / "test.py"))
+        await index_file_helper(str(test_workspace / "test.py"))
 
         # Hybrid search
         results = await fast_search(query="user profile", method="hybrid", limit=10)
@@ -170,12 +171,12 @@ class TestSearchTool:
         assert len(results) > 0
 
     @pytest.mark.asyncio
-    async def test_search_returns_metadata(self, test_workspace):
+    async def test_search_returns_metadata(self, test_workspace, index_file_helper):
         """Test that search results include symbol metadata."""
-        from miller.server import index_file, fast_search
+        from miller.server import fast_search
 
         # Index files
-        index_file(str(test_workspace / "test.py"))
+        await index_file_helper(str(test_workspace / "test.py"))
 
         # Search
         results = await fast_search(query="calculate_age", method="text", limit=1)
@@ -201,12 +202,12 @@ class TestGotoTool:
         assert "fast_goto" in tool_names
 
     @pytest.mark.asyncio
-    async def test_goto_finds_symbol_definition(self, test_workspace):
+    async def test_goto_finds_symbol_definition(self, test_workspace, index_file_helper):
         """Test finding symbol definition by name."""
-        from miller.server import index_file, fast_goto
+        from miller.server import fast_goto
 
         # Index files
-        index_file(str(test_workspace / "test.py"))
+        await index_file_helper(str(test_workspace / "test.py"))
 
         # Go to symbol
         result = await fast_goto("calculate_age")
@@ -217,12 +218,12 @@ class TestGotoTool:
         assert "line" in str(result).lower()
 
     @pytest.mark.asyncio
-    async def test_goto_returns_none_for_unknown_symbol(self, test_workspace):
+    async def test_goto_returns_none_for_unknown_symbol(self, test_workspace, index_file_helper):
         """Test handling of unknown symbols."""
-        from miller.server import index_file, fast_goto
+        from miller.server import fast_goto
 
         # Index files
-        index_file(str(test_workspace / "test.py"))
+        await index_file_helper(str(test_workspace / "test.py"))
 
         # Search for non-existent symbol
         result = await fast_goto("nonexistent_function")

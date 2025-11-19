@@ -107,6 +107,7 @@ def clean_server_storage():
     from miller import server
     from miller.storage import StorageManager
     from miller.embeddings import VectorStore
+    from miller.workspace import WorkspaceScanner
 
     # Close old connections if they exist
     if hasattr(server.storage, 'conn'):
@@ -120,7 +121,19 @@ def clean_server_storage():
     # Replace global instances with fresh in-memory databases
     server.storage = StorageManager(db_path=":memory:")
     server.vector_store = VectorStore(db_path=":memory:")
-    # Keep same embeddings manager (model loading is expensive)
+
+    # Initialize embeddings manager if not already initialized (expensive operation)
+    if server.embeddings is None:
+        from miller.embeddings import EmbeddingManager
+        server.embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+
+    # Initialize scanner for tests
+    server.scanner = WorkspaceScanner(
+        workspace_root=Path.cwd(),
+        storage=server.storage,
+        embeddings=server.embeddings,
+        vector_store=server.vector_store
+    )
 
     yield
 
@@ -132,3 +145,88 @@ def clean_server_storage():
             server.vector_store.close()
         except:
             pass
+
+
+@pytest.fixture
+def index_file_helper():
+    """
+    Provide an async helper function for indexing files in tests.
+
+    Returns an async function that directly indexes a file using storage/embeddings,
+    bypassing workspace boundaries (useful for test files in temp directories).
+    """
+    async def _index_file(file_path: str | Path) -> bool:
+        """Index a single file for testing."""
+        from miller import server
+        from pathlib import Path
+        import hashlib
+        import numpy as np
+
+        file_path = Path(file_path)
+
+        if not file_path.exists():
+            return False
+
+        # Check if miller_core is available
+        if server.miller_core is None:
+            return False
+
+        try:
+            # Read file content
+            content = file_path.read_text(encoding="utf-8")
+
+            # Detect language
+            language = server.miller_core.detect_language(str(file_path))
+            if not language:
+                return False
+
+            # Extract symbols
+            relative_path = file_path.name  # Use filename for test files
+            result = server.miller_core.extract_file(content, language, relative_path)
+
+            # Compute hash
+            file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+            # Store file metadata
+            server.storage.add_file(
+                file_path=relative_path,
+                language=language,
+                content=content,
+                hash=file_hash,
+                size=len(content)
+            )
+
+            # Store symbols and generate embeddings
+            if result.symbols:
+                server.storage.add_symbols_batch(result.symbols)
+
+                # Generate embeddings
+                embeddings_list = []
+                for sym in result.symbols:
+                    search_text = f"{sym.name} {sym.kind}"
+                    if sym.signature:
+                        search_text += f" {sym.signature}"
+                    if sym.doc_comment:
+                        search_text += f" {sym.doc_comment}"
+
+                    vec = server.embeddings.embed_query(search_text)
+                    embeddings_list.append(vec)
+
+                # Add to vector store
+                vectors_array = np.array(embeddings_list, dtype=np.float32)
+                server.vector_store.add_symbols(result.symbols, vectors_array)
+
+            # Store identifiers
+            if result.identifiers:
+                server.storage.add_identifiers_batch(result.identifiers)
+
+            # Store relationships
+            if result.relationships:
+                server.storage.add_relationships_batch(result.relationships)
+
+            return True
+
+        except Exception:
+            return False
+
+    return _index_file
