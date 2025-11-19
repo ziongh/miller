@@ -22,9 +22,10 @@ use std::path::Path;
 /// Raises:
 ///     ValueError: If language is not supported
 #[pyfunction]
+#[pyo3(signature = (content, language, file_path))]
 pub fn extract_file(
     content: &str,
-    _language: &str,
+    language: &str,
     file_path: &str,
 ) -> PyResult<PyExtractionResults> {
     // Create extractor manager
@@ -67,6 +68,7 @@ pub fn extract_file(
 /// Returns:
 ///     str or None: Language name if detected, None otherwise
 #[pyfunction]
+#[pyo3(signature = (file_path))]
 pub fn detect_language(file_path: &str) -> PyResult<Option<String>> {
     // Extract extension from file path
     let path = Path::new(file_path);
