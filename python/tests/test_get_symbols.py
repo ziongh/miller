@@ -683,3 +683,97 @@ def delete_file(file_path):
             # Irrelevant symbol should score lower than relevant ones
             assert delete_sym["relevance_score"] < user_data_score, \
                 f"Irrelevant symbol scored too high: {delete_sym['relevance_score']} >= {user_data_score}"
+
+
+class TestUsageFrequencyIndicators:
+    """Test Task 2.2: Usage frequency indicators based on reference counts"""
+
+    @pytest.mark.asyncio
+    async def test_usage_frequency_fields_added(self, tmp_path):
+        """Symbols should have references_count and usage_frequency fields."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def helper():
+    pass
+
+def main():
+    helper()
+    helper()
+""")
+
+        result = await get_symbols(
+            file_path=str(test_file)
+        )
+
+        # All symbols should have usage fields (even if 0)
+        for symbol in result:
+            assert "references_count" in symbol
+            assert "usage_frequency" in symbol
+            assert isinstance(symbol["references_count"], int)
+            assert symbol["usage_frequency"] in ["none", "low", "medium", "high", "very_high"]
+
+    @pytest.mark.asyncio
+    async def test_unreferenced_symbols_have_zero_count(self, tmp_path):
+        """Symbols with no references should have count 0 and frequency 'none'."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def unused_function():
+    pass
+""")
+
+        result = await get_symbols(
+            file_path=str(test_file)
+        )
+
+        unused = next(s for s in result if s["name"] == "unused_function")
+        assert unused["references_count"] == 0
+        assert unused["usage_frequency"] == "none"
+
+    @pytest.mark.asyncio
+    async def test_frequency_tiers_low(self, tmp_path):
+        """Symbols with 1-5 references should be 'low' frequency."""
+        # This test would require setting up actual relationships in the database
+        # For now, we'll test the tier calculation logic directly
+        from miller.tools.symbols import calculate_usage_frequency
+
+        assert calculate_usage_frequency(1) == "low"
+        assert calculate_usage_frequency(3) == "low"
+        assert calculate_usage_frequency(5) == "low"
+
+    @pytest.mark.asyncio
+    async def test_frequency_tiers_medium(self, tmp_path):
+        """Symbols with 6-20 references should be 'medium' frequency."""
+        from miller.tools.symbols import calculate_usage_frequency
+
+        assert calculate_usage_frequency(6) == "medium"
+        assert calculate_usage_frequency(15) == "medium"
+        assert calculate_usage_frequency(20) == "medium"
+
+    @pytest.mark.asyncio
+    async def test_frequency_tiers_high(self, tmp_path):
+        """Symbols with 21-50 references should be 'high' frequency."""
+        from miller.tools.symbols import calculate_usage_frequency
+
+        assert calculate_usage_frequency(21) == "high"
+        assert calculate_usage_frequency(35) == "high"
+        assert calculate_usage_frequency(50) == "high"
+
+    @pytest.mark.asyncio
+    async def test_frequency_tiers_very_high(self, tmp_path):
+        """Symbols with 51+ references should be 'very_high' frequency."""
+        from miller.tools.symbols import calculate_usage_frequency
+
+        assert calculate_usage_frequency(51) == "very_high"
+        assert calculate_usage_frequency(100) == "very_high"
+        assert calculate_usage_frequency(1000) == "very_high"
+
+    @pytest.mark.asyncio
+    async def test_zero_references_is_none_tier(self, tmp_path):
+        """Symbols with 0 references should be 'none' frequency."""
+        from miller.tools.symbols import calculate_usage_frequency
+
+        assert calculate_usage_frequency(0) == "none"

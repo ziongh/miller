@@ -190,6 +190,35 @@ def extract_code_bodies(
     return code_bodies
 
 
+def calculate_usage_frequency(references_count: int) -> str:
+    """
+    Calculate usage frequency tier from reference count.
+
+    Tiers:
+    - none: 0 references
+    - low: 1-5 references
+    - medium: 6-20 references
+    - high: 21-50 references
+    - very_high: 51+ references
+
+    Args:
+        references_count: Number of times symbol is referenced
+
+    Returns:
+        Frequency tier string
+    """
+    if references_count == 0:
+        return "none"
+    elif references_count <= 5:
+        return "low"
+    elif references_count <= 20:
+        return "medium"
+    elif references_count <= 50:
+        return "high"
+    else:
+        return "very_high"
+
+
 def symbol_to_dict(symbol, code_bodies: dict[str, str]) -> dict[str, Any]:
     """Convert a symbol object to a dictionary.
 
@@ -351,6 +380,52 @@ def apply_semantic_filtering(
     return filtered_symbols, relevance_scores
 
 
+def get_reference_counts(symbols: list, storage_manager) -> dict[str, int]:
+    """
+    Get reference counts for symbols from the relationships table.
+
+    Args:
+        symbols: List of symbol objects with .id attribute
+        storage_manager: StorageManager instance to query relationships
+
+    Returns:
+        Dict mapping symbol_id -> reference_count
+    """
+    if not storage_manager:
+        # No storage available, return empty counts
+        return {}
+
+    reference_counts = {}
+
+    try:
+        # Get all symbol IDs
+        symbol_ids = [getattr(sym, "id", None) for sym in symbols]
+        symbol_ids = [sid for sid in symbol_ids if sid]  # Filter out None
+
+        if not symbol_ids:
+            return {}
+
+        # Query relationships table for reference counts
+        # Count how many times each symbol appears as to_symbol_id
+        placeholders = ",".join("?" * len(symbol_ids))
+        query = f"""
+            SELECT to_symbol_id, COUNT(*) as ref_count
+            FROM relationships
+            WHERE to_symbol_id IN ({placeholders})
+            GROUP BY to_symbol_id
+        """
+
+        cursor = storage_manager.conn.execute(query, symbol_ids)
+        for row in cursor:
+            reference_counts[row[0]] = row[1]
+
+    except Exception:
+        # If query fails (e.g., relationships table doesn't exist yet), return empty
+        pass
+
+    return reference_counts
+
+
 async def get_symbols_enhanced(
     file_path: str,
     mode: str = "structure",
@@ -431,14 +506,30 @@ async def get_symbols_enhanced(
         # 4. Extract code bodies based on mode (returns dict: id -> code_body)
         code_bodies = extract_code_bodies(symbols, str(path), mode)
 
+        # 5. Get reference counts from relationships table (Task 2.2)
+        reference_counts = {}
+        try:
+            storage_mgr = server.storage
+            if storage_mgr is not None:
+                reference_counts = get_reference_counts(symbols, storage_mgr)
+        except Exception:
+            # If storage unavailable, continue without reference counts
+            pass
+
         # Convert to dicts
         result_dicts = []
         for idx, sym in enumerate(symbols):
             sym_dict = symbol_to_dict(sym, code_bodies)
 
-            # Add relevance_score if available (Phase 2 enhancement)
+            # Add relevance_score if available (Phase 2 Task 2.1)
             if relevance_scores is not None and idx < len(relevance_scores):
                 sym_dict["relevance_score"] = relevance_scores[idx]
+
+            # Add usage frequency indicators (Phase 2 Task 2.2)
+            symbol_id = getattr(sym, "id", "")
+            ref_count = reference_counts.get(symbol_id, 0)
+            sym_dict["references_count"] = ref_count
+            sym_dict["usage_frequency"] = calculate_usage_frequency(ref_count)
 
             result_dicts.append(sym_dict)
 
