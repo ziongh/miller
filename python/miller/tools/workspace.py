@@ -55,6 +55,9 @@ async def manage_workspace(
     elif operation == "add":
         return await _handle_add(registry, path, name)
 
+    elif operation == "remove":
+        return await _handle_remove(registry, workspace_id)
+
     else:
         return f"Error: Operation '{operation}' not implemented yet"
 
@@ -241,3 +244,54 @@ async def _handle_add(
         # Clean up on failure
         registry.remove_workspace(workspace_id)
         return f"Error indexing workspace: {str(e)}"
+
+
+async def _handle_remove(registry: WorkspaceRegistry, workspace_id: Optional[str]) -> str:
+    """
+    Handle remove operation - remove workspace and delete its data.
+
+    Args:
+        registry: WorkspaceRegistry instance
+        workspace_id: Workspace ID to remove
+
+    Returns:
+        Success or error message
+    """
+    # Validate parameter
+    if not workspace_id:
+        return "Error: 'workspace_id' parameter required for remove operation"
+
+    # Get workspace before removing (to show name in confirmation)
+    workspace = registry.get_workspace(workspace_id)
+    if not workspace:
+        return f"Error: Workspace '{workspace_id}' not found"
+
+    workspace_name = workspace.name
+
+    # Remove from registry first
+    registry.remove_workspace(workspace_id)
+
+    # Delete workspace directories
+    import shutil
+
+    db_path = get_workspace_db_path(workspace_id)
+    vector_path = get_workspace_vector_path(workspace_id)
+
+    # Delete DB directory (contains symbols.db)
+    if db_path.parent.exists():
+        try:
+            shutil.rmtree(db_path.parent)
+        except Exception as e:
+            # Log but don't fail - registry is already cleaned up
+            pass
+
+    # Delete vector directory (same parent as DB, so already deleted)
+    # But check if it's separate (shouldn't be in our design)
+    if vector_path.parent.exists() and vector_path.parent != db_path.parent:
+        try:
+            shutil.rmtree(vector_path.parent)
+        except Exception:
+            pass
+
+    # Return success message
+    return f"✅ Successfully removed workspace: {workspace_name}\n  Workspace ID: {workspace_id}"
