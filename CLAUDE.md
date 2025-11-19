@@ -100,6 +100,123 @@ pyo3 = { version = "0.27.1" }  # Current as of Nov 2025
 
 ---
 
+## 🔴 MANDATORY: GPU Setup (PyTorch with CUDA)
+
+### Critical for Performance
+
+Miller uses PyTorch for embeddings. **GPU acceleration is 10-50x faster than CPU** for embedding generation.
+
+### Installation Command (Verified 2025-11-18)
+
+**For Windows with NVIDIA GPUs (Python 3.14):**
+
+```bash
+# Use uv (faster, better dependency resolution)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu130
+
+# ✅ This installs: torch 2.9.1+cu130 (CUDA 13.0 support)
+# ✅ Works with: Python 3.14, NVIDIA drivers 527.41+
+# ✅ Supports: RTX 20/30/40/50 series, A100, H100, etc.
+```
+
+**Why CUDA 13.0 (`cu130`) specifically:**
+- PyTorch 2.9.1 added CUDA 13.0 support
+- CUDA 12.x indexes (`cu121`, `cu124`) only have wheels up to Python 3.13
+- CUDA 13.0 index has Python 3.14 wheels
+- CUDA is backward compatible (cu130 binaries work with CUDA 12.x/13.x drivers)
+
+**For macOS (Apple Silicon):**
+
+```bash
+# Standard PyPI version includes MPS (Metal Performance Shaders) support
+uv pip install torch
+
+# Miller auto-detects MPS and uses GPU acceleration
+```
+
+**For Linux:**
+
+```bash
+# Check your NVIDIA driver version first
+nvidia-smi  # Look for "CUDA Version: X.Y"
+
+# Install matching PyTorch (common versions)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu130  # CUDA 13.0
+uv pip install torch --index-url https://download.pytorch.org/whl/cu124  # CUDA 12.4
+uv pip install torch --index-url https://download.pytorch.org/whl/cu121  # CUDA 12.1
+```
+
+### Verification
+
+After installation, verify GPU is detected:
+
+```bash
+# Quick check
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# Full check
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
+
+# Miller-specific check
+python -c "from miller.embeddings import EmbeddingManager; mgr = EmbeddingManager(); print(f'Miller using: {mgr.device}')"
+```
+
+**Expected output:**
+- `CUDA available: True`
+- `GPU: NVIDIA GeForce RTX 4080` (or your specific GPU)
+- `Miller using: cuda`
+
+### Troubleshooting
+
+**Problem: "CUDA available: False"**
+
+1. **Wrong PyTorch version installed** (CPU-only):
+   ```bash
+   # Check installed version
+   python -c "import torch; print(torch.__version__)"
+
+   # If it shows "2.9.1+cpu", you have CPU-only version
+   # Uninstall and reinstall with CUDA:
+   uv pip uninstall torch
+   uv pip install torch --index-url https://download.pytorch.org/whl/cu130
+   ```
+
+2. **NVIDIA drivers not installed**:
+   - Windows: Install from https://www.nvidia.com/Download/index.aspx
+   - Linux: `sudo apt install nvidia-driver-535` (or latest)
+   - Verify: `nvidia-smi` should show your GPU
+
+3. **Python version mismatch**:
+   - CUDA 13.0 index: Python 3.10-3.14 supported
+   - CUDA 12.4 index: Python 3.9-3.13 supported
+   - CUDA 12.1 index: Python 3.9-3.12 supported
+
+**Problem: "No module named 'torch'"**
+
+Miller's `pyproject.toml` lists `torch>=2.0` as a dependency, but **this installs CPU-only version by default**. You must manually install the CUDA version using the commands above.
+
+### DirectML (Optional Fallback for AMD/Intel GPUs on Windows)
+
+If you have an AMD or Intel GPU on Windows, you can use DirectML:
+
+```bash
+uv pip install torch-directml
+```
+
+Miller will auto-detect DirectML and use it for GPU acceleration (though CUDA on NVIDIA is faster).
+
+### Performance Impact
+
+**Embedding generation speed (100 symbols):**
+- CPU: ~8-10 seconds
+- GPU (CUDA): ~0.5-1 second
+- GPU (MPS): ~1-2 seconds
+- GPU (DirectML): ~2-3 seconds
+
+**On large codebases (1000+ files), GPU acceleration saves minutes to hours.**
+
+---
+
 ## 🔴 MANDATORY: File Size Limits
 
 ### Non-Negotiable Rule: NO GIANT FILES

@@ -120,10 +120,16 @@ async def lifespan(app):
 
             # Start file watcher for real-time updates
             logger.info("👁️  Starting file watcher for real-time indexing...")
+            # Use load_gitignore() to get same patterns as workspace scanner
+            # (combines DEFAULT_IGNORES + .gitignore file patterns)
+            from miller.ignore_patterns import load_gitignore
+            ignore_spec = load_gitignore(workspace_root)
+            # Extract pattern strings from PathSpec (patterns are GitWildMatchPattern objects)
+            pattern_strings = {p.pattern for p in ignore_spec.patterns}
             file_watcher = FileWatcher(
                 workspace_path=workspace_root,
                 indexing_callback=on_files_changed,
-                ignore_patterns={".git", "*.pyc", "__pycache__", "node_modules", ".miller"},
+                ignore_patterns=pattern_strings,  # Use exact same patterns as scanner
                 debounce_delay=0.2,
             )
             file_watcher.start()

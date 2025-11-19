@@ -38,11 +38,12 @@ jobs:
 
       - name: Install Miller (dev mode)
         run: |
-          uv pip install --system maturin pytest pytest-asyncio
-          maturin develop --release
+          uv venv
+          uv pip install maturin pytest pytest-asyncio
+          uv run maturin develop --release
 
       - name: Run tests
-        run: pytest python/tests/ -v
+        run: uv run pytest python/tests/ -v
 
       - name: Run Rust tests
         run: cargo test --release
@@ -69,6 +70,7 @@ jobs:
 
       - name: Check Python formatting (ruff)
         run: |
-          uv pip install --system ruff
-          ruff check python/miller/
-          ruff format --check python/miller/
+          uv venv
+          uv pip install ruff
+          uv run ruff check python/miller/
+          uv run ruff format --check python/miller/
