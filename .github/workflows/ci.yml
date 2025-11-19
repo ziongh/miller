@@ -3,7 +3,7 @@ name: CI
 on:
   release:
     types: [ published ]
-  workflow_dispatch:  # Allow manual triggering for testing
+  workflow_dispatch:
 
 jobs:
   test:
@@ -18,53 +18,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
-
-      - name: Install Rust toolchain
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Miller (dev mode)
-        shell: bash
+      - name: Install dependencies
         run: |
-          echo "=== Creating venv ==="
-          uv venv
-          echo "=== Installing dependencies ==="
-          uv pip install maturin pytest pytest-asyncio fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
-          echo "=== Activating venv ==="
-          source .venv/bin/activate || . .venv/Scripts/activate
-          echo "=== Checking environment ==="
-          which python
-          which pytest || echo "pytest not in PATH"
-          python --version
-          python -c "import sys; print('Python path:', sys.executable)"
-          python -c "import pytest; print('pytest version:', pytest.__version__)" || echo "pytest not importable"
-          ls -la python/tests/ || dir python\\tests\\
-          echo "=== Building Rust extension ==="
-          maturin develop --release
+          python -m pip install --upgrade pip
+          pip install maturin pytest pytest-asyncio
+          pip install fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
 
-      - name: Run tests
-        shell: bash
-        run: |
-          source .venv/bin/activate || . .venv/Scripts/activate
-          echo "=== Running tests ==="
-          python -c "import sys; print('Python:', sys.executable)"
-          python -c "import pytest; print('pytest:', pytest.__version__)"
-          echo "=== Test directory contents ==="
-          ls -la python/tests/ || dir python\\tests\\
-          echo "=== Running pytest ==="
-          python -m pytest python/tests/ -v --collect-only || python -m pytest python/tests/ -v
+      - name: Build extension
+        run: maturin develop --release
+
+      - name: Run Python tests
+        run: pytest python/tests/ -v
 
       - name: Run Rust tests
         run: cargo test --release
@@ -75,10 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install Rust toolchain
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -89,9 +58,8 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Check Python formatting (ruff)
+      - name: Check Python formatting
         run: |
-          uv venv
-          uv pip install ruff
-          uv run ruff check python/miller/
-          uv run ruff format --check python/miller/
+          python -m pip install ruff
+          ruff check python/miller/
+          ruff format --check python/miller/
