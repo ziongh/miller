@@ -219,6 +219,35 @@ def calculate_usage_frequency(references_count: int) -> str:
         return "very_high"
 
 
+def calculate_doc_quality(doc_comment: Optional[str]) -> str:
+    """
+    Calculate documentation quality tier from docstring length.
+
+    Tiers:
+    - none: No documentation
+    - poor: <50 characters (too brief)
+    - good: 50-200 characters (adequate)
+    - excellent: >200 characters (comprehensive)
+
+    Args:
+        doc_comment: Docstring content (None or empty string means no docs)
+
+    Returns:
+        Quality tier string
+    """
+    if not doc_comment or len(doc_comment.strip()) == 0:
+        return "none"
+
+    doc_length = len(doc_comment)
+
+    if doc_length < 50:
+        return "poor"
+    elif doc_length <= 200:
+        return "good"
+    else:
+        return "excellent"
+
+
 def symbol_to_dict(symbol, code_bodies: dict[str, str]) -> dict[str, Any]:
     """Convert a symbol object to a dictionary.
 
@@ -530,6 +559,11 @@ async def get_symbols_enhanced(
             ref_count = reference_counts.get(symbol_id, 0)
             sym_dict["references_count"] = ref_count
             sym_dict["usage_frequency"] = calculate_usage_frequency(ref_count)
+
+            # Add documentation quality indicators (Phase 2 Task 2.3)
+            doc_comment = sym_dict.get("doc_comment")
+            sym_dict["has_docs"] = bool(doc_comment and doc_comment.strip())
+            sym_dict["doc_quality"] = calculate_doc_quality(doc_comment)
 
             result_dicts.append(sym_dict)
 

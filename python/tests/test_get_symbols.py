@@ -777,3 +777,169 @@ def unused_function():
         from miller.tools.symbols import calculate_usage_frequency
 
         assert calculate_usage_frequency(0) == "none"
+
+
+class TestDocumentationQualityScores:
+    """Test Task 2.3: Documentation quality scores based on docstring presence/length"""
+
+    @pytest.mark.asyncio
+    async def test_doc_quality_fields_added(self, tmp_path):
+        """All symbols should have has_docs and doc_quality fields."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def documented_function():
+    '''This function has documentation.'''
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # All symbols should have doc quality fields
+        for symbol in result:
+            assert "has_docs" in symbol
+            assert "doc_quality" in symbol
+            assert isinstance(symbol["has_docs"], bool)
+            assert symbol["doc_quality"] in ["none", "poor", "good", "excellent"]
+
+    @pytest.mark.asyncio
+    async def test_undocumented_symbol_has_none_quality(self, tmp_path):
+        """Symbols without docstrings should have doc_quality='none' and has_docs=False."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def undocumented():
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        undoc = next(s for s in result if s["name"] == "undocumented")
+        assert undoc["has_docs"] is False
+        assert undoc["doc_quality"] == "none"
+
+    @pytest.mark.asyncio
+    async def test_poor_quality_documentation(self, tmp_path):
+        """Docstrings <50 chars should be 'poor' quality."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def short_doc():
+    '''Short doc.'''
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        func = next(s for s in result if s["name"] == "short_doc")
+        assert func["has_docs"] is True
+        assert func["doc_quality"] == "poor"
+        assert len(func["doc_comment"]) < 50
+
+    @pytest.mark.asyncio
+    async def test_good_quality_documentation(self, tmp_path):
+        """Docstrings 50-200 chars should be 'good' quality."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def medium_doc():
+    '''
+    This function has a medium-length docstring that explains
+    what it does in reasonable detail. Good enough for most cases.
+    '''
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        func = next(s for s in result if s["name"] == "medium_doc")
+        assert func["has_docs"] is True
+        assert func["doc_quality"] == "good"
+        assert 50 <= len(func["doc_comment"]) <= 200
+
+    @pytest.mark.asyncio
+    async def test_excellent_quality_documentation(self, tmp_path):
+        """Docstrings >200 chars should be 'excellent' quality."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def well_documented():
+    '''
+    This function has extensive documentation that thoroughly explains
+    its purpose, parameters, return values, and behavior. It provides
+    examples of usage and discusses edge cases. This level of detail
+    is considered excellent documentation that helps developers quickly
+    understand and use the function correctly without needing to read
+    the implementation. Great documentation like this saves time and
+    reduces bugs by making the interface crystal clear.
+    '''
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        func = next(s for s in result if s["name"] == "well_documented")
+        assert func["has_docs"] is True
+        assert func["doc_quality"] == "excellent"
+        assert len(func["doc_comment"]) > 200
+
+    @pytest.mark.asyncio
+    async def test_doc_quality_tier_calculation(self, tmp_path):
+        """Test the tier calculation function directly."""
+        from miller.tools.symbols import calculate_doc_quality
+
+        # None: no doc comment
+        assert calculate_doc_quality(None) == "none"
+        assert calculate_doc_quality("") == "none"
+
+        # Poor: <50 chars
+        assert calculate_doc_quality("Short.") == "poor"
+        assert calculate_doc_quality("x" * 49) == "poor"
+
+        # Good: 50-200 chars
+        assert calculate_doc_quality("x" * 50) == "good"
+        assert calculate_doc_quality("x" * 100) == "good"
+        assert calculate_doc_quality("x" * 200) == "good"
+
+        # Excellent: >200 chars
+        assert calculate_doc_quality("x" * 201) == "excellent"
+        assert calculate_doc_quality("x" * 500) == "excellent"
+
+    @pytest.mark.asyncio
+    async def test_mixed_documentation_quality(self, tmp_path):
+        """File with mixed doc quality should classify each correctly."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def no_docs():
+    pass
+
+def poor_docs():
+    '''Brief.'''
+    pass
+
+def good_docs():
+    '''
+    This has a reasonable amount of documentation that explains
+    the function's purpose and basic usage patterns clearly.
+    '''
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # Check each symbol has correct quality
+        no_docs = next(s for s in result if s["name"] == "no_docs")
+        assert no_docs["doc_quality"] == "none"
+
+        poor = next(s for s in result if s["name"] == "poor_docs")
+        assert poor["doc_quality"] == "poor"
+
+        good = next(s for s in result if s["name"] == "good_docs")
+        assert good["doc_quality"] == "good"
