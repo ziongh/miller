@@ -1,0 +1,27 @@
+{
+  "description": "Phase 3.2 complete: Clean operation fully implemented with TDD. 6 tests passing. Feature removes orphaned workspaces (deleted paths), deletes associated DB/vector files, preserves valid workspaces. Handles edge cases (no workspaces, all valid, multiple orphaned). Clear feedback on what was cleaned. Ready for Phase 3.3 (health check).",
+  "git": {
+    "branch": "main",
+    "commit": "3834dcd",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/tools/workspace.py",
+      "python/tests/conftest.py",
+      "python/tests/test_workspace.py",
+      ".memories/2025-11-19/105807_c80f.json",
+      ".memories/2025-11-19/110423_ff4f.json",
+      "python/tests/test_manage_workspace_clean.py",
+      "python/tests/test_manage_workspace_refresh.py"
+    ]
+  },
+  "id": "checkpoint_2e1eaa42_2acc0f",
+  "tags": [
+    "phase-3-2",
+    "clean-operation",
+    "tdd",
+    "workspace-management",
+    "complete"
+  ],
+  "timestamp": 1763572195,
+  "type": "checkpoint"
+}
