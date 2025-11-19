@@ -15,12 +15,14 @@ from typing import Any, Literal, Optional
 
 from fastmcp import FastMCP
 
-from miller.embeddings import EmbeddingManager, VectorStore
 from miller.logging_config import setup_logging
-from miller.storage import StorageManager
 from miller.tools.memory import checkpoint, plan, recall
 from miller.watcher import FileEvent, FileWatcher
-from miller.workspace import WorkspaceScanner
+
+# Heavy imports (torch, sentence-transformers) are done lazily in background task:
+# - miller.embeddings (EmbeddingManager, VectorStore)
+# - miller.storage (StorageManager)
+# - miller.workspace (WorkspaceScanner)
 
 # Initialize logging FIRST (before any other operations)
 logger = setup_logging()
@@ -102,6 +104,12 @@ async def lifespan(_app):
         global storage, vector_store, embeddings, scanner, workspace_root
 
         try:
+            # Lazy imports - only load heavy ML libraries when actually needed
+            # This happens in background AFTER server is ready for connections
+            from miller.embeddings import EmbeddingManager, VectorStore
+            from miller.storage import StorageManager
+            from miller.workspace import WorkspaceScanner
+
             # PHASE 1: Initialize components (in background, doesn't block server ready)
             logger.info("🔧 Initializing Miller components in background...")
 
