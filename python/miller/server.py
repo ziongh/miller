@@ -359,10 +359,94 @@ async def get_symbols(
     )
 
 
+async def fast_refs(
+    symbol_name: str,
+    kind_filter: Optional[list[str]] = None,
+    include_context: bool = False,
+    context_file: Optional[str] = None,
+    limit: Optional[int] = None,
+    workspace: str = "primary"
+) -> dict[str, Any]:
+    """
+    Find all references to a symbol (where it's used).
+
+    Essential for safe refactoring - shows exactly what will break if you change a symbol.
+
+    Args:
+        symbol_name: Name of symbol to find references for
+                    Supports qualified names like "User.save" to find methods specifically
+        kind_filter: Optional list of relationship types to filter by
+                    Common values: ["Call"], ["Import"], ["Reference"], ["Extends", "Implements"]
+        include_context: Whether to include code context snippets showing actual usage
+        context_file: Optional file path to disambiguate symbols (only find symbols in this file)
+        limit: Maximum number of references to return (for pagination with large result sets)
+        workspace: Workspace to query ("primary" or workspace_id)
+
+    Returns:
+        Dictionary with:
+        - symbol: str (name queried)
+        - total_references: int (total count, even if limited)
+        - truncated: bool (if results were limited)
+        - files: list of {path, references_count, references: [{line, kind, context}]}
+
+    Examples:
+        # Find all references
+        await fast_refs("calculateAge")
+
+        # With code context for review
+        await fast_refs("calculateAge", include_context=True, limit=20)
+
+        # Find only function calls
+        await fast_refs("User", kind_filter=["Call"])
+
+        # Disambiguate with qualified name
+        await fast_refs("User.save")  # Method specifically
+
+    Note: Shows where symbols are USED (not where defined). Use fast_goto for definitions.
+    """
+    from miller.tools.refs import find_references
+    from miller.workspace_paths import get_workspace_db_path
+    from miller.workspace_registry import WorkspaceRegistry
+    from miller.storage import StorageManager
+
+    # Get workspace-specific storage
+    if workspace != "primary":
+        registry = WorkspaceRegistry()
+        workspace_entry = registry.get_workspace(workspace)
+        if not workspace_entry:
+            return {
+                "symbol": symbol_name,
+                "total_references": 0,
+                "files": [],
+                "error": f"Workspace '{workspace}' not found"
+            }
+        db_path = get_workspace_db_path(workspace)
+        workspace_storage = StorageManager(db_path=str(db_path))
+    else:
+        # Use primary workspace storage
+        workspace_storage = storage
+
+    try:
+        result = find_references(
+            storage=workspace_storage,
+            symbol_name=symbol_name,
+            kind_filter=kind_filter,
+            include_context=include_context,
+            context_file=context_file,
+            limit=limit
+        )
+        return result
+    finally:
+        # Close workspace storage if it's not the default
+        if workspace != "primary":
+            workspace_storage.close()
+
+
 # Register tools with FastMCP
 mcp.tool()(fast_search)
 mcp.tool()(fast_goto)
 mcp.tool()(get_symbols)
+mcp.tool()(fast_refs)
 
 # Register memory tools
 mcp.tool()(checkpoint)
@@ -386,6 +470,7 @@ __all__ = [
     "fast_search",
     "fast_goto",
     "get_symbols",
+    "fast_refs",
     "checkpoint",
     "recall",
     "plan",
