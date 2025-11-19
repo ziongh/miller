@@ -36,14 +36,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Miller (dev mode)
+        shell: bash
         run: |
           uv venv
-          uv pip install maturin pytest pytest-asyncio
-          uv pip install fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
-          uv run maturin develop --release
+          uv pip install maturin pytest pytest-asyncio fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
+          source .venv/bin/activate || . .venv/Scripts/activate
+          maturin develop --release
 
       - name: Run tests
-        run: uv run pytest python/tests/ -v
+        shell: bash
+        run: |
+          source .venv/bin/activate || . .venv/Scripts/activate
+          pytest python/tests/ -v
 
       - name: Run Rust tests
         run: cargo test --release
