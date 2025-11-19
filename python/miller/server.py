@@ -34,37 +34,50 @@ except ImportError:
     miller_core = None
 
 
-# Initialize Miller components (order matters for dependencies)
-logger.info("Initializing Miller components...")
-
-# 1. Create core components
-storage = StorageManager(db_path=".miller/indexes/symbols.db")
-vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
-embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
-logger.info("✓ Core components initialized")
-
-# 2. Initialize workspace scanner (needed by lifespan handler)
-workspace_root = Path.cwd()
-logger.info(f"Workspace root: {workspace_root}")
-scanner = WorkspaceScanner(
-    workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
-)
-logger.info("✓ WorkspaceScanner initialized")
+# Declare Miller components as module-level globals (initialized in lifespan)
+# These are None during module import to avoid blocking the MCP handshake
+storage = None
+vector_store = None
+embeddings = None
+scanner = None
+workspace_root = None
 
 
-# 3. Define lifespan handler (Julie pattern - background indexing + file watching)
+# Define lifespan handler (Julie pattern - background indexing + file watching)
 # This follows Julie's pattern: handshake completes immediately,
-# then indexing runs in background without blocking MCP protocol
+# then components are initialized and indexing runs in background
 @asynccontextmanager
 async def lifespan(_app):
     """
     FastMCP lifespan handler - startup and shutdown hooks.
 
-    Startup: Launch background indexing AFTER server starts, then start file watcher
+    Startup:
+      1. Initialize Miller components (AFTER handshake completes)
+      2. Launch background indexing task (non-blocking)
+      3. Start file watcher for real-time updates
+
     Shutdown: Stop file watcher and cleanup
     """
-    # STARTUP: Launch background indexing task (non-blocking)
-    logger.info("🚀 Miller server starting - spawning background indexing task")
+    global storage, vector_store, embeddings, scanner, workspace_root
+
+    # PHASE 1: Initialize components (happens AFTER MCP handshake)
+    # This defers expensive ML model loading until after connection is established
+    logger.info("🔧 Initializing Miller components (post-handshake)...")
+
+    storage = StorageManager(db_path=".miller/indexes/symbols.db")
+    vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
+    embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+
+    workspace_root = Path.cwd()
+    logger.info(f"📁 Workspace root: {workspace_root}")
+
+    scanner = WorkspaceScanner(
+        workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
+    )
+    logger.info("✅ Miller components initialized and ready")
+
+    # PHASE 2: Launch background indexing task (non-blocking)
+    logger.info("🚀 Spawning background indexing task")
 
     # File watcher reference (initialized after initial indexing)
     file_watcher = None
@@ -156,11 +169,10 @@ async def lifespan(_app):
     logger.info("👋 Miller server shutdown complete")
 
 
-# 4. Create FastMCP server with lifespan handler
-# Note: FastMCP doesn't have request_timeout parameter
-# Timeout handling is managed by the underlying transport layer
+# Create FastMCP server with lifespan handler
+# Components will be initialized in lifespan startup (after handshake)
 mcp = FastMCP("Miller Code Intelligence Server", lifespan=lifespan)
-logger.info("✓ FastMCP server created with lifespan handler")
+logger.info("✓ FastMCP server created (components will initialize post-handshake)")
 
 
 # MCP Tool implementations (plain functions for testing)
