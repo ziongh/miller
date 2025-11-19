@@ -121,6 +121,7 @@ async def fast_search(
     query: str,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 50,
+    workspace_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """
     Search indexed code using text, semantic, or hybrid methods.
@@ -145,10 +146,14 @@ async def fast_search(
         fast_search("map<int, string>", method="text")  # Force text
         fast_search("user auth", method="semantic")     # Force semantic
 
+        # Workspace-specific search
+        fast_search("auth", workspace_id="my-lib_abc123")  # Search specific workspace
+
     Args:
         query: Search query (code patterns, keywords, or natural language)
         method: Search method (auto-detects by default)
         limit: Maximum results to return
+        workspace_id: Optional workspace ID to search (defaults to primary workspace)
 
     Returns:
         List of matching symbols with scores and metadata
@@ -158,7 +163,32 @@ async def fast_search(
     # Lazy initialization on first call
     await _ensure_initialized()
 
-    results = vector_store.search(query, method=method, limit=limit)
+    # If workspace_id specified, use that workspace's vector store
+    if workspace_id:
+        from miller.workspace_paths import get_workspace_vector_path
+        from miller.workspace_registry import WorkspaceRegistry
+
+        # Verify workspace exists
+        registry = WorkspaceRegistry()
+        workspace = registry.get_workspace(workspace_id)
+
+        if not workspace:
+            # Return empty results for non-existent workspace
+            return []
+
+        # Open workspace-specific vector store
+        from miller.embeddings import VectorStore
+
+        workspace_vector_path = get_workspace_vector_path(workspace_id)
+        workspace_vector_store = VectorStore(
+            db_path=str(workspace_vector_path), embeddings=embeddings
+        )
+
+        # Search in workspace-specific store
+        results = workspace_vector_store.search(query, method=method, limit=limit)
+    else:
+        # Use default vector store (primary workspace)
+        results = vector_store.search(query, method=method, limit=limit)
 
     # Format results for MCP
     formatted = []
