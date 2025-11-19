@@ -109,17 +109,13 @@ fn extract_identifier_from_node(
             if let Some(parent) = node.parent() {
                 match parent.kind() {
                     // Skip if this is the function being called
-                    "call" if parent.child(0).map(|c| c.id()) == Some(node.id()) => {
-                    }
+                    "call" if parent.child(0).map(|c| c.id()) == Some(node.id()) => {}
                     // Skip if this is in an extract operator (handled separately)
-                    "extract_operator" => {
-                    }
+                    "extract_operator" => {}
                     // Skip if this is in a namespace operator
-                    "namespace_operator" => {
-                    }
+                    "namespace_operator" => {}
                     // Skip if this is a parameter name
-                    "parameter" => {
-                    }
+                    "parameter" => {}
                     // Check if this is the left side of an assignment
                     "binary_operator" => {
                         if let Some(operator) = parent.child(1) {

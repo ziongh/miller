@@ -954,13 +954,11 @@ pub fn extract_symbols_and_relationships(
             })
         }
 
-        _ => {
-            Err(anyhow!(
-                "No extractor available for language '{}' (file: {})",
-                language,
-                file_path
-            ))
-        }
+        _ => Err(anyhow!(
+            "No extractor available for language '{}' (file: {})",
+            language,
+            file_path
+        )),
     }
 }
 

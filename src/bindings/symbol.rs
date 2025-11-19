@@ -138,10 +138,7 @@ impl PySymbol {
     fn __repr__(&self) -> String {
         format!(
             "Symbol(name='{}', kind='{}', file_path='{}', line={})",
-            self.inner.name,
-            self.inner.kind,
-            self.inner.file_path,
-            self.inner.start_line
+            self.inner.name, self.inner.kind, self.inner.file_path, self.inner.start_line
         )
     }
 }
