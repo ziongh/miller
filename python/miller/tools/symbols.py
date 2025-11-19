@@ -409,6 +409,80 @@ def apply_semantic_filtering(
     return filtered_symbols, relevance_scores
 
 
+def find_related_symbols(symbols: list, embedding_manager, top_n: int = 5) -> dict[str, list[dict]]:
+    """
+    Find related symbols using embedding similarity.
+
+    For each symbol, finds the top-N most similar symbols (excluding itself).
+
+    Args:
+        symbols: List of symbol objects
+        embedding_manager: EmbeddingManager instance for computing embeddings
+        top_n: Maximum number of related symbols to return per symbol
+
+    Returns:
+        Dict mapping symbol_id -> list of related symbols with similarity scores
+        Each related symbol is: {"name": str, "similarity": float}
+    """
+    if not symbols or not embedding_manager or len(symbols) < 2:
+        # Need at least 2 symbols to find relationships
+        return {}
+
+    try:
+        # Compute embeddings for all symbols
+        symbol_embeddings = embedding_manager.embed_batch(symbols)
+
+        if symbol_embeddings is None or len(symbol_embeddings) == 0:
+            return {}
+
+        related_map = {}
+
+        # For each symbol, find most similar other symbols
+        for idx, symbol in enumerate(symbols):
+            symbol_id = getattr(symbol, "id", "")
+            if not symbol_id:
+                continue
+
+            # Get this symbol's embedding
+            query_embedding = symbol_embeddings[idx]
+
+            # Compute similarity with all other symbols
+            similarities = []
+            for other_idx, other_symbol in enumerate(symbols):
+                if idx == other_idx:
+                    # Skip self
+                    continue
+
+                other_embedding = symbol_embeddings[other_idx]
+
+                # Compute cosine similarity (embeddings are already L2-normalized)
+                similarity = float(np.dot(query_embedding, other_embedding))
+
+                similarities.append((other_idx, similarity))
+
+            # Sort by similarity (descending) and take top N
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            top_similar = similarities[:top_n]
+
+            # Build related symbols list
+            related = []
+            for other_idx, similarity in top_similar:
+                other_name = getattr(symbols[other_idx], "name", "")
+                if other_name:
+                    related.append({
+                        "name": other_name,
+                        "similarity": similarity
+                    })
+
+            related_map[symbol_id] = related
+
+    except Exception:
+        # If embedding computation fails, return empty
+        return {}
+
+    return related_map
+
+
 def get_reference_counts(symbols: list, storage_manager) -> dict[str, int]:
     """
     Get reference counts for symbols from the relationships table.
@@ -545,6 +619,16 @@ async def get_symbols_enhanced(
             # If storage unavailable, continue without reference counts
             pass
 
+        # 6. Find related symbols using embeddings (Task 2.4)
+        related_symbols_map = {}
+        try:
+            embedding_mgr = server.embeddings
+            if embedding_mgr is not None:
+                related_symbols_map = find_related_symbols(symbols, embedding_mgr)
+        except Exception:
+            # If embeddings unavailable, continue without related symbols
+            pass
+
         # Convert to dicts
         result_dicts = []
         for idx, sym in enumerate(symbols):
@@ -564,6 +648,10 @@ async def get_symbols_enhanced(
             doc_comment = sym_dict.get("doc_comment")
             sym_dict["has_docs"] = bool(doc_comment and doc_comment.strip())
             sym_dict["doc_quality"] = calculate_doc_quality(doc_comment)
+
+            # Add related symbols suggestions (Phase 2 Task 2.4)
+            related_symbols = related_symbols_map.get(symbol_id, [])
+            sym_dict["related_symbols"] = related_symbols
 
             result_dicts.append(sym_dict)
 

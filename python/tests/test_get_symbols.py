@@ -943,3 +943,157 @@ def good_docs():
 
         good = next(s for s in result if s["name"] == "good_docs")
         assert good["doc_quality"] == "good"
+
+
+class TestRelatedSymbolsSuggestions:
+    """Test Task 2.4: Related symbols suggestions using embeddings"""
+
+    @pytest.mark.asyncio
+    async def test_related_symbols_field_added(self, tmp_path):
+        """All symbols should have related_symbols field (even if empty)."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+def user_login():
+    pass
+
+def user_logout():
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # All symbols should have related_symbols field
+        for symbol in result:
+            assert "related_symbols" in symbol
+            assert isinstance(symbol["related_symbols"], list)
+
+    @pytest.mark.asyncio
+    async def test_related_symbols_have_correct_structure(self, tmp_path):
+        """Related symbols should have name and similarity fields."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+class User:
+    pass
+
+class UserProfile:
+    pass
+
+class UserService:
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # If any related symbols exist, check structure
+        for symbol in result:
+            for related in symbol["related_symbols"]:
+                assert "name" in related
+                assert "similarity" in related
+                assert isinstance(related["name"], str)
+                assert isinstance(related["similarity"], (int, float))
+                assert 0.0 <= related["similarity"] <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_related_symbols_sorted_by_similarity(self, tmp_path):
+        """Related symbols should be sorted by similarity (descending)."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+class User:
+    '''User model.'''
+    pass
+
+class UserProfile:
+    '''User profile data.'''
+    pass
+
+class UserService:
+    '''Service for user operations.'''
+    pass
+
+class UserRepository:
+    '''Database access for users.'''
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # Check that related symbols are sorted by similarity
+        for symbol in result:
+            if len(symbol["related_symbols"]) > 1:
+                similarities = [r["similarity"] for r in symbol["related_symbols"]]
+                assert similarities == sorted(similarities, reverse=True), \
+                    f"Related symbols for {symbol['name']} not sorted by similarity"
+
+    @pytest.mark.asyncio
+    async def test_related_symbols_limited_to_top_n(self, tmp_path):
+        """Should return at most N related symbols (e.g., 5)."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        # Create many similar symbols
+        code = "\n".join([f"class User{i}:\n    pass" for i in range(20)])
+        test_file.write_text(code)
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # No symbol should have more than 5 related symbols
+        for symbol in result:
+            assert len(symbol["related_symbols"]) <= 5
+
+    @pytest.mark.asyncio
+    async def test_symbol_not_related_to_itself(self, tmp_path):
+        """A symbol should not appear in its own related_symbols list."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("""
+class User:
+    pass
+
+class UserProfile:
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # Check that no symbol is related to itself
+        for symbol in result:
+            related_names = [r["name"] for r in symbol["related_symbols"]]
+            assert symbol["name"] not in related_names, \
+                f"Symbol {symbol['name']} should not be related to itself"
+
+    @pytest.mark.asyncio
+    async def test_empty_file_has_no_related_symbols(self, tmp_path):
+        """Empty files should return symbols with empty related_symbols."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "empty.py"
+        test_file.write_text("")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # Empty file = no symbols
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_single_symbol_has_no_related_symbols(self, tmp_path):
+        """A file with one symbol should have empty related_symbols."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "single.py"
+        test_file.write_text("""
+def lonely_function():
+    pass
+""")
+
+        result = await get_symbols(file_path=str(test_file))
+
+        # Single symbol has no other symbols to be related to
+        assert len(result) == 1
+        assert len(result[0]["related_symbols"]) == 0
