@@ -1,0 +1,19 @@
+{
+  "description": "Achieved universal GPU support and massive performance wins in Miller. Fixed GPU detection on Windows RTX 4080 (PyTorch 2.9.1+cu130). Optimized LanceDB writes from 352 individual operations to 7 bulk batches, improving from 45.21s to 0.95s (47.6x faster, 73.5% \u2192 6.6% of total time). Overall indexing speedup 4.3x (61.51s \u2192 14.46s, throughput 5.7 \u2192 24.3 files/sec). Added auto-detection for ROCm (AMD on Linux) and XPU (Intel Arc), completing universal GPU coverage: CUDA, ROCm, XPU, MPS, DirectML, CPU. Fixed file watcher ignore patterns and CI workflow maturin virtualenv requirements. System now well-balanced across file discovery (28.9%), embeddings (29.1%), extraction (18.4%), database writes (22.8%).",
+  "git": {
+    "branch": "unknown",
+    "commit": "unknown",
+    "dirty": false,
+    "files_changed": []
+  },
+  "id": "checkpoint_de0762ef_13edc2",
+  "tags": [
+    "performance",
+    "gpu-acceleration",
+    "lancedb",
+    "pytorch",
+    "optimization"
+  ],
+  "timestamp": 1763514999,
+  "type": "checkpoint"
+}
