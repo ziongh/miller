@@ -141,25 +141,29 @@ def extract_code_bodies(
     symbols: list,
     file_path: str,
     mode: str
-) -> list:
+) -> dict[str, str]:
     """Extract code bodies for symbols based on mode parameter.
+
+    Returns a dict mapping symbol.id -> code_body string.
 
     Modes:
     - "structure": No code bodies (just names and signatures)
     - "minimal": Code bodies for top-level symbols only
     - "full": Code bodies for all symbols
     """
+    code_bodies = {}
+
     if mode == "structure":
         # No code bodies in structure mode
-        return symbols
+        return code_bodies
 
     # Read source file for body extraction
     try:
         with open(file_path, "rb") as f:
             source_bytes = f.read()
     except Exception:
-        # If file can't be read, return symbols without bodies
-        return symbols
+        # If file can't be read, return empty dict
+        return code_bodies
 
     # Extract bodies based on mode
     for symbol in symbols:
@@ -178,18 +182,20 @@ def extract_code_bodies(
 
             if 0 <= start_byte < len(source_bytes) and start_byte < end_byte <= len(source_bytes):
                 code_bytes = source_bytes[start_byte:end_byte]
-                # Store as attribute (will be included in dict conversion)
-                symbol.code_body = code_bytes.decode("utf-8", errors="replace")
-            else:
-                symbol.code_body = None
-        else:
-            symbol.code_body = None
+                symbol_id = getattr(symbol, "id", "")
+                if symbol_id:
+                    code_bodies[symbol_id] = code_bytes.decode("utf-8", errors="replace")
 
-    return symbols
+    return code_bodies
 
 
-def symbol_to_dict(symbol) -> dict[str, Any]:
-    """Convert a symbol object to a dictionary."""
+def symbol_to_dict(symbol, code_bodies: dict[str, str]) -> dict[str, Any]:
+    """Convert a symbol object to a dictionary.
+
+    Args:
+        symbol: Symbol object from miller_core
+        code_bodies: Dict mapping symbol.id -> code_body string
+    """
     # Normalize kind to PascalCase for consistency with Julie
     kind_raw = getattr(symbol, "kind", "")
     kind = kind_raw.capitalize() if kind_raw else ""
@@ -206,10 +212,13 @@ def symbol_to_dict(symbol) -> dict[str, Any]:
         result["signature"] = symbol.signature
     if hasattr(symbol, "doc_comment") and symbol.doc_comment:
         result["doc_comment"] = symbol.doc_comment
-    if hasattr(symbol, "code_body") and symbol.code_body:
-        result["code_body"] = symbol.code_body
-    if hasattr(symbol, "parent_id"):
+    if hasattr(symbol, "parent_id") and symbol.parent_id:
         result["parent_id"] = symbol.parent_id
+
+    # Add code body if available
+    symbol_id = getattr(symbol, "id", "")
+    if symbol_id and symbol_id in code_bodies:
+        result["code_body"] = code_bodies[symbol_id]
 
     return result
 
@@ -271,16 +280,20 @@ async def get_symbols_enhanced(
         if target:
             symbols = apply_target_filter(symbols, target)
 
-        # 3. Extract code bodies based on mode
-        symbols = extract_code_bodies(symbols, str(path), mode)
-
-        # 4. Apply limit
+        # 3. Apply limit
         symbols, was_truncated = apply_limit(symbols, limit)
 
+        # 4. Extract code bodies based on mode (returns dict: id -> code_body)
+        code_bodies = extract_code_bodies(symbols, str(path), mode)
+
         # Convert to dicts
-        result_dicts = [symbol_to_dict(sym) for sym in symbols]
+        result_dicts = [symbol_to_dict(sym, code_bodies) for sym in symbols]
 
         return result_dicts
 
-    except Exception:
+    except Exception as e:
+        # Debug: print the exception
+        import traceback
+        traceback.print_exc()
+        print(f"Exception in get_symbols_enhanced: {e}")
         return []
