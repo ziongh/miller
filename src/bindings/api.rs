@@ -2,12 +2,12 @@
 //
 // These functions provide the public API for Miller's extraction functionality.
 
-use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
+use super::PyExtractionResults;
 use crate::extractors::manager::ExtractorManager;
 use crate::language;
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use std::path::Path;
-use super::PyExtractionResults;
 
 /// Extract symbols, identifiers, and relationships from source code
 ///
@@ -34,15 +34,18 @@ pub fn extract_file(
     let workspace_root = Path::new(".");
 
     // Extract symbols using Julie's proven extraction logic
-    let symbols = manager.extract_symbols(file_path, content, workspace_root)
+    let symbols = manager
+        .extract_symbols(file_path, content, workspace_root)
         .map_err(|e| PyValueError::new_err(format!("Extraction failed: {}", e)))?;
 
     // Extract identifiers (requires symbols to be extracted first)
-    let identifiers = manager.extract_identifiers(file_path, content, &symbols)
+    let identifiers = manager
+        .extract_identifiers(file_path, content, &symbols)
         .map_err(|e| PyValueError::new_err(format!("Identifier extraction failed: {}", e)))?;
 
     // Extract relationships (requires symbols to be extracted first)
-    let relationships = manager.extract_relationships(file_path, content, &symbols)
+    let relationships = manager
+        .extract_relationships(file_path, content, &symbols)
         .map_err(|e| PyValueError::new_err(format!("Relationship extraction failed: {}", e)))?;
 
     // Create ExtractionResults
@@ -67,9 +70,7 @@ pub fn extract_file(
 pub fn detect_language(file_path: &str) -> PyResult<Option<String>> {
     // Extract extension from file path
     let path = Path::new(file_path);
-    let extension = path.extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
+    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
     // Use Julie's language detection
     let lang = language::detect_language_from_extension(extension);

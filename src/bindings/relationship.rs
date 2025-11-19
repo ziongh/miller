@@ -2,8 +2,8 @@
 //
 // Represents a relationship between two symbols (calls, extends, implements, etc.)
 
-use pyo3::prelude::*;
 use crate::extractors::base::types::{Relationship, RelationshipKind};
+use pyo3::prelude::*;
 use std::collections::HashMap;
 
 /// Python-accessible Relationship wrapper
@@ -16,7 +16,9 @@ pub struct PyRelationship {
 
 impl PyRelationship {
     pub fn from_relationship(relationship: Relationship) -> Self {
-        PyRelationship { inner: relationship }
+        PyRelationship {
+            inner: relationship,
+        }
     }
 }
 
@@ -61,11 +63,10 @@ impl PyRelationship {
     #[getter]
     fn metadata(&self) -> Option<HashMap<String, String>> {
         // Convert HashMap<String, serde_json::Value> to HashMap<String, String>
-        self.inner.metadata.as_ref().map(|m| {
-            m.iter()
-                .map(|(k, v)| (k.clone(), v.to_string()))
-                .collect()
-        })
+        self.inner
+            .metadata
+            .as_ref()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.to_string())).collect())
     }
 
     fn __repr__(&self) -> String {

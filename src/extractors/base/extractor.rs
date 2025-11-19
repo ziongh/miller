@@ -61,18 +61,15 @@ impl BaseExtractor {
         // Phase 2: Convert absolute path to relative Unix-style path for storage
         // File paths might be absolute OR relative - handle both
         let relative_unix_path = if canonical_path.is_absolute() {
-            crate::utils::paths::to_relative_unix_style(
-                &canonical_path,
-                workspace_root,
-            )
-            .unwrap_or_else(|e| {
-                warn!(
+            crate::utils::paths::to_relative_unix_style(&canonical_path, workspace_root)
+                .unwrap_or_else(|e| {
+                    warn!(
                     "⚠️  Failed to convert to relative path '{}': {} - using absolute as fallback",
                     canonical_path.display(),
                     e
                 );
-                canonical_path.to_string_lossy().to_string()
-            })
+                    canonical_path.to_string_lossy().to_string()
+                })
         } else {
             // Already relative - use as-is (just normalize to Unix-style)
             canonical_path.to_string_lossy().replace('\\', "/")

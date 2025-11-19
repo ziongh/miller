@@ -2,9 +2,9 @@
 //
 // Container for all extracted symbols, identifiers, and relationships
 
-use pyo3::prelude::*;
+use super::{PyIdentifier, PyRelationship, PySymbol};
 use crate::extractors::base::types::ExtractionResults;
-use super::{PySymbol, PyIdentifier, PyRelationship};
+use pyo3::prelude::*;
 
 /// Python-accessible ExtractionResults wrapper
 ///

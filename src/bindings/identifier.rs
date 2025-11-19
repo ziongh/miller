@@ -2,8 +2,8 @@
 //
 // Represents a usage reference (function call, variable reference, etc.)
 
-use pyo3::prelude::*;
 use crate::extractors::base::types::{Identifier, IdentifierKind};
+use pyo3::prelude::*;
 
 /// Python-accessible Identifier wrapper
 ///

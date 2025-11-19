@@ -4,7 +4,7 @@
 // for token-efficient storage and cross-platform compatibility.
 
 use anyhow::{Context, Result};
-use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 
 /// Convert an absolute path to a relative Unix-style path (with `/` separators)
 ///

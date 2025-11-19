@@ -22,7 +22,7 @@ mod template;
 // Public re-exports
 pub use crate::extractors::base::{IdentifierKind, RelationshipKind};
 
-use parsing::{VueSection, parse_vue_sfc};
+use parsing::{parse_vue_sfc, VueSection};
 use script::create_symbol_manual;
 
 /// Vue Single File Component (SFC) Extractor
@@ -128,7 +128,9 @@ impl VueExtractor {
                 }
             }
             // Check for propertyType (from props/data)
-            else if let Some(property_type) = metadata.as_ref().and_then(|m| m.get("propertyType")) {
+            else if let Some(property_type) =
+                metadata.as_ref().and_then(|m| m.get("propertyType"))
+            {
                 if let Some(type_str) = property_type.as_str() {
                     types.insert(symbol.id.clone(), type_str.to_string());
                 }

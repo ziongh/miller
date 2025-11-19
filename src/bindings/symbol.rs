@@ -2,8 +2,8 @@
 //
 // This wrapper allows Python code to access Symbol fields via zero-copy borrowing.
 
-use pyo3::prelude::*;
 use crate::extractors::base::types::{Symbol, SymbolKind, Visibility};
+use pyo3::prelude::*;
 use std::collections::HashMap;
 
 /// Python-accessible Symbol wrapper
@@ -108,11 +108,10 @@ impl PySymbol {
     #[getter]
     fn metadata(&self) -> Option<HashMap<String, String>> {
         // Convert HashMap<String, serde_json::Value> to HashMap<String, String>
-        self.inner.metadata.as_ref().map(|m| {
-            m.iter()
-                .map(|(k, v)| (k.clone(), v.to_string()))
-                .collect()
-        })
+        self.inner
+            .metadata
+            .as_ref()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.to_string())).collect())
     }
 
     #[getter]
