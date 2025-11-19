@@ -22,10 +22,10 @@ use std::path::Path;
 /// Raises:
 ///     ValueError: If language is not supported
 #[pyfunction]
-#[pyo3(signature = (content, language, file_path))]
+#[pyo3(signature = (content, _language, file_path))]
 pub fn extract_file(
     content: &str,
-    language: &str,
+    _language: &str,
     file_path: &str,
 ) -> PyResult<PyExtractionResults> {
     // Create extractor manager
