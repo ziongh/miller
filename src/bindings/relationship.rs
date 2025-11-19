@@ -2,7 +2,7 @@
 //
 // Represents a relationship between two symbols (calls, extends, implements, etc.)
 
-use crate::extractors::base::types::{Relationship, RelationshipKind};
+use crate::extractors::base::types::Relationship;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 
@@ -30,6 +30,7 @@ impl PyRelationship {
     }
 
     #[getter]
+    #[allow(clippy::wrong_self_convention)]
     fn from_symbol_id(&self) -> String {
         self.inner.from_symbol_id.clone()
     }
@@ -72,7 +73,7 @@ impl PyRelationship {
     fn __repr__(&self) -> String {
         format!(
             "Relationship(kind='{}', from='{}', to='{}', file_path='{}', line={})",
-            self.inner.kind.to_string(),
+            self.inner.kind,
             self.inner.from_symbol_id,
             self.inner.to_symbol_id,
             self.inner.file_path,

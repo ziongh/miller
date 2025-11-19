@@ -4,7 +4,7 @@
 /// - Regular tables: [table_name]
 /// - Nested tables: [parent.child]
 /// - Array tables: [[array_table]]
-/// All tables are treated as SymbolKind::Module (containers)
+///   All tables are treated as SymbolKind::Module (containers)
 use crate::extractors::base::{BaseExtractor, Identifier, Symbol, SymbolKind};
 use std::path::Path;
 

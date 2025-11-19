@@ -110,19 +110,15 @@ fn extract_identifier_from_node(
                 match parent.kind() {
                     // Skip if this is the function being called
                     "call" if parent.child(0).map(|c| c.id()) == Some(node.id()) => {
-                        return;
                     }
                     // Skip if this is in an extract operator (handled separately)
                     "extract_operator" => {
-                        return;
                     }
                     // Skip if this is in a namespace operator
                     "namespace_operator" => {
-                        return;
                     }
                     // Skip if this is a parameter name
                     "parameter" => {
-                        return;
                     }
                     // Check if this is the left side of an assignment
                     "binary_operator" => {

@@ -2,7 +2,7 @@
 //
 // Represents a usage reference (function call, variable reference, etc.)
 
-use crate::extractors::base::types::{Identifier, IdentifierKind};
+use crate::extractors::base::types::Identifier;
 use pyo3::prelude::*;
 
 /// Python-accessible Identifier wrapper
@@ -101,7 +101,7 @@ impl PyIdentifier {
         format!(
             "Identifier(name='{}', kind='{}', file_path='{}', line={})",
             self.inner.name,
-            self.inner.kind.to_string(),
+            self.inner.kind,
             self.inner.file_path,
             self.inner.start_line
         )

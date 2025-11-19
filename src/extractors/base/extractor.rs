@@ -276,8 +276,6 @@ impl BaseExtractor {
         &self.context_config
     }
 
-    /// Create a symbol - exact port of createSymbol method
-
     /// Extract identifier name - exact port of extractIdentifierName
     pub fn extract_identifier_name(&self, node: &Node) -> String {
         // Try to find the identifier node using field name

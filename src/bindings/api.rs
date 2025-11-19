@@ -24,7 +24,7 @@ use std::path::Path;
 #[pyfunction]
 pub fn extract_file(
     content: &str,
-    language: &str,
+    _language: &str,
     file_path: &str,
 ) -> PyResult<PyExtractionResults> {
     // Create extractor manager

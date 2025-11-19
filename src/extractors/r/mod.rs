@@ -42,6 +42,7 @@ impl RExtractor {
 
         let mut current_symbol: Option<Symbol> = None;
 
+        #[allow(clippy::single_match)]
         match node.kind() {
             // R assignments: x <- 42, y = 100, getUserData <- function(...), 200 -> z
             "binary_operator" => {

@@ -17,7 +17,7 @@ static SETMETATABLE_RE: LazyLock<Regex> =
 ///
 /// This post-processes all symbols to identify Lua class patterns and upgrades
 /// Variable symbols to Class symbols when they match class creation patterns.
-pub(crate) fn detect_lua_classes(symbols: &mut Vec<Symbol>) {
+pub(crate) fn detect_lua_classes(symbols: &mut [Symbol]) {
     // Collect upgrades to apply (can't mutate while iterating)
     let mut class_upgrades = Vec::new();
 

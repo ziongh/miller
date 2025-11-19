@@ -2,7 +2,7 @@
 //
 // This wrapper allows Python code to access Symbol fields via zero-copy borrowing.
 
-use crate::extractors::base::types::{Symbol, SymbolKind, Visibility};
+use crate::extractors::base::types::Symbol;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 
@@ -139,7 +139,7 @@ impl PySymbol {
         format!(
             "Symbol(name='{}', kind='{}', file_path='{}', line={})",
             self.inner.name,
-            self.inner.kind.to_string(),
+            self.inner.kind,
             self.inner.file_path,
             self.inner.start_line
         )

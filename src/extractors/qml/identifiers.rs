@@ -122,7 +122,7 @@ fn extract_identifier_from_node(
                     | "ui_object_definition"
                     | "ui_property"
                     | "ui_signal" => {
-                        return; // Skip - handled elsewhere or is a definition
+                        // Skip - handled elsewhere or is a definition
                     }
                     _ => {
                         // This is a variable reference

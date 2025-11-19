@@ -955,11 +955,11 @@ pub fn extract_symbols_and_relationships(
         }
 
         _ => {
-            return Err(anyhow!(
+            Err(anyhow!(
                 "No extractor available for language '{}' (file: {})",
                 language,
                 file_path
-            ));
+            ))
         }
     }
 }
@@ -1088,9 +1088,9 @@ def foo():
         println!("Identifiers: {}", results.identifiers.len());
         println!("Types: {}", results.types.len());
 
-        assert!(results.symbols.len() > 0, "Should extract symbols");
+        assert!(!results.symbols.is_empty(), "Should extract symbols");
         assert!(
-            results.identifiers.len() > 0,
+            !results.identifiers.is_empty(),
             "Factory should return identifiers from Python code!"
         );
     }

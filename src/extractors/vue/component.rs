@@ -7,6 +7,7 @@ use super::parsing::VueSection;
 /// Priority: export default { name: 'X' } > filename
 pub(super) fn extract_component_name(file_path: &str, sections: &[VueSection]) -> Option<String> {
     // First try to find name from script section: export default { name: 'ComponentName' }
+    #[allow(clippy::regex_creation_in_loops)]
     for section in sections {
         if section.section_type == "script" {
             // Look for: name: 'ComponentName' or name: "ComponentName"

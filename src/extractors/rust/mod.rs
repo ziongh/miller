@@ -131,6 +131,7 @@ impl RustExtractor {
     pub fn infer_types(&self, symbols: &[Symbol]) -> std::collections::HashMap<String, String> {
         let mut type_map = std::collections::HashMap::new();
 
+        #[allow(clippy::regex_creation_in_loops)]
         for symbol in symbols {
             // For functions/methods, try to extract return type from signature
             if matches!(symbol.kind, SymbolKind::Function | SymbolKind::Method) {
