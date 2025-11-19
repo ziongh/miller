@@ -1,0 +1,21 @@
+{
+  "description": "Completed strategic planning for Miller toolset. Created comprehensive TOOLS_PLAN.md documenting 8-tool strategy (down from Julie's 15). Research-backed decisions: MCPs as data gateways, search/replace > line editing, agents prefer built-in editing tools. Priorities: 1) Complete get_symbols, 2) Add fast_refs (refactoring safety), 3) Add trace_call_path (killer cross-language feature), 4) Add search_and_replace (proven usage). Skipping: line-based editing tools, possibly fast_goto. Documentation generation as workflow not tool. Ready to start implementation.",
+  "git": {
+    "branch": "main",
+    "commit": "7e83742",
+    "dirty": true,
+    "files_changed": [
+      ".memories/2025-11-19/122349_727b.json"
+    ]
+  },
+  "id": "checkpoint_11aa0781_849701",
+  "tags": [
+    "strategic-planning",
+    "tools-strategy",
+    "research-backed",
+    "mcp-best-practices",
+    "documentation"
+  ],
+  "timestamp": 1763579990,
+  "type": "checkpoint"
+}

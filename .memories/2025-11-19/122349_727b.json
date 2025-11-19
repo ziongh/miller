@@ -1,0 +1,18 @@
+{
+  "description": "Removed index_file test helper from production code and fixed test infrastructure. Created index_file_helper pytest fixture that properly initializes embeddings manager and directly indexes files for testing. Fixed clean_server_storage fixture to initialize server.embeddings (was None, causing AttributeError). Updated 6 tests in test_server.py to use new fixture. All 8 search/goto tests now passing. Code is cleaner - no test helpers in production server.py.",
+  "git": {
+    "branch": "main",
+    "commit": "31d420a",
+    "dirty": false,
+    "files_changed": []
+  },
+  "id": "checkpoint_acb9eb7d_ee1ed8",
+  "tags": [
+    "refactoring",
+    "test-infrastructure",
+    "cleanup",
+    "index-file-removal"
+  ],
+  "timestamp": 1763576629,
+  "type": "checkpoint"
+}

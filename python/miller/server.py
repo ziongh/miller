@@ -310,51 +310,53 @@ async def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
     }
 
 
-async def get_symbols(file_path: str) -> list[dict[str, Any]]:
+async def get_symbols(
+    file_path: str,
+    mode: str = "structure",
+    max_depth: int = 1,
+    target: Optional[str] = None,
+    limit: Optional[int] = None,
+    workspace: str = "primary"
+) -> list[dict[str, Any]]:
     """
-    Get file structure (symbols without full content).
+    Get file structure with enhanced filtering and modes.
+
+    Miller's enhanced get_symbols - better than Julie's with Python/ML capabilities.
 
     Args:
-        file_path: Path to file
+        file_path: Path to file (relative or absolute)
+        mode: Reading mode - "structure" (default), "minimal", or "full"
+              - "structure": Names, signatures, no code bodies (fast, token-efficient)
+              - "minimal": Code bodies for top-level symbols only
+              - "full": Complete code bodies for all symbols
+        max_depth: Maximum nesting depth (0=top-level only, 1=include methods, 2+=deeper)
+        target: Filter to symbols matching this name (case-insensitive partial match)
+        limit: Maximum number of symbols to return
+        workspace: Workspace to query ("primary" or workspace_id)
 
     Returns:
-        List of symbols in file
+        List of symbol dictionaries with metadata based on mode
 
-    Note: This function doesn't require initialization (uses Rust core directly).
+    Examples:
+        # Quick structure overview (no code)
+        await get_symbols("src/user.py", mode="structure", max_depth=1)
+
+        # Find specific class with its methods
+        await get_symbols("src/user.py", target="UserService", max_depth=2)
+
+        # Get complete implementation
+        await get_symbols("src/utils.py", mode="full", max_depth=2)
     """
-    path = Path(file_path)
+    from miller.tools.symbols import get_symbols_enhanced
 
-    if not path.exists():
-        return []
-
-    # Read and extract (no lazy init needed - uses miller_core directly)
-    try:
-        content = path.read_text(encoding="utf-8")
-        language = miller_core.detect_language(file_path)
-
-        if not language:
-            return []
-
-        result = miller_core.extract_file(content, language, file_path)
-
-        # Convert to dicts
-        symbols = []
-        for sym in result.symbols:
-            symbols.append(
-                {
-                    "name": sym.name,
-                    "kind": sym.kind,
-                    "start_line": sym.start_line,
-                    "end_line": sym.end_line,
-                    "signature": sym.signature if hasattr(sym, "signature") else None,
-                    "doc_comment": sym.doc_comment if hasattr(sym, "doc_comment") else None,
-                }
-            )
-
-        return symbols
-
-    except Exception:
-        return []
+    return await get_symbols_enhanced(
+        file_path=file_path,
+        mode=mode,
+        max_depth=max_depth,
+        target=target,
+        limit=limit,
+        workspace=workspace
+    )
 
 
 # Register tools with FastMCP
