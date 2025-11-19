@@ -41,13 +41,16 @@ jobs:
           uv venv
           uv pip install maturin pytest pytest-asyncio fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
           source .venv/bin/activate || . .venv/Scripts/activate
+          which python
+          which pytest
+          python --version
           maturin develop --release
 
       - name: Run tests
         shell: bash
         run: |
           source .venv/bin/activate || . .venv/Scripts/activate
-          pytest python/tests/ -v
+          python -m pytest python/tests/ -v
 
       - name: Run Rust tests
         run: cargo test --release
