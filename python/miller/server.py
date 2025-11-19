@@ -368,6 +368,108 @@ from miller.tools.workspace import manage_workspace
 mcp.tool()(manage_workspace)
 
 
+# Test helper function for indexing files
+def index_file(file_path: str) -> bool:
+    """
+    Index a single file (test helper function).
+
+    This is a synchronous wrapper for testing. In production, indexing
+    happens automatically via the background task in the lifespan handler.
+
+    Args:
+        file_path: Absolute path to file
+
+    Returns:
+        True if successful, False otherwise
+    """
+    from pathlib import Path
+
+    # Ensure components are initialized
+    if storage is None or embeddings is None or vector_store is None:
+        # Initialize components synchronously for testing
+        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.storage import StorageManager
+
+        globals()["embeddings"] = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+        globals()["storage"] = StorageManager(db_path=".miller/indexes/symbols.db")
+        globals()["vector_store"] = VectorStore(
+            db_path=".miller/indexes/vectors.lance", embeddings=globals()["embeddings"]
+        )
+
+    if miller_core is None:
+        return False
+
+    try:
+        file_path_obj = Path(file_path)
+        workspace_root = Path.cwd()
+
+        # Convert to relative Unix-style path (or use absolute if outside workspace)
+        try:
+            relative_path = str(file_path_obj.relative_to(workspace_root)).replace("\\", "/")
+        except ValueError:
+            # File is outside workspace (e.g., temp test directory)
+            # Use filename or absolute path for testing
+            relative_path = file_path_obj.name
+
+        # Read file
+        content = file_path_obj.read_text(encoding="utf-8")
+
+        # Detect language
+        language = miller_core.detect_language(str(file_path_obj))
+        if not language:
+            return False
+
+        # Extract symbols
+        result = miller_core.extract_file(content, language, relative_path)
+
+        # Compute hash
+        import hashlib
+
+        file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+        # Store file metadata
+        storage.add_file(
+            file_path=relative_path, language=language, content=content, hash=file_hash, size=len(content)
+        )
+
+        # Store symbols
+        if result.symbols:
+            storage.add_symbols_batch(result.symbols)
+
+            # Generate embeddings and store in vector DB
+            embeddings_list = []
+            for sym in result.symbols:
+                # Create searchable text for embedding
+                search_text = f"{sym.name} {sym.kind}"
+                if sym.signature:
+                    search_text += f" {sym.signature}"
+                if sym.doc_comment:
+                    search_text += f" {sym.doc_comment}"
+
+                vec = globals()["embeddings"].embed_query(search_text)
+                embeddings_list.append(vec)
+
+            # Add to vector store (convert list to numpy array)
+            import numpy as np
+
+            vectors_array = np.array(embeddings_list, dtype=np.float32)
+            vector_store.add_symbols(result.symbols, vectors_array)
+
+        # Store identifiers
+        if result.identifiers:
+            storage.add_identifiers_batch(result.identifiers)
+
+        # Store relationships
+        if result.relationships:
+            storage.add_relationships_batch(result.relationships)
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to index file {file_path}: {e}", exc_info=True)
+        return False
+
+
 # Export functions for direct use (testing)
 # The @mcp.tool() decorator wraps them, but we also need raw access
 __all__ = [
@@ -379,6 +481,7 @@ __all__ = [
     "fast_search",
     "fast_goto",
     "get_symbols",
+    "index_file",  # Test helper
     "checkpoint",
     "recall",
     "plan",
