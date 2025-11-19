@@ -38,19 +38,33 @@ jobs:
       - name: Install Miller (dev mode)
         shell: bash
         run: |
+          echo "=== Creating venv ==="
           uv venv
+          echo "=== Installing dependencies ==="
           uv pip install maturin pytest pytest-asyncio fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
+          echo "=== Activating venv ==="
           source .venv/bin/activate || . .venv/Scripts/activate
+          echo "=== Checking environment ==="
           which python
-          which pytest
+          which pytest || echo "pytest not in PATH"
           python --version
+          python -c "import sys; print('Python path:', sys.executable)"
+          python -c "import pytest; print('pytest version:', pytest.__version__)" || echo "pytest not importable"
+          ls -la python/tests/ || dir python\\tests\\
+          echo "=== Building Rust extension ==="
           maturin develop --release
 
       - name: Run tests
         shell: bash
         run: |
           source .venv/bin/activate || . .venv/Scripts/activate
-          python -m pytest python/tests/ -v
+          echo "=== Running tests ==="
+          python -c "import sys; print('Python:', sys.executable)"
+          python -c "import pytest; print('pytest:', pytest.__version__)"
+          echo "=== Test directory contents ==="
+          ls -la python/tests/ || dir python\\tests\\
+          echo "=== Running pytest ==="
+          python -m pytest python/tests/ -v --collect-only || python -m pytest python/tests/ -v
 
       - name: Run Rust tests
         run: cargo test --release
