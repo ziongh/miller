@@ -36,7 +36,7 @@ except ImportError:
     miller_core = None
 
 
-# Declare Miller components as module-level globals (initialized in lifespan)
+# Declare Miller components as module-level globals (lazy-initialized on first use)
 # These are None during module import to avoid blocking the MCP handshake
 storage = None
 vector_store = None
@@ -44,143 +44,66 @@ embeddings = None
 scanner = None
 workspace_root = None
 
+# Lazy initialization state
+_init_lock = asyncio.Lock()
+_initialized = False
 
-# Define lifespan handler (Julie pattern - background indexing + file watching)
-# This follows Julie's pattern: handshake completes immediately,
-# then components are initialized and indexing runs in background
+
+async def _ensure_initialized():
+    """
+    Lazy initialization of Miller components.
+
+    Called on first tool invocation, NOT on server startup.
+    This matches Julie's pattern: instant connection, lazy loading.
+    """
+    global storage, vector_store, embeddings, scanner, workspace_root, _initialized
+
+    async with _init_lock:
+        if _initialized:
+            return
+
+        logger.info("🔧 Lazy-initializing Miller components (first tool call)...")
+
+        # Lazy imports - only load heavy ML libraries when actually needed
+        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.storage import StorageManager
+        from miller.workspace import WorkspaceScanner
+
+        # Initialize components
+        storage = StorageManager(db_path=".miller/indexes/symbols.db")
+        vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+
+        workspace_root = Path.cwd()
+        scanner = WorkspaceScanner(
+            workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
+        )
+
+        _initialized = True
+        logger.info("✅ Miller components initialized and ready")
+
+
+# Define lifespan handler (Julie pattern - instant startup, lazy loading)
+# Server starts immediately with NO initialization work
 @asynccontextmanager
 async def lifespan(_app):
     """
     FastMCP lifespan handler - startup and shutdown hooks.
 
-    Startup:
-      1. Spawn background task immediately (server becomes ready instantly)
-      2. Background task initializes components (non-blocking)
-      3. Background task runs indexing and starts file watcher
+    Startup: NOTHING. Server becomes ready instantly.
+    Shutdown: Cleanup any resources that were initialized.
 
-    Shutdown: Stop file watcher and cleanup
-
-    This ensures the MCP handshake completes in milliseconds, matching Julie's
-    instant connection. All expensive work happens in background.
+    This matches Julie's pattern: instant connection, zero startup work.
+    Components initialize lazily on first tool call.
     """
-    global storage, vector_store, embeddings, scanner, workspace_root
+    logger.info("✅ Miller server ready (components will lazy-load on first use)")
 
-    # File watcher reference (initialized by background task)
-    file_watcher = None
+    yield  # Server runs here - INSTANT ready
 
-    async def on_files_changed(events: list[tuple[FileEvent, Path]]):
-        """
-        Callback for file watcher - re-indexes changed files in real-time.
-
-        Args:
-            events: List of (event_type, file_path) tuples from watcher
-        """
-        for event_type, file_path in events:
-            try:
-                if event_type == FileEvent.DELETED:
-                    # Convert to relative path for storage
-                    rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
-                    storage.delete_file(rel_path)
-                    logger.info(f"🗑️  Deleted from index: {rel_path}")
-                else:
-                    # Re-index file (handles CREATED and MODIFIED)
-                    success = await scanner._index_file(file_path)
-                    rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
-                    if success:
-                        action = "Indexed" if event_type == FileEvent.CREATED else "Updated"
-                        logger.info(f"✏️  {action}: {rel_path}")
-                    else:
-                        logger.warning(f"⚠️  Failed to index: {rel_path}")
-            except Exception as e:
-                logger.error(f"❌ Error processing file change {file_path}: {e}", exc_info=True)
-
-    async def background_initialization_and_indexing():
-        """
-        Background task that initializes components, indexes workspace, and starts file watcher.
-
-        Runs completely in background so server becomes ready immediately.
-        """
-        nonlocal file_watcher
-        global storage, vector_store, embeddings, scanner, workspace_root
-
-        try:
-            # Lazy imports - only load heavy ML libraries when actually needed
-            # This happens in background AFTER server is ready for connections
-            from miller.embeddings import EmbeddingManager, VectorStore
-            from miller.storage import StorageManager
-            from miller.workspace import WorkspaceScanner
-
-            # PHASE 1: Initialize components (in background, doesn't block server ready)
-            logger.info("🔧 Initializing Miller components in background...")
-
-            storage = StorageManager(db_path=".miller/indexes/symbols.db")
-            vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
-            embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
-
-            workspace_root = Path.cwd()
-            logger.info(f"📁 Workspace root: {workspace_root}")
-
-            scanner = WorkspaceScanner(
-                workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
-            )
-            logger.info("✅ Miller components initialized and ready")
-
-            # PHASE 2: Run initial indexing
-
-            # Initial indexing
-            logger.info("🔍 Checking if workspace indexing needed...")
-            if await scanner.check_if_indexing_needed():
-                logger.info("📚 Workspace needs indexing - starting background indexing")
-                stats = await scanner.index_workspace()
-                logger.info(
-                    f"✅ Indexing complete: {stats['indexed']} indexed, "
-                    f"{stats['updated']} updated, {stats['skipped']} skipped, "
-                    f"{stats['deleted']} deleted, {stats['errors']} errors"
-                )
-            else:
-                logger.info("✅ Workspace already indexed - ready for search")
-
-            # Start file watcher for real-time updates
-            logger.info("👁️  Starting file watcher for real-time indexing...")
-            # Use load_gitignore() to get same patterns as workspace scanner
-            # (combines DEFAULT_IGNORES + .gitignore file patterns)
-            from miller.ignore_patterns import load_gitignore
-
-            ignore_spec = load_gitignore(workspace_root)
-            # Extract pattern strings from PathSpec (patterns are GitWildMatchPattern objects)
-            pattern_strings = {p.pattern for p in ignore_spec.patterns}
-            file_watcher = FileWatcher(
-                workspace_path=workspace_root,
-                indexing_callback=on_files_changed,
-                ignore_patterns=pattern_strings,  # Use exact same patterns as scanner
-                debounce_delay=0.2,
-            )
-            file_watcher.start()
-            logger.info("✅ File watcher active - workspace changes will be indexed automatically")
-
-        except Exception as e:
-            logger.error(f"❌ Background initialization/indexing failed: {e}", exc_info=True)
-
-    # Spawn background task immediately (server becomes ready without waiting)
-    logger.info("🚀 Spawning background initialization task...")
-    init_task = asyncio.create_task(background_initialization_and_indexing())
-    logger.info("✅ Server ready for MCP requests (initialization running in background)")
-
-    yield  # Server runs here - client sees "Connected" immediately
-
-    # SHUTDOWN: Stop file watcher and wait for background task
+    # SHUTDOWN: Cleanup if components were initialized
     logger.info("🛑 Miller server shutting down...")
-
-    if file_watcher and file_watcher.is_running():
-        logger.info("⏹️  Stopping file watcher...")
-        file_watcher.stop()
-        logger.info("✅ File watcher stopped")
-
-    if not init_task.done():
-        logger.info("⏳ Waiting for background initialization to complete...")
-        await init_task
-
     logger.info("👋 Miller server shutdown complete")
+
 
 
 # Create FastMCP server with lifespan handler
@@ -192,7 +115,7 @@ logger.info("✓ FastMCP server created (components will initialize post-handsha
 # MCP Tool implementations (plain functions for testing)
 
 
-def fast_search(
+async def fast_search(
     query: str,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 50,
@@ -228,9 +151,11 @@ def fast_search(
     Returns:
         List of matching symbols with scores and metadata
 
-    Note: Indexing runs automatically in background via lifespan handler.
-          Early searches may return empty results if indexing hasn't completed.
+    Note: Components lazy-load on first call (may take 2-3 sec first time).
     """
+    # Lazy initialization on first call
+    await _ensure_initialized()
+
     results = vector_store.search(query, method=method, limit=limit)
 
     # Format results for MCP
@@ -251,7 +176,7 @@ def fast_search(
     return formatted
 
 
-def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
+async def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
     """
     Find symbol definition location.
 
@@ -261,6 +186,9 @@ def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
     Returns:
         Symbol location info, or None if not found
     """
+    # Lazy initialization on first call
+    await _ensure_initialized()
+
     # Query SQLite for exact match
     sym = storage.get_symbol_by_name(symbol_name)
 
@@ -278,7 +206,7 @@ def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
     }
 
 
-def get_symbols(file_path: str) -> list[dict[str, Any]]:
+async def get_symbols(file_path: str) -> list[dict[str, Any]]:
     """
     Get file structure (symbols without full content).
 
@@ -287,13 +215,15 @@ def get_symbols(file_path: str) -> list[dict[str, Any]]:
 
     Returns:
         List of symbols in file
+
+    Note: This function doesn't require initialization (uses Rust core directly).
     """
     path = Path(file_path)
 
     if not path.exists():
         return []
 
-    # Read and extract
+    # Read and extract (no lazy init needed - uses miller_core directly)
     try:
         content = path.read_text(encoding="utf-8")
         language = miller_core.detect_language(file_path)
