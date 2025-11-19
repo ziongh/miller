@@ -1,0 +1,39 @@
+{
+  "description": "FAST_REFS INTEGRATED INTO MCP SERVER! Added async wrapper in server.py with full parameter support (symbol_name, kind_filter, include_context, context_file, limit, workspace). Registered with FastMCP via mcp.tool(). Added to __all__ exports. Supports workspace-aware queries (primary + reference workspaces). Integration test passed - fast_refs is now a first-class MCP tool alongside fast_search, fast_goto, get_symbols. Users can now call it from Claude Desktop or any MCP client. Production-ready refactoring safety tool SHIPPED!",
+  "git": {
+    "branch": "main",
+    "commit": "af6b268",
+    "dirty": true,
+    "files_changed": [
+      ".memories/plans/plan_complete-getsymbols-better-than-julie.json",
+      "python/miller/server.py",
+      "python/miller/tools/symbols.py",
+      "python/tests/test_get_symbols.py",
+      ".memories/2025-11-19/161543_a28d.json",
+      ".memories/2025-11-19/162459_53f7.json",
+      ".memories/2025-11-19/162914_f397.json",
+      ".memories/2025-11-19/163713_77e1.json",
+      ".memories/2025-11-19/164008_00e3.json",
+      ".memories/2025-11-19/164252_bf25.json",
+      ".memories/2025-11-19/164936_ba16.json",
+      ".memories/2025-11-19/165253_dc85.json",
+      ".memories/2025-11-19/165409_64b3.json",
+      ".memories/plans/plan_implement-fastrefs-find-all-symbol-references.json",
+      "FAST_REFS_GUIDE.md",
+      "GET_SYMBOLS_GUIDE.md",
+      "benchmark_get_symbols.py",
+      "python/miller/tools/refs.py",
+      "python/tests/test_fast_refs.py"
+    ]
+  },
+  "id": "milestone_23a595ba_3e6fa2",
+  "tags": [
+    "fast-refs",
+    "mcp-integration",
+    "shipped",
+    "production",
+    "complete"
+  ],
+  "timestamp": 1763593013,
+  "type": "milestone"
+}
