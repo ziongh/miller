@@ -105,12 +105,24 @@ class EmbeddingManager:
         import logging
         logger = logging.getLogger("miller.embeddings")
 
-        # Auto-detect device with priority: CUDA > MPS > DirectML > CPU
+        # Auto-detect device with priority: CUDA > ROCm > XPU > MPS > DirectML > CPU
         if device == "auto":
             if torch.cuda.is_available():
                 self.device = "cuda"
                 gpu_name = torch.cuda.get_device_name(0)
                 logger.info(f"🚀 Using CUDA GPU: {gpu_name}")
+            elif self._check_rocm_available():
+                # ROCm support (AMD GPUs on Linux)
+                # Requires: pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
+                self.device = "cuda"  # ROCm uses CUDA API
+                gpu_name = torch.cuda.get_device_name(0)
+                logger.info(f"🔴 Using AMD GPU with ROCm: {gpu_name}")
+            elif self._check_xpu_available():
+                # Intel Arc/Data Center GPU support (Linux/Windows)
+                # Requires: pip install torch --index-url https://download.pytorch.org/whl/nightly/xpu
+                self.device = "xpu"
+                gpu_name = self._get_xpu_device_name()
+                logger.info(f"🔷 Using Intel XPU: {gpu_name}")
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
                 self.device = "mps"
                 logger.info("🍎 Using Apple Silicon MPS (Metal Performance Shaders) for GPU acceleration")
@@ -139,6 +151,50 @@ class EmbeddingManager:
         self.dimensions = self.model.get_sentence_embedding_dimension()
 
         logger.info(f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device})")
+
+    def _check_rocm_available(self) -> bool:
+        """
+        Check if ROCm is available (AMD GPUs on Linux).
+
+        ROCm requires PyTorch built with ROCm support:
+        pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
+
+        Returns:
+            True if ROCm is available, False otherwise
+        """
+        try:
+            # ROCm uses the CUDA API, but torch.version.hip is set
+            return hasattr(torch.version, 'hip') and torch.version.hip is not None and torch.cuda.is_available()
+        except Exception:
+            return False
+
+    def _check_xpu_available(self) -> bool:
+        """
+        Check if Intel XPU is available (Intel Arc/Data Center GPUs).
+
+        XPU requires PyTorch built with XPU support:
+        pip install torch --index-url https://download.pytorch.org/whl/nightly/xpu
+
+        Returns:
+            True if XPU is available, False otherwise
+        """
+        try:
+            # Intel XPU support added in PyTorch 2.5+
+            return hasattr(torch, 'xpu') and torch.xpu.is_available()
+        except Exception:
+            return False
+
+    def _get_xpu_device_name(self) -> str:
+        """
+        Get Intel XPU device name.
+
+        Returns:
+            Device name string
+        """
+        try:
+            return torch.xpu.get_device_name(0)
+        except Exception:
+            return "Intel XPU Device"
 
     def _check_directml_available(self) -> bool:
         """

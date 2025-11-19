@@ -134,7 +134,7 @@ uv pip install torch
 # Miller auto-detects MPS and uses GPU acceleration
 ```
 
-**For Linux:**
+**For Linux with NVIDIA GPU:**
 
 ```bash
 # Check your NVIDIA driver version first
@@ -144,6 +144,29 @@ nvidia-smi  # Look for "CUDA Version: X.Y"
 uv pip install torch --index-url https://download.pytorch.org/whl/cu130  # CUDA 13.0
 uv pip install torch --index-url https://download.pytorch.org/whl/cu124  # CUDA 12.4
 uv pip install torch --index-url https://download.pytorch.org/whl/cu121  # CUDA 12.1
+```
+
+**For Linux with AMD GPU:**
+
+```bash
+# ROCm support for AMD GPUs (Radeon RX 6000/7000 series, Instinct, etc.)
+uv pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
+
+# ✅ This installs: torch with ROCm 6.2 support
+# ✅ Supported GPUs: AMD Radeon RX 6000+, Radeon Pro, Instinct MI series
+# ✅ Miller auto-detects ROCm and uses GPU acceleration
+```
+
+**For Linux/Windows with Intel Arc GPU:**
+
+```bash
+# Intel XPU support for Arc A-Series, Data Center GPU Max/Flex
+pip install torch --index-url https://download.pytorch.org/whl/nightly/xpu
+
+# ✅ This installs: torch with Intel XPU support (PyTorch 2.5+)
+# ✅ Supported: Arc A-Series (A770, A750, etc.), Data Center GPUs
+# ✅ Miller auto-detects XPU and uses GPU acceleration
+# ⚠️  Note: Requires Intel GPU drivers installed first
 ```
 
 ### Verification
@@ -161,10 +184,26 @@ python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {
 python -c "from miller.embeddings import EmbeddingManager; mgr = EmbeddingManager(); print(f'Miller using: {mgr.device}')"
 ```
 
-**Expected output:**
+**Expected output (varies by GPU):**
+
+*NVIDIA GPU (CUDA):*
 - `CUDA available: True`
-- `GPU: NVIDIA GeForce RTX 4080` (or your specific GPU)
+- `GPU: NVIDIA GeForce RTX 4080`
 - `Miller using: cuda`
+
+*AMD GPU (ROCm on Linux):*
+- `CUDA available: True` (ROCm uses CUDA API)
+- `GPU: AMD Radeon RX 7900 XTX`
+- `Miller using: cuda` (with ROCm backend)
+
+*Intel Arc (XPU):*
+- `XPU available: True`
+- `GPU: Intel Arc A770`
+- `Miller using: xpu`
+
+*Apple Silicon (MPS):*
+- `MPS available: True`
+- `Miller using: mps`
 
 ### Troubleshooting
 
@@ -193,7 +232,41 @@ python -c "from miller.embeddings import EmbeddingManager; mgr = EmbeddingManage
 
 **Problem: "No module named 'torch'"**
 
-Miller's `pyproject.toml` lists `torch>=2.0` as a dependency, but **this installs CPU-only version by default**. You must manually install the CUDA version using the commands above.
+Miller's `pyproject.toml` lists `torch>=2.0` as a dependency, but **this installs CPU-only version by default**. You must manually install the GPU-enabled version using the commands above.
+
+**Problem: AMD GPU on Linux not detected (showing CPU)**
+
+1. **ROCm not installed**:
+   ```bash
+   # Verify ROCm PyTorch is installed
+   python -c "import torch; print(hasattr(torch.version, 'hip'))"
+
+   # Should print "True" - if "False", reinstall with ROCm:
+   pip uninstall torch
+   uv pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
+   ```
+
+2. **ROCm drivers not installed**:
+   - Install AMD GPU drivers and ROCm runtime
+   - Check: `rocm-smi` should show your GPU
+   - See: https://rocm.docs.amd.com/projects/install-on-linux/
+
+**Problem: Intel Arc GPU not detected (showing CPU or DirectML)**
+
+1. **XPU PyTorch not installed**:
+   ```bash
+   # Verify XPU support
+   python -c "import torch; print(hasattr(torch, 'xpu'))"
+
+   # Should print "True" - if "False", install XPU version:
+   pip uninstall torch
+   pip install torch --index-url https://download.pytorch.org/whl/nightly/xpu
+   ```
+
+2. **Intel GPU drivers not installed**:
+   - Linux: Install Intel GPU drivers + compute runtime
+   - Windows: Install latest Intel Arc drivers
+   - Verify: GPU should appear in device manager/lspci
 
 ### DirectML (Optional Fallback for AMD/Intel GPUs on Windows)
 
@@ -209,9 +282,19 @@ Miller will auto-detect DirectML and use it for GPU acceleration (though CUDA on
 
 **Embedding generation speed (100 symbols):**
 - CPU: ~8-10 seconds
-- GPU (CUDA): ~0.5-1 second
-- GPU (MPS): ~1-2 seconds
-- GPU (DirectML): ~2-3 seconds
+- GPU (CUDA - NVIDIA): ~0.5-1 second
+- GPU (ROCm - AMD): ~0.7-1.5 seconds
+- GPU (XPU - Intel Arc): ~1-2 seconds
+- GPU (MPS - Apple Silicon): ~1-2 seconds
+- GPU (DirectML - Windows fallback): ~2-3 seconds
+
+**Device Priority (Auto-Detection Order):**
+1. CUDA (NVIDIA) - Fastest, most mature
+2. ROCm (AMD on Linux) - Native AMD, better than DirectML
+3. XPU (Intel Arc) - Native Intel, better than DirectML
+4. MPS (Apple Silicon) - macOS only
+5. DirectML (Windows AMD/Intel fallback) - Universal but slower
+6. CPU - Slowest fallback
 
 **On large codebases (1000+ files), GPU acceleration saves minutes to hours.**
 
