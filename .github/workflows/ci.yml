@@ -32,8 +32,10 @@ jobs:
           pip install maturin pytest pytest-asyncio
           pip install fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy
 
-      - name: Build extension
-        run: maturin develop --release
+      - name: Build and install extension
+        run: |
+          maturin build --release
+          pip install target/wheels/*.whl
 
       - name: Run Python tests
         run: pytest python/tests/ -v
