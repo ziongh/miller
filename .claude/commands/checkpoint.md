@@ -15,13 +15,4 @@ If no arguments are provided, analyze the recent conversation context (last 5-10
 
 Then IMMEDIATELY save the checkpoint using the checkpoint tool - DO NOT ask for confirmation.
 
-After the checkpoint is saved:
-1. Get the checkpoint ID from the tool response
-2. IMMEDIATELY commit it to git:
-   ```
-   git add .memories/
-   git commit -m "checkpoint: <brief summary of checkpoint description>"
-   ```
-3. Confirm with: "✓ Checkpoint saved and committed! Recall it later with /recall"
-
-⚠️ CRITICAL: Memory files are designed to be git-committed. Always commit them immediately after creation.
+After saving, confirm with: "✓ Checkpoint saved! Recall it later with /recall"

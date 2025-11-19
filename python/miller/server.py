@@ -69,10 +69,12 @@ async def _ensure_initialized():
         from miller.storage import StorageManager
         from miller.workspace import WorkspaceScanner
 
-        # Initialize components
-        storage = StorageManager(db_path=".miller/indexes/symbols.db")
-        vector_store = VectorStore(db_path=".miller/indexes/vectors.lance")
+        # Initialize components (embeddings first, then pass to vector_store)
         embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+        storage = StorageManager(db_path=".miller/indexes/symbols.db")
+        vector_store = VectorStore(
+            db_path=".miller/indexes/vectors.lance", embeddings=embeddings  # Pass for semantic/hybrid search
+        )
 
         workspace_root = Path.cwd()
         scanner = WorkspaceScanner(

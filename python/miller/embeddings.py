@@ -293,15 +293,22 @@ class VectorStore:
         ]
     )
 
-    def __init__(self, db_path: str = ".miller/indexes/vectors.lance"):
+    def __init__(
+        self,
+        db_path: str = ".miller/indexes/vectors.lance",
+        embeddings: Optional["EmbeddingManager"] = None,
+    ):
         """
         Initialize LanceDB connection.
 
         Args:
             db_path: Path to LanceDB database
                     (use ":memory:" for temp directory in tests)
+            embeddings: Optional EmbeddingManager for semantic search
+                       (if None, will create on-demand but less efficient)
         """
         self.db_path = db_path
+        self._embeddings = embeddings
 
         # Handle :memory: by creating temp directory
         if db_path == ":memory:":
@@ -577,15 +584,15 @@ class VectorStore:
 
         Requires embedding the query first.
         """
-        # Need to embed query - but we don't have access to EmbeddingManager here
-        # This is a design issue - let me refactor
+        # Get or create embedding manager
+        if self._embeddings is None:
+            # Fallback: create temporary embedding manager (lazy initialization)
+            # This is less efficient but works if VectorStore was created without embeddings
+            from miller.embeddings import EmbeddingManager
 
-        # For now, create temporary embedding manager
-        # (In production, we'd pass it as a dependency)
-        from miller.embeddings import EmbeddingManager
+            self._embeddings = EmbeddingManager()
 
-        embeddings = EmbeddingManager()
-        query_vec = embeddings.embed_query(query)
+        query_vec = self._embeddings.embed_query(query)
 
         # Vector search
         results = self._table.search(query_vec.tolist()).limit(limit).to_list()
@@ -615,10 +622,13 @@ class VectorStore:
         try:
             # Use LanceDB's native hybrid search with RRF
             # Need to embed query for vector component
-            from miller.embeddings import EmbeddingManager
+            if self._embeddings is None:
+                # Fallback: create temporary embedding manager (lazy initialization)
+                from miller.embeddings import EmbeddingManager
 
-            embeddings = EmbeddingManager()
-            embeddings.embed_query(query)
+                self._embeddings = EmbeddingManager()
+
+            self._embeddings.embed_query(query)
 
             results = self._table.search(query, query_type="hybrid").limit(limit).to_list()
 
