@@ -12,6 +12,70 @@ from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_p
 from miller.workspace_registry import WorkspaceRegistry
 
 
+async def _index_workspace_and_update_registry(
+    workspace_id: str,
+    workspace_path: Path,
+    registry: WorkspaceRegistry,
+) -> tuple[dict, int, int]:
+    """
+    Helper function to index a workspace and update registry.
+
+    Args:
+        workspace_id: Workspace ID
+        workspace_path: Path to workspace directory
+        registry: WorkspaceRegistry instance
+
+    Returns:
+        Tuple of (stats dict, symbol_count, file_count)
+
+    Raises:
+        Exception: If indexing fails
+    """
+    from miller.embeddings import EmbeddingManager, VectorStore
+    from miller.storage import StorageManager
+    from miller.workspace import WorkspaceScanner
+
+    # Initialize components for this workspace
+    db_path = get_workspace_db_path(workspace_id)
+    vector_path = get_workspace_vector_path(workspace_id)
+
+    storage = StorageManager(db_path=str(db_path))
+
+    try:
+        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=str(vector_path), embeddings=embeddings)
+
+        # Create scanner and run indexing
+        scanner = WorkspaceScanner(
+            workspace_root=workspace_path,
+            storage=storage,
+            embeddings=embeddings,
+            vector_store=vector_store,
+        )
+
+        # Run indexing
+        stats = await scanner.index_workspace()
+
+        # Get actual counts from storage (direct SQL queries)
+        cursor = storage.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM symbols")
+        symbol_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM symbols")
+        file_count = cursor.fetchone()[0]
+
+        # Update registry with stats
+        registry.update_workspace_stats(
+            workspace_id, symbol_count=symbol_count, file_count=file_count
+        )
+
+        return stats, symbol_count, file_count
+
+    finally:
+        # Always close storage connection
+        storage.close()
+
+
 async def manage_workspace(
     operation: Literal["index", "list", "add", "remove", "stats", "clean", "refresh", "health"],
     path: Optional[str] = None,
@@ -57,6 +121,15 @@ async def manage_workspace(
 
     elif operation == "remove":
         return await _handle_remove(registry, workspace_id)
+
+    elif operation == "refresh":
+        return await _handle_refresh(registry, workspace_id)
+
+    elif operation == "clean":
+        return await _handle_clean(registry)
+
+    elif operation == "health":
+        return _handle_health(registry, detailed)
 
     else:
         return f"Error: Operation '{operation}' not implemented yet"
@@ -194,39 +267,9 @@ async def _handle_add(
 
     # Index the workspace
     try:
-        from miller.embeddings import EmbeddingManager, VectorStore
-        from miller.storage import StorageManager
-        from miller.workspace import WorkspaceScanner
-
-        # Initialize components for this workspace
-        db_path = get_workspace_db_path(workspace_id)
-        vector_path = get_workspace_vector_path(workspace_id)
-
-        storage = StorageManager(db_path=str(db_path))
-        embeddings = EmbeddingManager()
-        vector_store = VectorStore(db_path=str(vector_path), embeddings=embeddings)
-
-        # Create scanner and index
-        scanner = WorkspaceScanner(
-            workspace_root=workspace_path,
-            storage=storage,
-            embeddings=embeddings,
-            vector_store=vector_store,
+        stats, symbol_count, file_count = await _index_workspace_and_update_registry(
+            workspace_id, workspace_path, registry
         )
-
-        # Run indexing
-        stats = await scanner.index_workspace()
-
-        # Get actual counts from storage (direct SQL queries)
-        cursor = storage.conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM symbols")
-        symbol_count = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM symbols")
-        file_count = cursor.fetchone()[0]
-
-        # Update registry with stats
-        registry.update_workspace_stats(workspace_id, symbol_count=symbol_count, file_count=file_count)
 
         # Return success message
         files_processed = stats.get("indexed", 0) + stats.get("updated", 0)
@@ -295,3 +338,276 @@ async def _handle_remove(registry: WorkspaceRegistry, workspace_id: Optional[str
 
     # Return success message
     return f"✅ Successfully removed workspace: {workspace_name}\n  Workspace ID: {workspace_id}"
+
+
+async def _handle_refresh(registry: WorkspaceRegistry, workspace_id: Optional[str]) -> str:
+    """
+    Handle refresh operation - re-index workspace to detect changes.
+
+    Args:
+        registry: WorkspaceRegistry instance
+        workspace_id: Workspace ID to refresh
+
+    Returns:
+        Success message with statistics
+    """
+    # Validate parameter
+    if not workspace_id:
+        return "Error: 'workspace_id' parameter required for refresh operation"
+
+    # Get workspace
+    workspace = registry.get_workspace(workspace_id)
+    if not workspace:
+        return f"Error: Workspace '{workspace_id}' not found"
+
+    workspace_name = workspace.name
+    workspace_path = Path(workspace.path)
+
+    # Verify workspace path still exists
+    if not workspace_path.exists():
+        return f"Error: Workspace path no longer exists: {workspace.path}\n  Use 'clean' operation to remove orphaned workspaces."
+
+    # Re-index the workspace
+    try:
+        stats, symbol_count, file_count = await _index_workspace_and_update_registry(
+            workspace_id, workspace_path, registry
+        )
+
+        # Format result message
+        output = [f"✅ Refreshed workspace: {workspace_name}"]
+
+        # Show what changed
+        if stats.get("indexed", 0) > 0:
+            output.append(f"  📄 Indexed {stats['indexed']} new file(s)")
+
+        if stats.get("updated", 0) > 0:
+            output.append(f"  🔄 Updated {stats['updated']} changed file(s)")
+
+        if stats.get("deleted", 0) > 0:
+            output.append(f"  🗑️  Removed {stats['deleted']} deleted file(s)")
+
+        if stats.get("skipped", 0) > 0:
+            output.append(f"  ⏭️  Skipped {stats['skipped']} unchanged file(s)")
+
+        # Show totals
+        output.append(f"  Total: {file_count:,} files, {symbol_count:,} symbols")
+
+        # If nothing changed
+        if all(stats.get(k, 0) == 0 for k in ["indexed", "updated", "deleted"]):
+            return f"✅ Workspace '{workspace_name}' is up to date\n  No changes detected"
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error refreshing workspace: {str(e)}"
+
+
+async def _handle_clean(registry: WorkspaceRegistry) -> str:
+    """
+    Handle clean operation - remove orphaned workspaces.
+
+    Orphaned workspaces are those whose paths no longer exist.
+
+    Args:
+        registry: WorkspaceRegistry instance
+
+    Returns:
+        Success message with statistics
+    """
+    import shutil
+
+    workspaces = registry.list_workspaces()
+
+    if not workspaces:
+        return "No workspaces registered. Nothing to clean."
+
+    # Find orphaned workspaces (paths that don't exist)
+    orphaned = []
+    for ws in workspaces:
+        workspace_path = Path(ws["path"])
+        if not workspace_path.exists():
+            orphaned.append(ws)
+
+    if not orphaned:
+        return f"✅ All {len(workspaces)} workspace(s) are valid. Nothing to clean."
+
+    # Remove orphaned workspaces
+    removed_count = 0
+    removed_names = []
+
+    for ws in orphaned:
+        workspace_id = ws["workspace_id"]
+        workspace_name = ws["name"]
+
+        try:
+            # Remove from registry first
+            registry.remove_workspace(workspace_id)
+
+            # Delete workspace data directories
+            db_path = get_workspace_db_path(workspace_id)
+            vector_path = get_workspace_vector_path(workspace_id)
+
+            # Delete DB directory (contains symbols.db)
+            if db_path.parent.exists():
+                try:
+                    shutil.rmtree(db_path.parent)
+                except Exception:
+                    pass  # Best effort - registry is already cleaned
+
+            # Delete vector directory (same parent as DB in our design)
+            # But check if it's separate
+            if vector_path.parent.exists() and vector_path.parent != db_path.parent:
+                try:
+                    shutil.rmtree(vector_path.parent)
+                except Exception:
+                    pass
+
+            removed_count += 1
+            removed_names.append(workspace_name)
+
+        except Exception:
+            # Continue with other workspaces if one fails
+            continue
+
+    # Format result message
+    output = [f"✅ Cleaned {removed_count} orphaned workspace(s):"]
+
+    for name in removed_names:
+        output.append(f"  • {name}")
+
+    output.append(f"\nRemaining: {len(workspaces) - removed_count} valid workspace(s)")
+
+    return "\n".join(output)
+
+
+def _handle_health(registry: WorkspaceRegistry, detailed: bool = False) -> str:
+    """
+    Handle health operation - show system health status.
+
+    Args:
+        registry: WorkspaceRegistry instance
+        detailed: Include detailed per-workspace information
+
+    Returns:
+        Health status report
+    """
+    workspaces = registry.list_workspaces()
+
+    # Basic health header
+    output = ["🏥 Miller Workspace Health Check", "=" * 50, ""]
+
+    # No workspaces case
+    if not workspaces:
+        output.append("📊 Registry: No workspaces registered")
+        output.append("")
+        output.append("💡 Tip: Use 'index' to index current workspace or 'add' for reference workspaces")
+        return "\n".join(output)
+
+    # Workspace counts
+    total_count = len(workspaces)
+    primary_count = sum(1 for ws in workspaces if ws["workspace_type"] == "primary")
+    reference_count = sum(1 for ws in workspaces if ws["workspace_type"] == "reference")
+
+    output.append(f"📊 Registry Status:")
+    output.append(f"  Total workspaces: {total_count}")
+    output.append(f"  • Primary: {primary_count}")
+    output.append(f"  • Reference: {reference_count}")
+    output.append("")
+
+    # Aggregate statistics
+    total_symbols = sum(ws.get("symbol_count", 0) for ws in workspaces)
+    total_files = sum(ws.get("file_count", 0) for ws in workspaces)
+
+    output.append(f"📈 Aggregate Statistics:")
+    output.append(f"  Total symbols: {total_symbols:,}")
+    output.append(f"  Total files: {total_files:,}")
+    output.append("")
+
+    # Check for orphaned workspaces
+    orphaned = []
+    for ws in workspaces:
+        workspace_path = Path(ws["path"])
+        if not workspace_path.exists():
+            orphaned.append(ws["name"])
+
+    if orphaned:
+        output.append(f"⚠️  Issues Found:")
+        output.append(f"  Orphaned workspaces: {len(orphaned)}")
+        for name in orphaned:
+            output.append(f"    • {name} (path no longer exists)")
+        output.append("")
+        output.append("💡 Tip: Run 'clean' operation to remove orphaned workspaces")
+        output.append("")
+
+    # Calculate total storage usage
+    total_db_size = 0
+    total_vector_size = 0
+
+    for ws in workspaces:
+        workspace_id = ws["workspace_id"]
+        db_path = get_workspace_db_path(workspace_id)
+        vector_path = get_workspace_vector_path(workspace_id)
+
+        # DB size
+        if db_path.exists():
+            total_db_size += db_path.stat().st_size
+
+        # Vector size
+        if vector_path.parent.exists():
+            for file in vector_path.parent.rglob("*"):
+                if file.is_file():
+                    total_vector_size += file.stat().st_size
+
+    output.append(f"💾 Storage Usage:")
+    output.append(f"  Database: {total_db_size / 1024 / 1024:.2f} MB")
+    output.append(f"  Vector indexes: {total_vector_size / 1024 / 1024:.2f} MB")
+    output.append(f"  Total: {(total_db_size + total_vector_size) / 1024 / 1024:.2f} MB")
+    output.append("")
+
+    # Detailed mode: per-workspace breakdown
+    if detailed:
+        output.append("📋 Workspace Details:")
+        output.append("")
+
+        for ws in workspaces:
+            workspace_id = ws["workspace_id"]
+            workspace_name = ws["name"]
+            workspace_type = ws["workspace_type"]
+            workspace_path = Path(ws["path"])
+
+            # Check if path exists
+            status = "✅" if workspace_path.exists() else "❌"
+
+            output.append(f"{status} {workspace_name} ({workspace_type})")
+            output.append(f"  Path: {ws['path']}")
+            output.append(f"  Symbols: {ws.get('symbol_count', 0):,}")
+            output.append(f"  Files: {ws.get('file_count', 0):,}")
+
+            # Calculate workspace storage
+            db_path = get_workspace_db_path(workspace_id)
+            vector_path = get_workspace_vector_path(workspace_id)
+
+            ws_db_size = db_path.stat().st_size if db_path.exists() else 0
+            ws_vector_size = 0
+            if vector_path.parent.exists():
+                for file in vector_path.parent.rglob("*"):
+                    if file.is_file():
+                        ws_vector_size += file.stat().st_size
+
+            output.append(f"  Storage: {(ws_db_size + ws_vector_size) / 1024 / 1024:.2f} MB")
+
+            if ws.get("last_indexed"):
+                indexed_dt = datetime.fromtimestamp(ws["last_indexed"])
+                indexed_str = indexed_dt.strftime("%Y-%m-%d %H:%M")
+                output.append(f"  Last indexed: {indexed_str}")
+
+            output.append("")
+
+    # Overall health status
+    if orphaned:
+        output.append("🔴 Health Status: Issues detected")
+        output.append(f"   {len(orphaned)} orphaned workspace(s) found")
+    else:
+        output.append("✅ Health Status: All systems healthy")
+
+    return "\n".join(output)

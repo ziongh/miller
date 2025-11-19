@@ -59,77 +59,65 @@ __pycache__/
 class TestWorkspaceScannerInitialization:
     """Test WorkspaceScanner creation and setup."""
 
-    def test_scanner_initializes_with_required_components(self, test_workspace):
+    def test_scanner_initializes_with_required_components(self, test_workspace, storage_manager, vector_store):
         """Test that scanner requires storage, embeddings, and vector_store."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
         scanner = WorkspaceScanner(
             workspace_root=test_workspace,
-            storage=storage,
+            storage=storage_manager,
             embeddings=embeddings,
             vector_store=vector_store
         )
 
         assert scanner.workspace_root == test_workspace
-        assert scanner.storage == storage
+        assert scanner.storage == storage_manager
 
 
 class TestFileDiscovery:
     """Test workspace file discovery and filtering."""
 
-    def test_walk_directory_finds_python_files(self, test_workspace):
+    def test_walk_directory_finds_python_files(self, test_workspace, storage_manager, vector_store):
         """Test that _walk_directory finds all Python source files."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         files = scanner._walk_directory()
 
         # Should find .py files
         py_files = [f for f in files if f.suffix == ".py"]
         assert len(py_files) >= 3  # main.py, utils.py, test_main.py
 
-    def test_walk_directory_respects_gitignore(self, test_workspace):
+    def test_walk_directory_respects_gitignore(self, test_workspace, storage_manager, vector_store):
         """Test that ignored directories are excluded."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         files = scanner._walk_directory()
 
         # Should NOT include files from node_modules
         assert not any("node_modules" in str(f) for f in files)
 
-    def test_walk_directory_filters_by_supported_languages(self, test_workspace):
+    def test_walk_directory_filters_by_supported_languages(self, test_workspace, storage_manager, vector_store):
         """Test that only supported file types are returned."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
         # Add an unsupported file type
         (test_workspace / "data.xyz").write_text("unsupported")
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         files = scanner._walk_directory()
 
         # Should not include unsupported file
@@ -139,32 +127,26 @@ class TestFileDiscovery:
 class TestChangeDetection:
     """Test file change detection for incremental indexing."""
 
-    def test_needs_indexing_for_new_file(self, test_workspace):
+    def test_needs_indexing_for_new_file(self, test_workspace, storage_manager, vector_store):
         """Test that new files (not in DB) need indexing."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
 
         # File not in DB
         file_path = test_workspace / "src" / "main.py"
-        db_files_map = {f["path"]: f for f in storage.get_all_files()}
+        db_files_map = {f["path"]: f for f in storage_manager.get_all_files()}
         assert scanner._needs_indexing(file_path, db_files_map) is True
 
-    def test_needs_indexing_for_changed_file(self, test_workspace):
+    def test_needs_indexing_for_changed_file(self, test_workspace, storage_manager, vector_store):
         """Test that files with changed content need re-indexing."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
         # Index file with original content
         file_path = test_workspace / "src" / "main.py"
@@ -173,7 +155,7 @@ class TestChangeDetection:
 
         # Use relative path to match production behavior
         relative_path = str(file_path.relative_to(test_workspace)).replace("\\", "/")
-        storage.add_file(
+        storage_manager.add_file(
             relative_path, "python", original_content, original_hash, len(original_content)
         )
 
@@ -181,21 +163,18 @@ class TestChangeDetection:
         new_content = "def new_function(): pass"
         file_path.write_text(new_content)
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
 
         # Should need re-indexing (hash changed)
-        db_files_map = {f["path"]: f for f in storage.get_all_files()}
+        db_files_map = {f["path"]: f for f in storage_manager.get_all_files()}
         assert scanner._needs_indexing(file_path, db_files_map) is True
 
-    def test_skips_unchanged_file(self, test_workspace):
+    def test_skips_unchanged_file(self, test_workspace, storage_manager, vector_store):
         """Test that unchanged files are skipped."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
         # Index file
         file_path = test_workspace / "src" / "main.py"
@@ -204,12 +183,12 @@ class TestChangeDetection:
 
         # Use relative path to match production behavior
         relative_path = str(file_path.relative_to(test_workspace)).replace("\\", "/")
-        storage.add_file(relative_path, "python", content, file_hash, len(content))
+        storage_manager.add_file(relative_path, "python", content, file_hash, len(content))
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
 
         # Should NOT need re-indexing (hash matches)
-        db_files_map = {f["path"]: f for f in storage.get_all_files()}
+        db_files_map = {f["path"]: f for f in storage_manager.get_all_files()}
         assert scanner._needs_indexing(file_path, db_files_map) is False
 
 
@@ -217,32 +196,26 @@ class TestWorkspaceIndexing:
     """Test full workspace indexing workflow."""
 
     @pytest.mark.asyncio
-    async def test_check_if_indexing_needed_empty_db(self, test_workspace):
+    async def test_check_if_indexing_needed_empty_db(self, test_workspace, storage_manager, vector_store):
         """Test that empty database triggers indexing."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
 
         # Empty DB should need indexing
         assert await scanner.check_if_indexing_needed() is True
 
     @pytest.mark.asyncio
-    async def test_check_if_indexing_needed_fresh_db(self, test_workspace):
+    async def test_check_if_indexing_needed_fresh_db(self, test_workspace, storage_manager, vector_store):
         """Test that fresh database (all files indexed) skips indexing."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
         from miller import miller_core
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
         # Index all files manually first (using relative paths like production code)
         for py_file in test_workspace.rglob("*.py"):
@@ -256,25 +229,22 @@ class TestWorkspaceIndexing:
             if language:
                 # Convert to relative Unix-style path (matches production behavior)
                 relative_path = str(py_file.relative_to(test_workspace)).replace("\\", "/")
-                storage.add_file(relative_path, language, content, file_hash, len(content))
+                storage_manager.add_file(relative_path, language, content, file_hash, len(content))
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
 
         # Fresh DB should NOT need indexing
         assert await scanner.check_if_indexing_needed() is False
 
     @pytest.mark.asyncio
-    async def test_index_workspace_returns_stats(self, test_workspace):
+    async def test_index_workspace_returns_stats(self, test_workspace, storage_manager, vector_store):
         """Test that index_workspace returns indexing statistics."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         stats = await scanner.index_workspace()
 
         # Should return statistics
@@ -285,41 +255,39 @@ class TestWorkspaceIndexing:
         assert stats["indexed"] >= 3  # At least 3 .py files
 
     @pytest.mark.asyncio
-    async def test_index_workspace_stores_symbols(self, test_workspace):
+    async def test_index_workspace_stores_symbols(self, test_workspace, storage_manager, vector_store):
         """Test that indexing actually stores symbols in database."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         await scanner.index_workspace()
 
-        # Check that symbols were stored
-        symbol = storage.get_symbol_by_name("hello")
-        assert symbol is not None
-        assert symbol["kind"] == "function"
+        # Check that function symbols were stored (query by kind to avoid import collisions)
+        cursor = storage_manager.conn.execute(
+            "SELECT * FROM symbols WHERE name = ? AND kind = ?",
+            ("hello", "function")
+        )
+        symbol = cursor.fetchone()
+        assert symbol is not None, "Expected to find 'hello' function symbol"
+        assert dict(symbol)["kind"] == "function"
 
 
 class TestIncrementalIndexing:
     """Test incremental indexing behavior."""
 
     @pytest.mark.asyncio
-    async def test_incremental_indexing_detects_new_files(self, test_workspace):
+    async def test_incremental_indexing_detects_new_files(self, test_workspace, storage_manager, vector_store):
         """Test that new files are detected and indexed."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
         # Initial indexing
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         stats1 = await scanner.index_workspace()
 
         # Add new file
@@ -333,18 +301,15 @@ class TestIncrementalIndexing:
         assert stats2["skipped"] > 0  # Old files skipped
 
     @pytest.mark.asyncio
-    async def test_incremental_indexing_detects_deleted_files(self, test_workspace):
+    async def test_incremental_indexing_detects_deleted_files(self, test_workspace, storage_manager, vector_store):
         """Test that deleted files are removed from database."""
         from miller.workspace import WorkspaceScanner
-        from miller.storage import StorageManager
-        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.embeddings import EmbeddingManager
 
-        storage = StorageManager(":memory:")
         embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
 
         # Initial indexing
-        scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         await scanner.index_workspace()
 
         # Delete a file
@@ -358,5 +323,5 @@ class TestIncrementalIndexing:
         assert stats["deleted"] == 1
 
         # Verify symbols were removed (CASCADE)
-        files = storage.get_all_files()
+        files = storage_manager.get_all_files()
         assert not any(f["path"] == str(deleted_file) for f in files)

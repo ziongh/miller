@@ -53,6 +53,49 @@ def temp_file(tmp_path):
     return _create_file
 
 
+@pytest.fixture
+def storage_manager():
+    """
+    Provide a properly managed StorageManager for tests.
+
+    Automatically closes database connections after test completes
+    to prevent resource leaks.
+    """
+    from miller.storage import StorageManager
+
+    storage = StorageManager(db_path=":memory:")
+    yield storage
+    storage.close()
+
+
+@pytest.fixture
+def vector_store():
+    """
+    Provide a properly managed VectorStore for tests.
+
+    Automatically closes connections after test completes.
+    """
+    from miller.embeddings import VectorStore
+    import tempfile
+    import shutil
+    from pathlib import Path
+
+    # Use temp directory for vector store (LanceDB requires file path)
+    temp_dir = Path(tempfile.mkdtemp(prefix="miller_vector_test_"))
+    db_path = temp_dir / "vectors.lance"
+
+    store = VectorStore(db_path=str(db_path))
+    yield store
+
+    # Cleanup
+    try:
+        if hasattr(store, 'close'):
+            store.close()
+    except:
+        pass
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 @pytest.fixture(autouse=True)
 def clean_server_storage():
     """
