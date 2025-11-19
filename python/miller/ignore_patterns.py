@@ -4,10 +4,10 @@
 Uses pathspec library for GitIgnore-compliant pattern matching.
 """
 
-from pathlib import Path
-from typing import List
-from pathspec import PathSpec
 import logging
+from pathlib import Path
+
+from pathspec import PathSpec
 
 # Get logger instance
 logger = logging.getLogger("miller.ignore_patterns")
@@ -23,17 +23,15 @@ DEFAULT_IGNORES = [
     ".svn/",
     ".hg/",
     ".bzr/",
-
     # ═══════════════════════════════════════════
     # IDE and Editor
     # ═══════════════════════════════════════════
-    ".vs/",      # Visual Studio
+    ".vs/",  # Visual Studio
     ".vscode/",  # VS Code
-    ".idea/",    # JetBrains
+    ".idea/",  # JetBrains
     ".eclipse/",
-    "*.swp",     # Vim swap files
+    "*.swp",  # Vim swap files
     "*.swo",
-
     # ═══════════════════════════════════════════
     # Build and Output Directories
     # ═══════════════════════════════════════════
@@ -42,13 +40,12 @@ DEFAULT_IGNORES = [
     "build/",
     "dist/",
     "out/",
-    "target/",   # Rust
-    "Debug/",    # C#/C++ build configs
+    "target/",  # Rust
+    "Debug/",  # C#/C++ build configs
     "Release/",
-    ".next/",    # Next.js
-    ".nuxt/",    # Nuxt.js
-    "DerivedData/", # Xcode
-
+    ".next/",  # Next.js
+    ".nuxt/",  # Nuxt.js
+    "DerivedData/",  # Xcode
     # ═══════════════════════════════════════════
     # Package Managers and Dependencies
     # ═══════════════════════════════════════════
@@ -57,8 +54,7 @@ DEFAULT_IGNORES = [
     ".npm/",
     "bower_components/",
     "vendor/",
-    "Pods/",     # CocoaPods
-
+    "Pods/",  # CocoaPods
     # ═══════════════════════════════════════════
     # Python Virtual Environments and Cache
     # ═══════════════════════════════════════════
@@ -79,7 +75,6 @@ DEFAULT_IGNORES = [
     ".coverage",
     "htmlcov/",
     ".hypothesis/",
-
     # ═══════════════════════════════════════════
     # Cache and Temporary Files
     # ═══════════════════════════════════════════
@@ -94,7 +89,6 @@ DEFAULT_IGNORES = [
     "*.swp",
     "*.lock",
     "*.pid",
-
     # ═══════════════════════════════════════════
     # Code Intelligence Tools (our own dirs)
     # ═══════════════════════════════════════════
@@ -103,32 +97,74 @@ DEFAULT_IGNORES = [
     ".coa/",
     ".codenav/",
     # NOTE: .memories/ is NOT ignored - we want semantic search over checkpoints/plans!
-
     # ═══════════════════════════════════════════
     # Binary Files (by extension)
     # ═══════════════════════════════════════════
     # Executables and libraries
-    "*.dll", "*.exe", "*.pdb", "*.so", "*.dylib", "*.lib", "*.a", "*.o", "*.obj", "*.bin",
-
+    "*.dll",
+    "*.exe",
+    "*.pdb",
+    "*.so",
+    "*.dylib",
+    "*.lib",
+    "*.a",
+    "*.o",
+    "*.obj",
+    "*.bin",
     # Media files
-    "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.ico", "*.svg", "*.webp", "*.tiff",
-    "*.mp3", "*.mp4", "*.avi", "*.mov", "*.wmv", "*.flv", "*.webm", "*.mkv", "*.wav",
-
+    "*.jpg",
+    "*.jpeg",
+    "*.png",
+    "*.gif",
+    "*.bmp",
+    "*.ico",
+    "*.svg",
+    "*.webp",
+    "*.tiff",
+    "*.mp3",
+    "*.mp4",
+    "*.avi",
+    "*.mov",
+    "*.wmv",
+    "*.flv",
+    "*.webm",
+    "*.mkv",
+    "*.wav",
     # Archives
-    "*.zip", "*.rar", "*.7z", "*.tar", "*.gz", "*.bz2", "*.xz", "*.dmg", "*.pkg",
-
+    "*.zip",
+    "*.rar",
+    "*.7z",
+    "*.tar",
+    "*.gz",
+    "*.bz2",
+    "*.xz",
+    "*.dmg",
+    "*.pkg",
     # Database files
-    "*.db", "*.sqlite", "*.sqlite3", "*.mdf", "*.ldf", "*.bak",
-
+    "*.db",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.mdf",
+    "*.ldf",
+    "*.bak",
     # Logs and dumps
-    "*.log", "*.dump", "*.core",
-
+    "*.log",
+    "*.dump",
+    "*.core",
     # Font files
-    "*.ttf", "*.otf", "*.woff", "*.woff2", "*.eot",
-
+    "*.ttf",
+    "*.otf",
+    "*.woff",
+    "*.woff2",
+    "*.eot",
     # Documents (binary formats)
-    "*.pdf", "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx",
-
+    "*.pdf",
+    "*.doc",
+    "*.docx",
+    "*.xls",
+    "*.xlsx",
+    "*.ppt",
+    "*.pptx",
     # ═══════════════════════════════════════════
     # macOS and Windows System Files
     # ═══════════════════════════════════════════
@@ -157,7 +193,9 @@ def load_gitignore(workspace_root: Path) -> PathSpec:
             gitignore_lines = gitignore.read_text(encoding="utf-8").splitlines()
             # Filter out empty lines and comments
             gitignore_patterns = [
-                line for line in gitignore_lines if line.strip() and not line.strip().startswith("#")
+                line
+                for line in gitignore_lines
+                if line.strip() and not line.strip().startswith("#")
             ]
             patterns.extend(gitignore_patterns)
         except Exception as e:
@@ -191,7 +229,7 @@ def should_ignore(file_path: Path, workspace_root: Path) -> bool:
     return spec.match_file(str(relative_path))
 
 
-def filter_files(files: List[Path], workspace_root: Path) -> List[Path]:
+def filter_files(files: list[Path], workspace_root: Path) -> list[Path]:
     """
     Filter a list of files, removing ignored paths.
 

@@ -13,10 +13,10 @@ SUCCESS CRITERIA:
 - ✅ Performance <100ms (no regression)
 """
 
-from typing import Literal, List, Dict, Any
-from typing_extensions import TypedDict
-import pyarrow as pa
+from typing import Literal
 
+import pyarrow as pa
+from typing_extensions import TypedDict
 
 # Type Definitions
 SearchMethod = Literal["auto", "text", "pattern", "semantic", "hybrid"]
@@ -36,33 +36,36 @@ class SearchResult(TypedDict):
 
     All search methods MUST return this structure.
     """
-    id: str                    # Symbol ID
-    name: str                  # Symbol name
-    kind: str                  # Symbol kind (Function, Class, etc.)
-    language: str              # Programming language
-    file_path: str             # File path
-    signature: str | None      # Function/method signature
-    doc_comment: str | None    # Documentation comment
-    start_line: int            # Start line number
-    end_line: int              # End line number
-    score: float               # Normalized relevance score (0.0-1.0)
+
+    id: str  # Symbol ID
+    name: str  # Symbol name
+    kind: str  # Symbol kind (Function, Class, etc.)
+    language: str  # Programming language
+    file_path: str  # File path
+    signature: str | None  # Function/method signature
+    doc_comment: str | None  # Documentation comment
+    start_line: int  # Start line number
+    end_line: int  # End line number
+    score: float  # Normalized relevance score (0.0-1.0)
 
 
 # Schema Contract
-PATTERN_SEARCH_SCHEMA = pa.schema([
-    pa.field("id", pa.string(), nullable=False),
-    pa.field("name", pa.string(), nullable=False),
-    pa.field("kind", pa.string(), nullable=False),
-    pa.field("language", pa.string(), nullable=False),
-    pa.field("file_path", pa.string(), nullable=False),
-    pa.field("signature", pa.string(), nullable=True),
-    pa.field("doc_comment", pa.string(), nullable=True),
-    pa.field("start_line", pa.int32(), nullable=True),
-    pa.field("end_line", pa.int32(), nullable=True),
-    # NEW FIELD: Pattern-preserving content for code idiom search
-    pa.field("code_pattern", pa.string(), nullable=False),
-    pa.field("vector", pa.list_(pa.float32(), 384), nullable=False),
-])
+PATTERN_SEARCH_SCHEMA = pa.schema(
+    [
+        pa.field("id", pa.string(), nullable=False),
+        pa.field("name", pa.string(), nullable=False),
+        pa.field("kind", pa.string(), nullable=False),
+        pa.field("language", pa.string(), nullable=False),
+        pa.field("file_path", pa.string(), nullable=False),
+        pa.field("signature", pa.string(), nullable=True),
+        pa.field("doc_comment", pa.string(), nullable=True),
+        pa.field("start_line", pa.int32(), nullable=True),
+        pa.field("end_line", pa.int32(), nullable=True),
+        # NEW FIELD: Pattern-preserving content for code idiom search
+        pa.field("code_pattern", pa.string(), nullable=False),
+        pa.field("vector", pa.list_(pa.float32(), 384), nullable=False),
+    ]
+)
 """
 Extended schema with code_pattern field for pattern search.
 
@@ -111,11 +114,7 @@ def detect_search_method(query: str) -> SearchMethod:
     raise NotImplementedError("Contract only - implement in embeddings.py")
 
 
-def search(
-    query: str,
-    method: SearchMethod = "auto",
-    limit: int = 50
-) -> List[SearchResult]:
+def search(query: str, method: SearchMethod = "auto", limit: int = 50) -> list[SearchResult]:
     """
     Search symbols with auto-detection and method routing.
 
@@ -169,7 +168,7 @@ def search(
     raise NotImplementedError("Contract only - implement in VectorStore.search()")
 
 
-def _search_pattern(query: str, limit: int) -> List[SearchResult]:
+def _search_pattern(query: str, limit: int) -> list[SearchResult]:
     """
     Search code patterns using whitespace-tokenized field.
 
@@ -227,22 +226,18 @@ PATTERN_TEST_CASES = [
     # Inheritance patterns
     (": BaseClass", ["UserService", "PaymentService"]),
     (": IService", ["UserService", "AuthService"]),
-
     # Generic patterns
     ("ILogger<", ["service", "controller", "repository"]),
     ("List<", ["items", "users", "orders"]),
     ("map<", ["cache", "lookup", "index"]),
-
     # Attribute patterns
     ("[Fact]", ["Test_UserAuth", "Test_Payment"]),
     ("[HttpGet]", ["GetUser", "GetOrders"]),
     ("@Override", ["toString", "equals", "hashCode"]),
-
     # Operator patterns
     ("?.", ["user?.name", "order?.items"]),
     ("=>", ["arrow functions", "lambda expressions"]),
     ("&&", ["logical AND operations"]),
-
     # Bracket patterns
     ("[]", ["array declarations", "indexers"]),
     ("{}", ["object literals", "blocks"]),
@@ -264,7 +259,7 @@ VALIDATION_RULES = {
         "vector_dimension": 384,
     },
     "detection": {
-        "pattern_chars": [':', '<', '>', '[', ']', '(', ')', '{', '}'],
+        "pattern_chars": [":", "<", ">", "[", "]", "(", ")", "{", "}"],
         "accuracy_threshold": 0.95,  # >95% correct auto-detection
     },
     "performance": {
@@ -277,7 +272,7 @@ VALIDATION_RULES = {
         "min_score": 0.0,
         "max_score": 1.0,
         "normalization_required": True,
-    }
+    },
 }
 """
 Validation rules for contract compliance.

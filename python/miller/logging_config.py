@@ -10,15 +10,15 @@ All logs go to file: .miller/logs/miller-YYYY-MM-DD.log (new file each day)
 
 import logging
 import logging.handlers
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
 
 
 def setup_logging(
     log_dir: Optional[Path] = None,
     level: int = logging.INFO,
-    backup_count: int = 30  # Keep 30 days of logs
+    backup_count: int = 30,  # Keep 30 days of logs
 ) -> logging.Logger:
     """
     Set up file-based logging for Miller with daily rotation.
@@ -52,15 +52,15 @@ def setup_logging(
     file_handler = logging.handlers.TimedRotatingFileHandler(
         log_file,
         when="midnight",  # Rotate at midnight
-        interval=1,       # Every 1 day
+        interval=1,  # Every 1 day
         backupCount=backup_count,
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     # Format with timestamp, level, module, and message
     formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     file_handler.setFormatter(formatter)
 

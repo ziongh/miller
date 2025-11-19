@@ -9,9 +9,9 @@ These tools provide Julie-compatible development memory system:
 
 import json
 import time
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
 
 from fastmcp import Context
 
@@ -19,18 +19,15 @@ from miller.memory_utils import (
     generate_checkpoint_id,
     get_checkpoint_path,
     get_git_context,
-    slugify_title,
     normalize_tags,
+    read_json_file,
+    slugify_title,
     write_json_file,
-    read_json_file
 )
 
 
 async def checkpoint(
-    ctx: Context,
-    description: str,
-    tags: Optional[List[str]] = None,
-    type: str = "checkpoint"
+    _ctx: Context, description: str, tags: Optional[list[str]] = None, type: str = "checkpoint"
 ) -> str:
     """
     Create immutable development memory checkpoint.
@@ -89,7 +86,7 @@ async def checkpoint(
         "type": type,
         "git": git_context,
         "description": description,
-        "tags": normalized_tags
+        "tags": normalized_tags,
     }
 
     # Write checkpoint file
@@ -100,12 +97,12 @@ async def checkpoint(
 
 
 async def recall(
-    ctx: Context,
+    _ctx: Context,
     type: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
-    limit: int = 10
-) -> List[Dict[str, Any]]:
+    limit: int = 10,
+) -> list[dict[str, Any]]:
     """
     Retrieve development memory checkpoints with filtering.
 
@@ -185,7 +182,7 @@ async def recall(
 
     for date_dir in sorted(memories_dir.glob("*/"), reverse=True):
         # Skip if not a date directory (YYYY-MM-DD format)
-        if not date_dir.name.count("-") == 2:
+        if date_dir.name.count("-") != 2:
             continue
 
         # Scan JSON files in this directory
@@ -219,13 +216,13 @@ async def recall(
 
 
 async def plan(
-    ctx: Context,
+    _ctx: Context,
     action: str,
     title: Optional[str] = None,
     content: Optional[str] = None,
     id: Optional[str] = None,
     status: Optional[str] = None,
-    activate: bool = True
+    activate: bool = True,
 ) -> Any:
     """
     Manage mutable development plans.
@@ -325,7 +322,7 @@ async def plan(
             "title": title,
             "status": "active" if activate else "pending",
             "content": content or "",
-            "git": get_git_context()
+            "git": get_git_context(),
         }
 
         # Deactivate other plans if activating this one

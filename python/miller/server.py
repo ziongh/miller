@@ -8,20 +8,19 @@ CRITICAL: This is an MCP server - NEVER use print() statements!
 stdout/stderr are reserved for JSON-RPC protocol. Use logger instead.
 """
 
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Literal
-import hashlib
+import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Literal, Optional
 
 from fastmcp import FastMCP
 
-from miller.storage import StorageManager
 from miller.embeddings import EmbeddingManager, VectorStore
+from miller.logging_config import setup_logging
+from miller.storage import StorageManager
+from miller.tools.memory import checkpoint, plan, recall
+from miller.watcher import FileEvent, FileWatcher
 from miller.workspace import WorkspaceScanner
-from miller.watcher import FileWatcher, FileEvent
-from miller.logging_config import setup_logging, get_logger
-from miller.tools.memory import checkpoint, recall, plan
-import asyncio
 
 # Initialize logging FIRST (before any other operations)
 logger = setup_logging()
@@ -48,18 +47,16 @@ logger.info("✓ Core components initialized")
 workspace_root = Path.cwd()
 logger.info(f"Workspace root: {workspace_root}")
 scanner = WorkspaceScanner(
-    workspace_root=workspace_root,
-    storage=storage,
-    embeddings=embeddings,
-    vector_store=vector_store
+    workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
 )
 logger.info("✓ WorkspaceScanner initialized")
+
 
 # 3. Define lifespan handler (Julie pattern - background indexing + file watching)
 # This follows Julie's pattern: handshake completes immediately,
 # then indexing runs in background without blocking MCP protocol
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(_app):
     """
     FastMCP lifespan handler - startup and shutdown hooks.
 
@@ -72,7 +69,7 @@ async def lifespan(app):
     # File watcher reference (initialized after initial indexing)
     file_watcher = None
 
-    async def on_files_changed(events: List[tuple[FileEvent, Path]]):
+    async def on_files_changed(events: list[tuple[FileEvent, Path]]):
         """
         Callback for file watcher - re-indexes changed files in real-time.
 
@@ -123,6 +120,7 @@ async def lifespan(app):
             # Use load_gitignore() to get same patterns as workspace scanner
             # (combines DEFAULT_IGNORES + .gitignore file patterns)
             from miller.ignore_patterns import load_gitignore
+
             ignore_spec = load_gitignore(workspace_root)
             # Extract pattern strings from PathSpec (patterns are GitWildMatchPattern objects)
             pattern_strings = {p.pattern for p in ignore_spec.patterns}
@@ -171,8 +169,8 @@ logger.info("✓ FastMCP server created with lifespan handler")
 def fast_search(
     query: str,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
-    limit: int = 50
-) -> List[Dict[str, Any]]:
+    limit: int = 50,
+) -> list[dict[str, Any]]:
     """
     Search indexed code using text, semantic, or hybrid methods.
 
@@ -212,20 +210,22 @@ def fast_search(
     # Format results for MCP
     formatted = []
     for r in results:
-        formatted.append({
-            "name": r.get("name", ""),
-            "kind": r.get("kind", ""),
-            "file_path": r.get("file_path", ""),
-            "signature": r.get("signature"),
-            "doc_comment": r.get("doc_comment"),
-            "start_line": r.get("start_line", 0),
-            "score": r.get("score", 0.0)
-        })
+        formatted.append(
+            {
+                "name": r.get("name", ""),
+                "kind": r.get("kind", ""),
+                "file_path": r.get("file_path", ""),
+                "signature": r.get("signature"),
+                "doc_comment": r.get("doc_comment"),
+                "start_line": r.get("start_line", 0),
+                "score": r.get("score", 0.0),
+            }
+        )
 
     return formatted
 
 
-def fast_goto(symbol_name: str) -> Optional[Dict[str, Any]]:
+def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
     """
     Find symbol definition location.
 
@@ -248,11 +248,11 @@ def fast_goto(symbol_name: str) -> Optional[Dict[str, Any]]:
         "start_line": sym["start_line"],
         "end_line": sym["end_line"],
         "signature": sym["signature"],
-        "doc_comment": sym["doc_comment"]
+        "doc_comment": sym["doc_comment"],
     }
 
 
-def get_symbols(file_path: str) -> List[Dict[str, Any]]:
+def get_symbols(file_path: str) -> list[dict[str, Any]]:
     """
     Get file structure (symbols without full content).
 
@@ -269,7 +269,7 @@ def get_symbols(file_path: str) -> List[Dict[str, Any]]:
 
     # Read and extract
     try:
-        content = path.read_text(encoding='utf-8')
+        content = path.read_text(encoding="utf-8")
         language = miller_core.detect_language(file_path)
 
         if not language:
@@ -280,18 +280,20 @@ def get_symbols(file_path: str) -> List[Dict[str, Any]]:
         # Convert to dicts
         symbols = []
         for sym in result.symbols:
-            symbols.append({
-                "name": sym.name,
-                "kind": sym.kind,
-                "start_line": sym.start_line,
-                "end_line": sym.end_line,
-                "signature": sym.signature if hasattr(sym, 'signature') else None,
-                "doc_comment": sym.doc_comment if hasattr(sym, 'doc_comment') else None
-            })
+            symbols.append(
+                {
+                    "name": sym.name,
+                    "kind": sym.kind,
+                    "start_line": sym.start_line,
+                    "end_line": sym.end_line,
+                    "signature": sym.signature if hasattr(sym, "signature") else None,
+                    "doc_comment": sym.doc_comment if hasattr(sym, "doc_comment") else None,
+                }
+            )
 
         return symbols
 
-    except Exception as e:
+    except Exception:
         return []
 
 
@@ -319,7 +321,7 @@ __all__ = [
     "get_symbols",
     "checkpoint",
     "recall",
-    "plan"
+    "plan",
 ]
 
 

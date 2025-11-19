@@ -12,10 +12,10 @@ This file defines the interface and expected behavior BEFORE implementation.
 Tests will be written against this contract, then implementation follows.
 """
 
-from typing import Protocol, Optional, Callable, Set
-from pathlib import Path
-from enum import Enum
 import asyncio
+from enum import Enum
+from pathlib import Path
+from typing import Callable, Optional, Protocol
 
 
 class FileEvent(Enum):
@@ -267,8 +267,7 @@ class DebounceQueue:
             self._timer_handle.cancel()
 
         self._timer_handle = self._loop.call_later(
-            self._debounce_delay,
-            lambda: asyncio.create_task(self.flush())
+            self._debounce_delay, lambda: asyncio.create_task(self.flush())
         )
 
     async def flush(self) -> None:
@@ -303,6 +302,7 @@ class DebounceQueue:
             except Exception as e:
                 # Log error but don't raise (keep watching)
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.error(f"Error in flush callback: {e}", exc_info=True)
 
@@ -352,7 +352,7 @@ class FileWatcher:
         self,
         workspace_path: Path,
         indexing_callback: Callable[[list[tuple[FileEvent, Path]]], None],
-        ignore_patterns: Optional[Set[str]] = None,
+        ignore_patterns: Optional[set[str]] = None,
         debounce_delay: float = 0.2,
     ) -> None:
         """
@@ -396,8 +396,7 @@ class FileWatcher:
         self._ignore_patterns = ignore_patterns or set()
         if self._ignore_patterns:
             self._pathspec = pathspec.PathSpec.from_lines(
-                pathspec.patterns.GitWildMatchPattern,
-                self._ignore_patterns
+                pathspec.patterns.GitWildMatchPattern, self._ignore_patterns
             )
         else:
             self._pathspec = None
@@ -420,8 +419,9 @@ class FileWatcher:
         -------
         RuntimeError: If already running
         """
-        from watchdog.observers import Observer
         import threading
+
+        from watchdog.observers import Observer
 
         if self._running:
             raise RuntimeError("FileWatcher is already running")
@@ -434,9 +434,7 @@ class FileWatcher:
             # No running loop, create new one in background thread
             self._loop = asyncio.new_event_loop()
             self._loop_thread = threading.Thread(
-                target=self._run_event_loop,
-                daemon=True,
-                name="FileWatcherEventLoop"
+                target=self._run_event_loop, daemon=True, name="FileWatcherEventLoop"
             )
             self._loop_thread.start()
 
@@ -485,22 +483,20 @@ class FileWatcher:
         # Give a grace period for in-flight events to be added to queue
         # macOS FSEvents can be slow (up to 1-2 seconds latency)
         import time
+
         time.sleep(0.5)
 
         # Flush pending events
         if self._debounce_queue and self._loop:
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self._debounce_queue.flush(),
-                    self._loop
-                )
+                future = asyncio.run_coroutine_threadsafe(self._debounce_queue.flush(), self._loop)
                 future.result(timeout=1.0)
             except Exception:
                 # Best effort flush - may timeout due to platform event latency
                 pass
 
         # Stop event loop if we created it
-        if self._loop and hasattr(self, '_loop_thread') and self._loop_thread:
+        if self._loop and hasattr(self, "_loop_thread") and self._loop_thread:
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._loop_thread.is_alive():
                 self._loop_thread.join(timeout=2.0)
@@ -576,14 +572,14 @@ class _FileWatcherEventHandler:
     def dispatch(self, event) -> None:
         """Dispatch file system events to watcher."""
         from watchdog.events import (
-            FileCreatedEvent,
-            FileModifiedEvent,
-            FileDeletedEvent,
-            FileMovedEvent,
             DirCreatedEvent,
-            DirModifiedEvent,
             DirDeletedEvent,
+            DirModifiedEvent,
             DirMovedEvent,
+            FileCreatedEvent,
+            FileDeletedEvent,
+            FileModifiedEvent,
+            FileMovedEvent,
         )
 
         # Ignore directory events
@@ -614,7 +610,7 @@ class _FileWatcherEventHandler:
             self._seen_files.discard(Path(event.src_path))
             asyncio.run_coroutine_threadsafe(
                 self.watcher.handle_event(FileEvent.DELETED, Path(event.src_path)),
-                self.watcher._loop
+                self.watcher._loop,
             )
             event_type = FileEvent.CREATED
             file_path = Path(event.dest_path)
@@ -624,8 +620,7 @@ class _FileWatcherEventHandler:
 
         # Schedule async event handling
         asyncio.run_coroutine_threadsafe(
-            self.watcher.handle_event(event_type, file_path),
-            self.watcher._loop
+            self.watcher.handle_event(event_type, file_path), self.watcher._loop
         )
 
 

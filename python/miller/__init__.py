@@ -10,12 +10,13 @@ __version__ = "0.1.0"
 # Import Rust extension module (built as miller.miller_core by maturin)
 try:
     from miller import miller_core
+
     __rust_version__ = miller_core.__version__
 except ImportError:
     miller_core = None
     __rust_version__ = None
 
 # Export main modules
-from miller import storage, embeddings, server
+from miller import embeddings, server, storage
 
 __all__ = ["miller_core", "storage", "embeddings", "server"]

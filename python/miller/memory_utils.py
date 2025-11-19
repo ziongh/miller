@@ -9,13 +9,13 @@ These utilities support Julie-compatible .memories system:
 - Same git context capture
 """
 
+import json
+import re
 import secrets
 import subprocess
-import re
-import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any
 
 
 def generate_checkpoint_id(type: str = "checkpoint") -> str:
@@ -77,13 +77,14 @@ def get_checkpoint_path(timestamp: int) -> Path:
         >>> assert path.suffix == ".json"
     """
     from datetime import timezone
+
     dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     date_dir = dt.strftime("%Y-%m-%d")
     filename = generate_checkpoint_filename()
     return Path(".memories") / date_dir / filename
 
 
-def get_git_context() -> Dict[str, Any]:
+def get_git_context() -> dict[str, Any]:
     """
     Capture current git state (branch, commit, dirty status, changed files).
 
@@ -107,6 +108,7 @@ def get_git_context() -> Dict[str, Any]:
     """
     import logging
     import os
+
     logger = logging.getLogger("miller.memory")
     cwd = os.getcwd()
 
@@ -116,12 +118,11 @@ def get_git_context() -> Dict[str, Any]:
         git_root_result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             stdin=subprocess.DEVNULL,  # CRITICAL: Prevents waiting for input
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
             timeout=2,
-            cwd=cwd
+            cwd=cwd,
         )
         git_root = git_root_result.stdout.strip()
 
@@ -129,12 +130,11 @@ def get_git_context() -> Dict[str, Any]:
         branch_result = subprocess.run(
             ["git", "branch", "--show-current"],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
             timeout=2,
-            cwd=git_root
+            cwd=git_root,
         )
         branch = branch_result.stdout.strip()
 
@@ -142,12 +142,11 @@ def get_git_context() -> Dict[str, Any]:
         commit_result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
             timeout=2,
-            cwd=git_root
+            cwd=git_root,
         )
         commit = commit_result.stdout.strip()
 
@@ -155,12 +154,11 @@ def get_git_context() -> Dict[str, Any]:
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
             timeout=2,
-            cwd=git_root
+            cwd=git_root,
         )
         dirty = len(status_result.stdout.strip()) > 0
 
@@ -174,31 +172,16 @@ def get_git_context() -> Dict[str, Any]:
                     if len(parts) == 2:
                         files_changed.append(parts[1])
 
-        return {
-            "branch": branch,
-            "commit": commit,
-            "dirty": dirty,
-            "files_changed": files_changed
-        }
+        return {"branch": branch, "commit": commit, "dirty": dirty, "files_changed": files_changed}
 
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         # Graceful fallback if git is not available or not in a repo
         logger.debug(f"Git context unavailable: {type(e).__name__}: {e}")
-        return {
-            "branch": "unknown",
-            "commit": "unknown",
-            "dirty": False,
-            "files_changed": []
-        }
+        return {"branch": "unknown", "commit": "unknown", "dirty": False, "files_changed": []}
     except Exception as e:
         # Catch any other unexpected exceptions
         logger.warning(f"Unexpected git context error: {type(e).__name__}: {e}")
-        return {
-            "branch": "unknown",
-            "commit": "unknown",
-            "dirty": False,
-            "files_changed": []
-        }
+        return {"branch": "unknown", "commit": "unknown", "dirty": False, "files_changed": []}
 
 
 def slugify_title(title: str) -> str:
@@ -228,18 +211,18 @@ def slugify_title(title: str) -> str:
     slug = slug.replace(" ", "-")
 
     # Remove special characters except hyphens and alphanumeric
-    slug = re.sub(r'[^a-z0-9-]', '', slug)
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
 
     # Remove consecutive hyphens
-    slug = re.sub(r'-+', '-', slug)
+    slug = re.sub(r"-+", "-", slug)
 
     # Remove leading/trailing hyphens
-    slug = slug.strip('-')
+    slug = slug.strip("-")
 
     return slug
 
 
-def write_json_file(file_path: Path, data: Dict[str, Any]) -> None:
+def write_json_file(file_path: Path, data: dict[str, Any]) -> None:
     """
     Write JSON data to file with Julie-compatible formatting.
 
@@ -258,12 +241,12 @@ def write_json_file(file_path: Path, data: Dict[str, Any]) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Write with Julie's standard formatting
-    with open(file_path, 'w') as f:
+    with open(file_path, "w") as f:
         json.dump(data, f, indent=2, sort_keys=True)
         f.write("\n")  # Trailing newline for git-friendly diffs
 
 
-def read_json_file(file_path: Path) -> Dict[str, Any]:
+def read_json_file(file_path: Path) -> dict[str, Any]:
     """
     Read and parse JSON file.
 
@@ -285,7 +268,7 @@ def read_json_file(file_path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-def normalize_tags(tags: List[str]) -> List[str]:
+def normalize_tags(tags: list[str]) -> list[str]:
     """
     Normalize tags to lowercase hyphenated format.
 
@@ -311,13 +294,13 @@ def normalize_tags(tags: List[str]) -> List[str]:
         normalized_tag = normalized_tag.replace(" ", "-")
 
         # Remove special characters except hyphens and alphanumeric
-        normalized_tag = re.sub(r'[^a-z0-9-]', '', normalized_tag)
+        normalized_tag = re.sub(r"[^a-z0-9-]", "", normalized_tag)
 
         # Remove consecutive hyphens
-        normalized_tag = re.sub(r'-+', '-', normalized_tag)
+        normalized_tag = re.sub(r"-+", "-", normalized_tag)
 
         # Remove leading/trailing hyphens
-        normalized_tag = normalized_tag.strip('-')
+        normalized_tag = normalized_tag.strip("-")
 
         if normalized_tag:  # Only add non-empty tags
             normalized.append(normalized_tag)

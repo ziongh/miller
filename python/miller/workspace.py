@@ -7,15 +7,13 @@ Adapts Julie's workspace indexing pattern for Miller:
 - .gitignore support via pathspec library
 """
 
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 import hashlib
-import asyncio
 import logging
+from pathlib import Path
 
-from .storage import StorageManager
 from .embeddings import EmbeddingManager, VectorStore
 from .ignore_patterns import load_gitignore
+from .storage import StorageManager
 
 # Get logger instance
 logger = logging.getLogger("miller.workspace")
@@ -37,9 +35,9 @@ class IndexStats:
         self.updated = 0  # Existing files re-indexed
         self.skipped = 0  # Unchanged files skipped
         self.deleted = 0  # Files deleted from DB
-        self.errors = 0   # Files that failed to index
+        self.errors = 0  # Files that failed to index
 
-    def to_dict(self) -> Dict[str, int]:
+    def to_dict(self) -> dict[str, int]:
         """Convert to dictionary for JSON serialization."""
         return {
             "indexed": self.indexed,
@@ -85,7 +83,7 @@ class WorkspaceScanner:
         # Load .gitignore patterns
         self.ignore_spec = load_gitignore(self.workspace_root)
 
-    def _walk_directory(self) -> List[Path]:
+    def _walk_directory(self) -> list[Path]:
         """
         Walk workspace directory and find indexable files.
 
@@ -135,7 +133,7 @@ class WorkspaceScanner:
             # If file can't be read, return empty hash
             return ""
 
-    def _needs_indexing(self, file_path: Path, db_files_map: Dict[str, Dict]) -> bool:
+    def _needs_indexing(self, file_path: Path, db_files_map: dict[str, dict]) -> bool:
         """
         Check if file needs to be indexed.
 
@@ -192,9 +190,7 @@ class WorkspaceScanner:
             # Phase 1: Tree-sitter extraction
             extraction_start = time.time()
             result = miller_core.extract_file(
-                content=content,
-                language=language,
-                file_path=relative_path
+                content=content, language=language, file_path=relative_path
             )
             extraction_time = time.time() - extraction_start
 
@@ -210,7 +206,7 @@ class WorkspaceScanner:
                 language=language,
                 content=content,
                 hash=file_hash,
-                size=len(content)
+                size=len(content),
             )
 
             # Store symbols
@@ -231,7 +227,6 @@ class WorkspaceScanner:
             embedding_time = 0.0
             if result.symbols:
                 embedding_start = time.time()
-                import numpy as np
                 vectors = self.embeddings.embed_batch(result.symbols)
 
                 # Store in LanceDB (using relative path)
@@ -283,7 +278,7 @@ class WorkspaceScanner:
                 language=language,
                 content=content,
                 hash=file_hash,
-                size=len(content)
+                size=len(content),
             )
 
             # Store symbols
@@ -300,7 +295,6 @@ class WorkspaceScanner:
 
             # Generate embeddings
             if result.symbols:
-                import numpy as np
                 vectors = self.embeddings.embed_batch(result.symbols)
 
                 # Store in LanceDB (using relative path)
@@ -327,6 +321,7 @@ class WorkspaceScanner:
             # For in-memory DB, use current time (always considered fresh)
             # This prevents false positives in staleness check during testing
             import time
+
             return time.time()
 
         db_path = Path(self.storage.db_path)
@@ -338,7 +333,7 @@ class WorkspaceScanner:
         except Exception:
             return 0
 
-    def _get_max_file_mtime(self, disk_files: List[Path]) -> float:
+    def _get_max_file_mtime(self, disk_files: list[Path]) -> float:
         """
         Get the newest file modification time in workspace.
 
@@ -393,7 +388,9 @@ class WorkspaceScanner:
         # 3. Check for new files not in DB
         # Build lookup map for O(1) access (fixes O(n²) bug!)
         db_files_map = {f["path"]: f for f in db_files}
-        disk_files_set = {str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files}
+        disk_files_set = {
+            str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files
+        }
 
         new_files = disk_files_set - set(db_files_map.keys())
         if new_files:
@@ -404,7 +401,7 @@ class WorkspaceScanner:
         logger.info("✅ Index is up-to-date - no indexing needed")
         return False
 
-    async def index_workspace(self) -> Dict[str, int]:
+    async def index_workspace(self) -> dict[str, int]:
         """
         Index entire workspace with incremental change detection.
 
@@ -420,6 +417,7 @@ class WorkspaceScanner:
             Dict with indexing statistics
         """
         import time
+
         start_time = time.time()
 
         stats = IndexStats()
@@ -441,7 +439,9 @@ class WorkspaceScanner:
         # Build lookup for DB files (uses relative paths)
         db_files_map = {f["path"]: f for f in db_files}
         # Convert disk files to relative Unix-style paths to match DB
-        disk_files_set = {str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files}
+        disk_files_set = {
+            str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files
+        }
 
         # Phase 2: Index new/changed files
         files_to_process = []
@@ -461,28 +461,36 @@ class WorkspaceScanner:
                 files_to_process.append((file_path, "indexed"))
 
         if files_to_process:
-            logger.info(f"🔄 Processing {len(files_to_process)} files (new/changed), skipping {stats.skipped} unchanged")
+            logger.info(
+                f"🔄 Processing {len(files_to_process)} files (new/changed), skipping {stats.skipped} unchanged"
+            )
 
         # Process files in batches for optimal GPU utilization
         BATCH_SIZE = 50  # Process 50 files at a time for better GPU batching
 
         for batch_idx in range(0, len(files_to_process), BATCH_SIZE):
-            batch = files_to_process[batch_idx:batch_idx + BATCH_SIZE]
+            batch = files_to_process[batch_idx : batch_idx + BATCH_SIZE]
 
             # Phase 2a: Extract symbols from all files in batch
             batch_data = []  # List of (file_path, action, symbols, relative_path, content, language, hash)
             for file_path, action in batch:
                 try:
-                    relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
+                    relative_path = str(file_path.relative_to(self.workspace_root)).replace(
+                        "\\", "/"
+                    )
                     content = file_path.read_text(encoding="utf-8")
                     language = miller_core.detect_language(str(file_path))
 
                     extraction_start = time.time()
-                    result = miller_core.extract_file(content=content, language=language, file_path=relative_path)
+                    result = miller_core.extract_file(
+                        content=content, language=language, file_path=relative_path
+                    )
                     total_extraction_time += time.time() - extraction_start
 
                     file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-                    batch_data.append((file_path, action, result, relative_path, content, language, file_hash))
+                    batch_data.append(
+                        (file_path, action, result, relative_path, content, language, file_hash)
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to extract {file_path}: {e}")
                     stats.errors += 1
@@ -507,7 +515,15 @@ class WorkspaceScanner:
                 total_embedding_time += time.time() - embedding_start
 
             # Phase 2c: Write to SQLite database (per-file metadata)
-            for file_path, action, result, relative_path, content, language, file_hash in batch_data:
+            for (
+                file_path,
+                action,
+                result,
+                relative_path,
+                content,
+                language,
+                file_hash,
+            ) in batch_data:
                 try:
                     db_start = time.time()
 
@@ -517,7 +533,7 @@ class WorkspaceScanner:
                         language=language,
                         content=content,
                         hash=file_hash,
-                        size=len(content)
+                        size=len(content),
                     )
 
                     # Add symbols, identifiers, relationships
@@ -564,7 +580,7 @@ class WorkspaceScanner:
 
         # Phase 3: Clean up deleted files
         cleanup_start = time.time()
-        for db_file_path in db_files_map.keys():
+        for db_file_path in db_files_map:
             if db_file_path not in disk_files_set:
                 # File deleted from disk, remove from DB
                 self.storage.delete_file(db_file_path)
@@ -578,14 +594,26 @@ class WorkspaceScanner:
         logger.info("📊 Indexing Performance Summary")
         logger.info("=" * 60)
         logger.info(f"⏱️  Total time: {total_time:.2f}s")
-        logger.info(f"📁 File discovery: {discovery_time:.2f}s ({discovery_time/total_time*100:.1f}%)")
+        logger.info(
+            f"📁 File discovery: {discovery_time:.2f}s ({discovery_time / total_time * 100:.1f}%)"
+        )
         if stats.indexed + stats.updated > 0:
-            logger.info(f"🔍 Tree-sitter extraction: {total_extraction_time:.2f}s ({total_extraction_time/total_time*100:.1f}%)")
-            logger.info(f"🧠 Embedding generation: {total_embedding_time:.2f}s ({total_embedding_time/total_time*100:.1f}%)")
-            logger.info(f"💾 SQLite writes: {total_db_time:.2f}s ({total_db_time/total_time*100:.1f}%)")
-            logger.info(f"🗂️  LanceDB writes: {total_vector_time:.2f}s ({total_vector_time/total_time*100:.1f}%)")
-            logger.info(f"🗑️  Cleanup: {cleanup_time:.2f}s ({cleanup_time/total_time*100:.1f}%)")
-            logger.info(f"📈 Throughput: {(stats.indexed + stats.updated) / total_time:.1f} files/sec")
+            logger.info(
+                f"🔍 Tree-sitter extraction: {total_extraction_time:.2f}s ({total_extraction_time / total_time * 100:.1f}%)"
+            )
+            logger.info(
+                f"🧠 Embedding generation: {total_embedding_time:.2f}s ({total_embedding_time / total_time * 100:.1f}%)"
+            )
+            logger.info(
+                f"💾 SQLite writes: {total_db_time:.2f}s ({total_db_time / total_time * 100:.1f}%)"
+            )
+            logger.info(
+                f"🗂️  LanceDB writes: {total_vector_time:.2f}s ({total_vector_time / total_time * 100:.1f}%)"
+            )
+            logger.info(f"🗑️  Cleanup: {cleanup_time:.2f}s ({cleanup_time / total_time * 100:.1f}%)")
+            logger.info(
+                f"📈 Throughput: {(stats.indexed + stats.updated) / total_time:.1f} files/sec"
+            )
         logger.info("=" * 60)
 
         return stats.to_dict()

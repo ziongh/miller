@@ -5,17 +5,16 @@ Provides vector embeddings and semantic search capabilities.
 Uses sentence-transformers for encoding and LanceDB for vector storage.
 """
 
-import numpy as np
-import torch
-import pyarrow as pa
-from typing import List, Dict, Optional, Any, Literal
-from pathlib import Path
-from sentence_transformers import SentenceTransformer
-import lancedb
-import sys
 import os
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from typing import Any, Literal
 
+import lancedb
+import numpy as np
+import pyarrow as pa
+import torch
+from sentence_transformers import SentenceTransformer
 
 # Search method type alias
 SearchMethod = Literal["auto", "text", "pattern", "semantic", "hybrid"]
@@ -48,29 +47,15 @@ def detect_search_method(query: str) -> SearchMethod:
     # Pattern indicators: special chars commonly used in code syntax
     # Include: inheritance (:), generics (< >), brackets ([ ] ( ) { })
     # operators (=> ?. &&), and other code-specific symbols
-    pattern_indicators = [
-        ':',   # Inheritance, type annotations
-        '<',   # Generics, comparison
-        '>',   # Generics, comparison
-        '[',   # Attributes, arrays
-        ']',   # Attributes, arrays
-        '(',   # Function calls
-        ')',   # Function calls
-        '{',   # Blocks, objects
-        '}',   # Blocks, objects
-        '=>',  # Arrow functions, lambdas
-        '?.',  # Null-conditional operator
-        '&&',  # Logical AND
-    ]
 
     # Check for multi-char patterns first (to avoid false positives)
-    multi_char_patterns = ['=>', '?.', '&&']
+    multi_char_patterns = ["=>", "?.", "&&"]
     for pattern in multi_char_patterns:
         if pattern in query:
             return "pattern"
 
     # Check for single-char patterns
-    single_char_patterns = [':', '<', '>', '[', ']', '(', ')', '{', '}']
+    single_char_patterns = [":", "<", ">", "[", "]", "(", ")", "{", "}"]
     for ch in single_char_patterns:
         if ch in query:
             return "pattern"
@@ -90,11 +75,7 @@ class EmbeddingManager:
     - BGE-small model (384 dimensions)
     """
 
-    def __init__(
-        self,
-        model_name: str = "BAAI/bge-small-en-v1.5",
-        device: str = "auto"
-    ):
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", device: str = "auto"):
         """
         Initialize embedding model.
 
@@ -103,6 +84,7 @@ class EmbeddingManager:
             device: Device to use ("auto", "cuda", "mps", "cpu")
         """
         import logging
+
         logger = logging.getLogger("miller.embeddings")
 
         # Auto-detect device with priority: CUDA > ROCm > XPU > MPS > DirectML > CPU
@@ -123,9 +105,11 @@ class EmbeddingManager:
                 self.device = "xpu"
                 gpu_name = self._get_xpu_device_name()
                 logger.info(f"🔷 Using Intel XPU: {gpu_name}")
-            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 self.device = "mps"
-                logger.info("🍎 Using Apple Silicon MPS (Metal Performance Shaders) for GPU acceleration")
+                logger.info(
+                    "🍎 Using Apple Silicon MPS (Metal Performance Shaders) for GPU acceleration"
+                )
             elif self._check_directml_available():
                 # DirectML support (Windows AMD/Intel GPUs via torch-directml)
                 # Requires: pip install torch-directml
@@ -141,16 +125,17 @@ class EmbeddingManager:
         # Load model (suppress stdout/stderr to keep MCP protocol clean)
         # SentenceTransformer downloads models and writes progress to stdout,
         # which breaks MCP's JSON-RPC protocol (stdout must be clean)
-        with open(os.devnull, 'w') as devnull:
-            with redirect_stdout(devnull), redirect_stderr(devnull):
-                self.model = SentenceTransformer(model_name, device=self.device)
+        with open(os.devnull, "w") as devnull, redirect_stdout(devnull), redirect_stderr(devnull):
+            self.model = SentenceTransformer(model_name, device=self.device)
 
         self.model_name = model_name
 
         # Get embedding dimension from model
         self.dimensions = self.model.get_sentence_embedding_dimension()
 
-        logger.info(f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device})")
+        logger.info(
+            f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device})"
+        )
 
     def _check_rocm_available(self) -> bool:
         """
@@ -164,7 +149,11 @@ class EmbeddingManager:
         """
         try:
             # ROCm uses the CUDA API, but torch.version.hip is set
-            return hasattr(torch.version, 'hip') and torch.version.hip is not None and torch.cuda.is_available()
+            return (
+                hasattr(torch.version, "hip")
+                and torch.version.hip is not None
+                and torch.cuda.is_available()
+            )
         except Exception:
             return False
 
@@ -180,7 +169,7 @@ class EmbeddingManager:
         """
         try:
             # Intel XPU support added in PyTorch 2.5+
-            return hasattr(torch, 'xpu') and torch.xpu.is_available()
+            return hasattr(torch, "xpu") and torch.xpu.is_available()
         except Exception:
             return False
 
@@ -208,6 +197,7 @@ class EmbeddingManager:
         """
         try:
             import torch_directml
+
             # DirectML uses "privateuseone" backend in PyTorch
             return torch_directml.is_available()
         except ImportError:
@@ -227,11 +217,11 @@ class EmbeddingManager:
         embedding = self.model.encode(
             query,
             normalize_embeddings=True,  # L2 normalize
-            convert_to_numpy=True
+            convert_to_numpy=True,
         )
         return embedding.astype(np.float32)
 
-    def embed_batch(self, symbols: List[Any]) -> np.ndarray:
+    def embed_batch(self, symbols: list[Any]) -> np.ndarray:
         """
         Embed a batch of symbols.
 
@@ -251,10 +241,10 @@ class EmbeddingManager:
             # Combine name, signature, doc comment for rich representation
             parts = [sym.name]
 
-            if hasattr(sym, 'signature') and sym.signature:
+            if hasattr(sym, "signature") and sym.signature:
                 parts.append(sym.signature)
 
-            if hasattr(sym, 'doc_comment') and sym.doc_comment:
+            if hasattr(sym, "doc_comment") and sym.doc_comment:
                 parts.append(sym.doc_comment)
 
             text = " ".join(parts)
@@ -267,7 +257,7 @@ class EmbeddingManager:
             normalize_embeddings=True,  # L2 normalize
             convert_to_numpy=True,
             show_progress_bar=False,  # Suppress progress bar for tests
-            batch_size=256  # Optimized for GPU (32 default is too small)
+            batch_size=256,  # Optimized for GPU (32 default is too small)
         )
 
         return embeddings.astype(np.float32)
@@ -285,19 +275,23 @@ class VectorStore:
     """
 
     # Explicit PyArrow schema with nullable fields for optional symbol attributes
-    SCHEMA = pa.schema([
-        pa.field("id", pa.string(), nullable=False),
-        pa.field("name", pa.string(), nullable=False),
-        pa.field("kind", pa.string(), nullable=False),
-        pa.field("language", pa.string(), nullable=False),
-        pa.field("file_path", pa.string(), nullable=False),
-        pa.field("signature", pa.string(), nullable=True),      # Optional
-        pa.field("doc_comment", pa.string(), nullable=True),    # Optional
-        pa.field("start_line", pa.int32(), nullable=True),      # Optional
-        pa.field("end_line", pa.int32(), nullable=True),        # Optional
-        pa.field("code_pattern", pa.string(), nullable=False),  # Pattern-preserving content for code idiom search
-        pa.field("vector", pa.list_(pa.float32(), 384), nullable=False),  # 384-dim embeddings
-    ])
+    SCHEMA = pa.schema(
+        [
+            pa.field("id", pa.string(), nullable=False),
+            pa.field("name", pa.string(), nullable=False),
+            pa.field("kind", pa.string(), nullable=False),
+            pa.field("language", pa.string(), nullable=False),
+            pa.field("file_path", pa.string(), nullable=False),
+            pa.field("signature", pa.string(), nullable=True),  # Optional
+            pa.field("doc_comment", pa.string(), nullable=True),  # Optional
+            pa.field("start_line", pa.int32(), nullable=True),  # Optional
+            pa.field("end_line", pa.int32(), nullable=True),  # Optional
+            pa.field(
+                "code_pattern", pa.string(), nullable=False
+            ),  # Pattern-preserving content for code idiom search
+            pa.field("vector", pa.list_(pa.float32(), 384), nullable=False),  # 384-dim embeddings
+        ]
+    )
 
     def __init__(self, db_path: str = ".miller/indexes/vectors.lance"):
         """
@@ -312,6 +306,7 @@ class VectorStore:
         # Handle :memory: by creating temp directory
         if db_path == ":memory:":
             import tempfile
+
             self._temp_dir = tempfile.mkdtemp(prefix="miller_test_")
             actual_path = self._temp_dir
         else:
@@ -355,20 +350,20 @@ class VectorStore:
             # Create single FTS index with whitespace tokenizer
             # This supports both pattern search (: BaseClass) and general search (function names)
             self._table.create_fts_index(
-                ["code_pattern"],              # Pattern field (contains signature + name + kind)
-                use_tantivy=True,              # Enable Tantivy FTS
-                base_tokenizer="whitespace",   # Whitespace only (preserves : < > [ ] ( ) { })
-                with_position=True,            # Enable phrase search
-                replace=True                   # Replace existing index
+                ["code_pattern"],  # Pattern field (contains signature + name + kind)
+                use_tantivy=True,  # Enable Tantivy FTS
+                base_tokenizer="whitespace",  # Whitespace only (preserves : < > [ ] ( ) { })
+                with_position=True,  # Enable phrase search
+                replace=True,  # Replace existing index
             )
             self._fts_index_created = True
             self._pattern_index_created = True  # Same index serves both purposes
-        except Exception as e:
+        except Exception:
             # FTS index creation might fail on older LanceDB versions
             self._fts_index_created = False
             self._pattern_index_created = False
 
-    def add_symbols(self, symbols: List[Any], vectors: np.ndarray) -> int:
+    def add_symbols(self, symbols: list[Any], vectors: np.ndarray) -> int:
         """
         Add symbols with their embeddings to LanceDB.
 
@@ -388,7 +383,7 @@ class VectorStore:
             # Build pattern-preserving content for code idiom search
             # Combines signature + name + kind to enable searches like ": BaseClass", "ILogger<", "[Fact]"
             pattern_parts = []
-            if hasattr(sym, 'signature') and sym.signature:
+            if hasattr(sym, "signature") and sym.signature:
                 pattern_parts.append(sym.signature)
             pattern_parts.append(sym.name)
             if sym.kind:
@@ -396,24 +391,27 @@ class VectorStore:
 
             code_pattern = " ".join(pattern_parts)
 
-            data.append({
-                "id": sym.id,
-                "name": sym.name,
-                "kind": sym.kind,
-                "language": sym.language,
-                "file_path": sym.file_path,
-                "signature": sym.signature if hasattr(sym, 'signature') else None,
-                "doc_comment": sym.doc_comment if hasattr(sym, 'doc_comment') else None,
-                "start_line": sym.start_line if hasattr(sym, 'start_line') else 0,
-                "end_line": sym.end_line if hasattr(sym, 'end_line') else 0,
-                "code_pattern": code_pattern,  # NEW: Pattern-preserving field
-                "vector": vec.tolist(),  # LanceDB stores as list
-            })
+            data.append(
+                {
+                    "id": sym.id,
+                    "name": sym.name,
+                    "kind": sym.kind,
+                    "language": sym.language,
+                    "file_path": sym.file_path,
+                    "signature": sym.signature if hasattr(sym, "signature") else None,
+                    "doc_comment": sym.doc_comment if hasattr(sym, "doc_comment") else None,
+                    "start_line": sym.start_line if hasattr(sym, "start_line") else 0,
+                    "end_line": sym.end_line if hasattr(sym, "end_line") else 0,
+                    "code_pattern": code_pattern,  # NEW: Pattern-preserving field
+                    "vector": vec.tolist(),  # LanceDB stores as list
+                }
+            )
 
         # Create or append to table
         if self._table is None:
             # First time: create table with explicit schema to handle nullable fields
             import pyarrow as pa
+
             table = pa.Table.from_pylist(data, schema=self.SCHEMA)
             self._table = self.db.create_table(self.table_name, table, mode="overwrite")
             # Create FTS index after table creation
@@ -424,12 +422,7 @@ class VectorStore:
 
         return len(data)
 
-    def search(
-        self,
-        query: str,
-        method: SearchMethod = "auto",
-        limit: int = 50
-    ) -> List[Dict]:
+    def search(self, query: str, method: SearchMethod = "auto", limit: int = 50) -> list[dict]:
         """
         Search symbols with auto-detection and method routing.
 
@@ -480,7 +473,7 @@ class VectorStore:
         else:  # hybrid
             return self._search_hybrid(query, limit)
 
-    def _search_pattern(self, query: str, limit: int) -> List[Dict]:
+    def _search_pattern(self, query: str, limit: int) -> list[dict]:
         """
         Pattern search using whitespace-tokenized FTS.
 
@@ -501,18 +494,10 @@ class VectorStore:
         try:
             # Auto-wrap in quotes for phrase search (handles special chars safely)
             # Tantivy requires phrase search for queries with special chars
-            if not query.startswith('"'):
-                search_query = f'"{query}"'
-            else:
-                search_query = query
+            search_query = f'"{query}"' if not query.startswith('"') else query
 
             # Use FTS search - LanceDB will use the whitespace-tokenized index on code_pattern
-            results = (
-                self._table
-                .search(search_query, query_type="fts")
-                .limit(limit)
-                .to_list()
-            )
+            results = self._table.search(search_query, query_type="fts").limit(limit).to_list()
 
             # Normalize BM25 scores to 0.0-1.0 range
             if results:
@@ -523,12 +508,12 @@ class VectorStore:
 
             return results
 
-        except (ValueError, Exception) as e:
+        except (ValueError, Exception):
             # Tantivy might reject malformed queries
             # Return empty results instead of crashing (safe failure mode)
             return []
 
-    def _search_text(self, query: str, limit: int) -> List[Dict]:
+    def _search_text(self, query: str, limit: int) -> list[dict]:
         """
         Text search using Tantivy FTS with BM25 scoring.
 
@@ -545,12 +530,7 @@ class VectorStore:
 
         try:
             # Use Tantivy FTS with BM25 scoring
-            results = (
-                self._table
-                .search(query, query_type="fts")
-                .limit(limit)
-                .to_list()
-            )
+            results = self._table.search(query, query_type="fts").limit(limit).to_list()
 
             # Normalize BM25 scores to 0.0-1.0 range
             # LanceDB returns _score field with BM25 values
@@ -562,12 +542,12 @@ class VectorStore:
                     r["score"] = raw_score / max_score if max_score > 0 else 0.0
 
             return results
-        except (ValueError, Exception) as e:
+        except (ValueError, Exception):
             # Tantivy raises ValueError for malformed queries (e.g., SQL injection attempts)
             # Return empty results instead of crashing (safe failure mode)
             return []
 
-    def _search_text_fallback(self, query: str, limit: int) -> List[Dict]:
+    def _search_text_fallback(self, query: str, limit: int) -> list[dict]:
         """
         Fallback text search using LIKE queries (for older LanceDB versions).
 
@@ -577,9 +557,10 @@ class VectorStore:
         # Note: LanceDB's where() still uses string formatting for SQL-like syntax
         # This is a limitation of the current API
         results = (
-            self._table
-            .search()
-            .where(f"name LIKE '%{query}%' OR signature LIKE '%{query}%' OR doc_comment LIKE '%{query}%'")
+            self._table.search()
+            .where(
+                f"name LIKE '%{query}%' OR signature LIKE '%{query}%' OR doc_comment LIKE '%{query}%'"
+            )
             .limit(limit)
             .to_list()
         )
@@ -590,7 +571,7 @@ class VectorStore:
 
         return results
 
-    def _search_semantic(self, query: str, limit: int) -> List[Dict]:
+    def _search_semantic(self, query: str, limit: int) -> list[dict]:
         """
         Semantic search using vector similarity.
 
@@ -602,16 +583,12 @@ class VectorStore:
         # For now, create temporary embedding manager
         # (In production, we'd pass it as a dependency)
         from miller.embeddings import EmbeddingManager
+
         embeddings = EmbeddingManager()
         query_vec = embeddings.embed_query(query)
 
         # Vector search
-        results = (
-            self._table
-            .search(query_vec.tolist())
-            .limit(limit)
-            .to_list()
-        )
+        results = self._table.search(query_vec.tolist()).limit(limit).to_list()
 
         # LanceDB returns _distance - convert to similarity score
         for r in results:
@@ -624,7 +601,7 @@ class VectorStore:
 
         return results
 
-    def _search_hybrid(self, query: str, limit: int) -> List[Dict]:
+    def _search_hybrid(self, query: str, limit: int) -> list[dict]:
         """
         Hybrid search: combine text (FTS) and semantic (vector) with RRF fusion.
 
@@ -639,15 +616,11 @@ class VectorStore:
             # Use LanceDB's native hybrid search with RRF
             # Need to embed query for vector component
             from miller.embeddings import EmbeddingManager
-            embeddings = EmbeddingManager()
-            query_vec = embeddings.embed_query(query)
 
-            results = (
-                self._table
-                .search(query, query_type="hybrid")
-                .limit(limit)
-                .to_list()
-            )
+            embeddings = EmbeddingManager()
+            embeddings.embed_query(query)
+
+            results = self._table.search(query, query_type="hybrid").limit(limit).to_list()
 
             # Normalize scores to 0.0-1.0 range
             if results:
@@ -663,7 +636,7 @@ class VectorStore:
             # Fall back to manual merging
             return self._search_hybrid_fallback(query, limit)
 
-    def _search_hybrid_fallback(self, query: str, limit: int) -> List[Dict]:
+    def _search_hybrid_fallback(self, query: str, limit: int) -> list[dict]:
         """
         Fallback hybrid search: manual merging of text and semantic results.
 
@@ -688,11 +661,7 @@ class VectorStore:
         return merged[:limit]
 
     def update_file_symbols(
-        self,
-        file_path: str,
-        symbols: List[Any],
-        vectors: np.ndarray,
-        rebuild_index: bool = True
+        self, file_path: str, symbols: list[Any], vectors: np.ndarray, rebuild_index: bool = True
     ) -> int:
         """
         Update symbols for a file (remove old, add new).
@@ -737,6 +706,7 @@ class VectorStore:
         """Close database and cleanup temp directories."""
         if self._temp_dir:
             import shutil
+
             shutil.rmtree(self._temp_dir, ignore_errors=True)
 
     def __enter__(self):
