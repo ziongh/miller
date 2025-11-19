@@ -225,12 +225,17 @@ async def fast_search(
         method: Search method (auto-detects by default)
         limit: Maximum results to return
         workspace_id: Optional workspace ID to search (defaults to primary workspace)
+                     Get workspace IDs from manage_workspace(operation="list")
 
     Returns:
         List of matching symbols with scores and metadata
 
-    Note: Indexing runs automatically in background via lifespan handler.
-          Early searches may return empty results if indexing hasn't completed.
+    Indexing:
+        - Primary workspace: Indexed automatically in background after server starts
+        - Reference workspaces: Must be added via manage_workspace(operation="add")
+        - Manual indexing: Use manage_workspace(operation="index", force=True)
+
+    Note: Early searches may return empty results if initial indexing hasn't completed.
     """
 
     # If workspace_id specified, use that workspace's vector store

@@ -89,24 +89,45 @@ async def manage_workspace(
 
     Operations:
     - list: Show all registered workspaces
-    - stats: Show workspace statistics
-    - index: Index current or specified workspace
-    - add: Add reference workspace
-    - remove: Remove workspace
-    - clean: Clean up orphaned data
-    - refresh: Re-index workspace
-    - health: System health check
+    - stats: Show workspace statistics for a specific workspace
+    - index: Index current or specified workspace (manual trigger)
+             Note: Indexing also runs automatically in background after server starts
+    - add: Add reference workspace (indexes into separate storage)
+    - remove: Remove workspace and delete its data
+    - clean: Clean up orphaned data (workspaces with deleted paths)
+    - refresh: Re-index workspace to detect new/changed/deleted files
+    - health: System health check (registry status, aggregate stats)
+
+    Index vs Refresh:
+    - index: Initial indexing of workspace, force rebuilds with force=True
+    - refresh: Incremental update, detects file changes since last index
 
     Args:
         operation: Operation to perform
         path: Workspace path (for index, add)
         name: Workspace display name (for add)
         workspace_id: Workspace ID (for stats, remove, refresh)
-        force: Force re-indexing (for index, refresh)
-        detailed: Include detailed information (for health)
+        force: Force re-indexing even if up-to-date (for index, refresh)
+        detailed: Include detailed per-workspace info (for health)
 
     Returns:
         Operation result message
+
+    Examples:
+        # Index current workspace
+        manage_workspace(operation="index")
+
+        # Force rebuild index
+        manage_workspace(operation="index", force=True)
+
+        # Add reference workspace
+        manage_workspace(operation="add", path="/path/to/lib", name="MyLibrary")
+
+        # Refresh workspace to detect changes
+        manage_workspace(operation="refresh", workspace_id="mylib_abc123")
+
+        # System health check
+        manage_workspace(operation="health", detailed=True)
     """
     registry = WorkspaceRegistry()
 
