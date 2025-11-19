@@ -265,6 +265,11 @@ mcp.tool()(checkpoint)
 mcp.tool()(recall)
 mcp.tool()(plan)
 
+# Register workspace management tool
+from miller.tools.workspace import manage_workspace
+
+mcp.tool()(manage_workspace)
+
 
 # Export functions for direct use (testing)
 # The @mcp.tool() decorator wraps them, but we also need raw access
