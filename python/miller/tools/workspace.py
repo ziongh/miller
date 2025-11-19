@@ -52,6 +52,9 @@ async def manage_workspace(
     elif operation == "stats":
         return _handle_stats(registry, workspace_id)
 
+    elif operation == "add":
+        return await _handle_add(registry, path, name)
+
     else:
         return f"Error: Operation '{operation}' not implemented yet"
 
@@ -145,3 +148,96 @@ def _handle_stats(registry: WorkspaceRegistry, workspace_id: Optional[str]) -> s
         output.append(f"  Last indexed: {indexed_str}")
 
     return "\n".join(output)
+
+
+async def _handle_add(
+    registry: WorkspaceRegistry, path: Optional[str], name: Optional[str]
+) -> str:
+    """
+    Handle add operation - add reference workspace.
+
+    Args:
+        registry: WorkspaceRegistry instance
+        path: Workspace path to add
+        name: Display name for workspace
+
+    Returns:
+        Success or error message
+    """
+    # Validate parameters
+    if not path:
+        return "Error: 'path' parameter required for add operation"
+
+    if not name:
+        return "Error: 'name' parameter required for add operation"
+
+    # Verify path exists
+    workspace_path = Path(path)
+    if not workspace_path.exists():
+        return f"Error: Path does not exist: {path}"
+
+    if not workspace_path.is_dir():
+        return f"Error: Path is not a directory: {path}"
+
+    # Add to registry as reference workspace
+    workspace_id = registry.add_workspace(
+        path=str(workspace_path.resolve()), name=name, workspace_type="reference"
+    )
+
+    # Create workspace directories
+    from miller.workspace_paths import ensure_workspace_directories
+
+    ensure_workspace_directories(workspace_id)
+
+    # Index the workspace
+    try:
+        from miller.embeddings import EmbeddingManager, VectorStore
+        from miller.storage import StorageManager
+        from miller.workspace import WorkspaceScanner
+
+        # Initialize components for this workspace
+        db_path = get_workspace_db_path(workspace_id)
+        vector_path = get_workspace_vector_path(workspace_id)
+
+        storage = StorageManager(db_path=str(db_path))
+        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=str(vector_path), embeddings=embeddings)
+
+        # Create scanner and index
+        scanner = WorkspaceScanner(
+            workspace_root=workspace_path,
+            storage=storage,
+            embeddings=embeddings,
+            vector_store=vector_store,
+        )
+
+        # Run indexing
+        stats = await scanner.index_workspace()
+
+        # Get actual counts from storage (direct SQL queries)
+        cursor = storage.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM symbols")
+        symbol_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM symbols")
+        file_count = cursor.fetchone()[0]
+
+        # Update registry with stats
+        registry.update_workspace_stats(workspace_id, symbol_count=symbol_count, file_count=file_count)
+
+        # Return success message
+        files_processed = stats.get("indexed", 0) + stats.get("updated", 0)
+        output = [
+            f"✅ Successfully added reference workspace: {name}",
+            f"  Workspace ID: {workspace_id}",
+            f"  Path: {workspace_path}",
+            f"  Files indexed: {files_processed:,}",
+            f"  Symbols indexed: {symbol_count:,}",
+        ]
+
+        return "\n".join(output)
+
+    except Exception as e:
+        # Clean up on failure
+        registry.remove_workspace(workspace_id)
+        return f"Error indexing workspace: {str(e)}"
