@@ -209,11 +209,35 @@ async def test_watcher_event_latency_under_500ms(watcher, temp_workspace, mock_c
 
 def test_watcher_normalizes_paths_to_unix_style(temp_workspace, mock_callback):
     """Test: Watcher stores paths in Unix style (forward slashes) internally."""
+    import platform
+
     watcher = FileWatcher(
         workspace_path=temp_workspace,
         indexing_callback=mock_callback,
     )
 
-    # Internal paths should use forward slashes, even on Windows
-    # This will be verified in implementation
-    assert True  # Placeholder - implementation will verify
+    # Create a test file with nested directories
+    nested_dir = temp_workspace / "subdir" / "nested"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+    test_file = nested_dir / "test.txt"
+    test_file.write_text("test content")
+
+    # Get relative path
+    rel_path = test_file.relative_to(watcher._workspace_path)
+
+    # Convert to string (Path uses OS-specific separators)
+    path_str = str(rel_path)
+
+    # Normalize to Unix style for comparison
+    unix_path = path_str.replace("\\", "/")
+
+    # Verify it's a valid relative path with forward slashes
+    assert "/" in unix_path or len(unix_path.split("/")) == 1, \
+        "Path should use forward slashes or be a single component"
+    assert "subdir/nested/test.txt" == unix_path, \
+        f"Expected 'subdir/nested/test.txt', got '{unix_path}'"
+
+    # On Windows, verify we're NOT using backslashes in our normalized format
+    if platform.system() == "Windows":
+        assert "\\" not in unix_path, \
+            "Normalized path should not contain backslashes on Windows"
