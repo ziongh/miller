@@ -239,6 +239,78 @@
   #[allow(dead_code)] // TODO: Used for database deserialization
   ```
 
+### 2.4 TOON Format Migration (30-60% Token Reduction!)
+> **Status:** Planning phase - See Julie's implementation in `~/source/julie` for reference
+> **Impact:** High - Directly reduces API costs for all MCP tool responses
+> **Reference:** https://github.com/toon-format/toon-python (v0.9.x beta)
+
+#### Current State: ✅ Clean (No Double-Return Problem)
+Miller's tools already return pure structured data (no formatted+structured duplication):
+- ✅ `fast_search` → `list[dict]` with symbol metadata
+- ✅ `fast_goto` → `dict` with symbol location
+- ✅ `get_symbols` → `list[dict]` with symbol details
+- ✅ `fast_refs` → `dict` with references
+- ✅ `trace_call_path` → `TracePath` dict OR tree string (user choice via `output_format`)
+
+#### Where TOON Helps Most:
+1. **trace_call_path** (Highest Impact)
+   - Deep nested `TraceNode` trees with recursive children
+   - **Estimated savings:** 40-50% for deep call trees
+   - TOON's object syntax eliminates repeated `{}`, `:`, `"` characters
+
+2. **fast_search** (High Volume)
+   - Returns 50+ symbols as `list[dict]` with repeated keys
+   - **Estimated savings:** 37% (per TOON benchmark)
+   - TOON's CSV-style array notation: `[50,]{name,kind,file_path,line}:`
+
+3. **fast_refs** (Medium Impact)
+   - Dictionaries with file lists
+   - Perfect for TOON's array syntax
+
+#### Migration Strategy:
+
+**Phase 1: Add TOON Support (Non-Breaking)**
+- [ ] Add `toon-format>=0.9` to `pyproject.toml`
+- [ ] Add `output_format: Literal["json", "toon"] = "json"` parameter to tools
+- [ ] Implement dual output in `fast_search` (pilot)
+  ```python
+  if output_format == "toon":
+      from toon_format import encode
+      return encode(results)  # TOON string
+  else:
+      return results  # FastMCP auto-JSONifies
+  ```
+- [ ] Test side-by-side with both formats
+- [ ] Measure actual token savings with real queries
+
+**Phase 2: Extend to Other Tools**
+- [ ] Add TOON support to `trace_call_path`
+- [ ] Add TOON support to `fast_refs`
+- [ ] Add TOON support to `get_symbols`
+- [ ] Add TOON support to `checkpoint`/`recall`/`plan`
+
+**Phase 3: Make TOON Default**
+- [ ] Flip default to `output_format="toon"` after validation
+- [ ] Update documentation and examples
+- [ ] Add TOON benefits to CLAUDE.md
+
+**Phase 4: Simplify (Optional)**
+- [ ] Consider TOON-only (remove JSON option)
+- [ ] Simplify tool signatures
+
+#### Reference Implementation:
+Study Julie's TOON implementation at `~/source/julie`:
+- How `trace_call_path` encodes nested traces
+- How `fast_search` handles symbol lists
+- Any edge cases or limitations discovered
+- Performance impact (if any)
+
+#### Success Metrics:
+- Token count reduction: Target 30-50% for typical responses
+- No functionality loss (encode → decode → compare)
+- Client compatibility (Claude Code handles TOON parsing)
+- Performance: Encode/decode overhead < 10ms
+
 ---
 
 ## =' PRIORITY 3: MEDIUM (Do Later)
