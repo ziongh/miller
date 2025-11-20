@@ -205,13 +205,23 @@ def unique_function_abc123():
                 workspace_id = registry.list_workspaces()[0]["workspace_id"]
 
                 # Test all search methods with workspace_id
-                await fast_search("test", workspace_id=workspace_id, method="auto")
-                await fast_search("test", workspace_id=workspace_id, method="text")
-                await fast_search("test", workspace_id=workspace_id, method="semantic")
-                await fast_search("test", workspace_id=workspace_id, method="hybrid")
+                results_auto = await fast_search("test", workspace_id=workspace_id, method="auto")
+                results_text = await fast_search("test", workspace_id=workspace_id, method="text")
+                results_semantic = await fast_search("test", workspace_id=workspace_id, method="semantic")
+                results_hybrid = await fast_search("test", workspace_id=workspace_id, method="hybrid")
 
-                # If we got here without crashing, all methods work
-                assert True
+                # Verify all methods return valid results (list of dicts with expected keys)
+                for results, method in [
+                    (results_auto, "auto"),
+                    (results_text, "text"),
+                    (results_semantic, "semantic"),
+                    (results_hybrid, "hybrid")
+                ]:
+                    assert isinstance(results, list), f"{method} should return a list"
+                    # Each result should have the expected structure
+                    for result in results:
+                        assert "name" in result, f"{method} results should have 'name' field"
+                        assert "file_path" in result, f"{method} results should have 'file_path' field"
 
             finally:
                 os.chdir(original_dir)

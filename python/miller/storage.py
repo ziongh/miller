@@ -298,7 +298,10 @@ class StorageManager:
 
     def get_symbol_by_name(self, name: str) -> Optional[dict]:
         """
-        Get first symbol by name.
+        Get first symbol by name, preferring definitions over references.
+
+        When multiple symbols share the same name (e.g., import + function definition),
+        returns the definition rather than the reference.
 
         Args:
             name: Symbol name to search for
@@ -306,7 +309,17 @@ class StorageManager:
         Returns:
             Dict with symbol data, or None if not found
         """
-        cursor = self.conn.execute("SELECT * FROM symbols WHERE name = ? LIMIT 1", (name,))
+        # Order by kind priority: definitions (function, class, etc.) before references (import)
+        cursor = self.conn.execute("""
+            SELECT * FROM symbols
+            WHERE name = ?
+            ORDER BY CASE kind
+                WHEN 'import' THEN 2
+                WHEN 'reference' THEN 2
+                ELSE 1
+            END
+            LIMIT 1
+        """, (name,))
         row = cursor.fetchone()
         return dict(row) if row else None
 

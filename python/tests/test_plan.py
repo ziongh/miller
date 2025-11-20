@@ -1,0 +1,260 @@
+"""
+Tests for plan MCP tool (mutable development plan tracking).
+
+TDD Phase 1: Write ALL tests first (expect them to fail - RED).
+These tests define the contract for Julie-compatible plan functionality.
+"""
+
+import pytest
+import json
+import shutil
+from pathlib import Path
+from unittest.mock import patch
+
+
+# ============================================================================
+# Plan Tool Tests (9 tests)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_plan_save_creates_file(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan save creates file in .memories/plans/plan_{slug}.json."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+        result = await plan(
+            ctx,
+            action="save",
+            title="Add Search Feature",
+            content="## Goal\nImplement search..."
+        )
+
+        # Verify plans directory exists
+        plans_dir = temp_memories_dir / "plans"
+        assert plans_dir.exists()
+
+        # Verify plan file exists
+        plan_files = list(plans_dir.glob("plan_*.json"))
+        assert len(plan_files) == 1
+
+        # Verify filename is based on title slug
+        assert "add-search" in plan_files[0].name.lower()
+
+
+@pytest.mark.asyncio
+async def test_plan_generates_slug_from_title(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan generates correct slugs from titles."""
+    from miller.tools.memory import plan
+
+    test_cases = [
+        ("Add Search", "plan_add-search.json"),
+        ("Fix Bug #123", "plan_fix-bug-123.json"),
+        ("Implement User Authentication", "plan_implement-user-authentication.json"),
+    ]
+
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        for title, expected_filename in test_cases:
+            # Clear plans directory
+            plans_dir = temp_memories_dir / "plans"
+            if plans_dir.exists():
+                shutil.rmtree(plans_dir)
+            plans_dir.mkdir()
+
+            # Create plan
+            await plan(ctx, action="save", title=title, content="Test")
+
+            # Verify filename
+            plan_files = list(plans_dir.glob("*.json"))
+            assert len(plan_files) == 1
+
+            # Check filename matches expected pattern
+            actual_filename = plan_files[0].name
+            # Normalize for comparison (handle extra words, etc.)
+            assert "plan_" in actual_filename
+            # Key words from title should be in slug
+            key_words = title.lower().replace("#", "").split()
+            for word in key_words[:3]:  # Check first 3 words
+                clean_word = word.strip()
+                if clean_word:
+                    assert clean_word in actual_filename.lower()
+
+
+@pytest.mark.asyncio
+async def test_plan_save_auto_activates_by_default(temp_memories_dir, mock_git_context, mock_context):
+    """Verify new plan is activated automatically by default."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create plan (activate=True by default)
+        await plan(
+            ctx,
+            action="save",
+            title="Test Plan",
+            content="## Test"
+        )
+
+        # Read the plan file
+        plans_dir = temp_memories_dir / "plans"
+        plan_file = list(plans_dir.glob("*.json"))[0]
+
+        with open(plan_file) as f:
+            data = json.load(f)
+
+        assert data["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_plan_list_returns_all_plans(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan list returns all plans."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create 3 plans
+        await plan(ctx, action="save", title="Plan 1", content="Content 1", activate=False)
+        await plan(ctx, action="save", title="Plan 2", content="Content 2", activate=False)
+        await plan(ctx, action="save", title="Plan 3", content="Content 3", activate=False)
+
+        # List all plans
+        results = await plan(ctx, action="list")
+
+        assert len(results) == 3
+        titles = [p["title"] for p in results]
+        assert "Plan 1" in titles
+        assert "Plan 2" in titles
+        assert "Plan 3" in titles
+
+
+@pytest.mark.asyncio
+async def test_plan_list_filters_by_status(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan list filters by status correctly."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create plans with different statuses
+        plan1_id = await plan(ctx, action="save", title="Active Plan 1", content="C1")
+        plan2_id = await plan(ctx, action="save", title="Active Plan 2", content="C2")
+        plan3_id = await plan(ctx, action="save", title="Complete Plan", content="C3", activate=False)
+
+        # Complete one plan
+        await plan(ctx, action="complete", id=plan3_id["id"])
+
+        # List only active plans
+        active_plans = await plan(ctx, action="list", status="active")
+
+        # Should have 2 active plans (plan2 is active, plan1 was deactivated when plan2 was created)
+        active_titles = [p["title"] for p in active_plans]
+        assert len([p for p in active_plans if p["status"] == "active"]) >= 1
+
+        # List completed plans
+        completed_plans = await plan(ctx, action="list", status="completed")
+        assert len(completed_plans) == 1
+        assert completed_plans[0]["title"] == "Complete Plan"
+
+
+@pytest.mark.asyncio
+async def test_plan_activate_deactivates_others(temp_memories_dir, mock_git_context, mock_context):
+    """Verify activating a plan deactivates all others (single active plan)."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create 3 plans
+        plan1_result = await plan(ctx, action="save", title="Plan 1", content="C1")
+        plan2_result = await plan(ctx, action="save", title="Plan 2", content="C2")
+        plan3_result = await plan(ctx, action="save", title="Plan 3", content="C3")
+
+        # Activate plan 1
+        await plan(ctx, action="activate", id=plan1_result["id"])
+
+        # List all plans and check statuses
+        all_plans = await plan(ctx, action="list")
+
+        active_count = sum(1 for p in all_plans if p["status"] == "active")
+        assert active_count == 1, "Only one plan should be active"
+
+        # Verify plan 1 is the active one
+        active_plan = [p for p in all_plans if p["status"] == "active"][0]
+        assert active_plan["title"] == "Plan 1"
+
+
+@pytest.mark.asyncio
+async def test_plan_update_modifies_content(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan update modifies content correctly."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create plan
+        plan_result = await plan(
+            ctx,
+            action="save",
+            title="Test Plan",
+            content="## Original Content"
+        )
+
+        # Update content
+        await plan(
+            ctx,
+            action="update",
+            id=plan_result["id"],
+            content="## Updated Content\nNew sections here..."
+        )
+
+        # Get plan and verify content changed
+        updated_plan = await plan(ctx, action="get", id=plan_result["id"])
+
+        assert "Updated Content" in updated_plan["content"]
+        assert "Original Content" not in updated_plan["content"]
+
+
+@pytest.mark.asyncio
+async def test_plan_complete_sets_timestamp(temp_memories_dir, mock_git_context, mock_context):
+    """Verify completing a plan sets completed_at timestamp."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create plan
+        plan_result = await plan(
+            ctx,
+            action="save",
+            title="Test Plan",
+            content="## Test"
+        )
+
+        # Complete it
+        await plan(ctx, action="complete", id=plan_result["id"])
+
+        # Get plan and verify completed_at is set
+        completed_plan = await plan(ctx, action="get", id=plan_result["id"])
+
+        assert completed_plan["status"] == "completed"
+        assert "completed_at" in completed_plan
+        assert isinstance(completed_plan["completed_at"], int)
+        assert completed_plan["completed_at"] > 0
+
+
+@pytest.mark.asyncio
+async def test_plan_get_retrieves_by_id(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan get retrieves correct plan by ID."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create multiple plans
+        plan1 = await plan(ctx, action="save", title="Plan 1", content="C1", activate=False)
+        plan2 = await plan(ctx, action="save", title="Plan 2", content="C2", activate=False)
+        plan3 = await plan(ctx, action="save", title="Plan 3", content="C3", activate=False)
+
+        # Get plan 2 by ID
+        retrieved = await plan(ctx, action="get", id=plan2["id"])
+
+        assert retrieved["id"] == plan2["id"]
+        assert retrieved["title"] == "Plan 2"
+        assert retrieved["content"] == "C2"

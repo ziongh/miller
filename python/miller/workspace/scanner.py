@@ -1,51 +1,34 @@
 """
-Workspace scanning and automatic indexing.
+WorkspaceScanner for automatic workspace indexing.
 
-Adapts Julie's workspace indexing pattern for Miller:
-- Automatic indexing on startup (if needed)
-- Incremental indexing (hash-based change detection)
-- .gitignore support via pathspec library
+Handles:
+- File discovery (respecting .gitignore)
+- Change detection (hash-based)
+- Incremental indexing
+- Cleanup of deleted files
 """
 
+import asyncio
 import hashlib
 import logging
+import time
 from pathlib import Path
 
-from .embeddings import EmbeddingManager, VectorStore
-from .ignore_patterns import load_gitignore
-from .storage import StorageManager
+from ..embeddings import EmbeddingManager, VectorStore
+from ..ignore_patterns import load_gitignore
+from ..storage import StorageManager
+from . import hash_tracking
+from .index_stats import IndexStats
 
 # Get logger instance
 logger = logging.getLogger("miller.workspace")
 
-
 # Import Rust core
 try:
-    from . import miller_core
+    from .. import miller_core
 except ImportError:
     # For testing without building Rust extension
     miller_core = None
-
-
-class IndexStats:
-    """Statistics from workspace indexing operation."""
-
-    def __init__(self):
-        self.indexed = 0  # New files indexed
-        self.updated = 0  # Existing files re-indexed
-        self.skipped = 0  # Unchanged files skipped
-        self.deleted = 0  # Files deleted from DB
-        self.errors = 0  # Files that failed to index
-
-    def to_dict(self) -> dict[str, int]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "indexed": self.indexed,
-            "updated": self.updated,
-            "skipped": self.skipped,
-            "deleted": self.deleted,
-            "errors": self.errors,
-        }
 
 
 class WorkspaceScanner:
@@ -116,23 +99,6 @@ class WorkspaceScanner:
 
         return indexable_files
 
-    def _compute_file_hash(self, file_path: Path) -> str:
-        """
-        Compute SHA-256 hash of file content.
-
-        Args:
-            file_path: Path to file
-
-        Returns:
-            Hex digest of SHA-256 hash
-        """
-        try:
-            content = file_path.read_text(encoding="utf-8")
-            return hashlib.sha256(content.encode("utf-8")).hexdigest()
-        except Exception:
-            # If file can't be read, return empty hash
-            return ""
-
     def _needs_indexing(self, file_path: Path, db_files_map: dict[str, dict]) -> bool:
         """
         Check if file needs to be indexed.
@@ -144,216 +110,7 @@ class WorkspaceScanner:
         Returns:
             True if file should be indexed (new or changed), False if unchanged
         """
-        # Convert to relative Unix-style path
-        relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
-
-        # Compute current hash
-        current_hash = self._compute_file_hash(file_path)
-        if not current_hash:
-            return False  # Can't read file, skip
-
-        # Check if file exists in DB (O(1) lookup with map)
-        if relative_path in db_files_map:
-            # File exists in DB, check if hash changed
-            return db_files_map[relative_path]["hash"] != current_hash
-
-        # File not in DB, needs indexing
-        return True
-
-    async def _index_file_timed(self, file_path: Path):
-        """
-        Index a single file with timing instrumentation.
-
-        Args:
-            file_path: Path to file (absolute)
-
-        Returns:
-            Tuple of (success, extraction_time, embedding_time, db_time)
-        """
-        import time
-
-        if miller_core is None:
-            return (False, 0.0, 0.0, 0.0)
-
-        try:
-            # Convert to relative Unix-style path (like Julie does)
-            relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
-
-            # Read file
-            content = file_path.read_text(encoding="utf-8")
-
-            # Detect language
-            language = miller_core.detect_language(str(file_path))
-            if not language:
-                return (False, 0.0, 0.0, 0.0)
-
-            # Phase 1: Tree-sitter extraction
-            extraction_start = time.time()
-            result = miller_core.extract_file(
-                content=content, language=language, file_path=relative_path
-            )
-            extraction_time = time.time() - extraction_start
-
-            # Compute file hash
-            file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-            # Phase 2: Database writes (symbols, identifiers, relationships)
-            db_start = time.time()
-
-            # Store file metadata
-            self.storage.add_file(
-                file_path=relative_path,
-                language=language,
-                content=content,
-                hash=file_hash,
-                size=len(content),
-            )
-
-            # Store symbols
-            if result.symbols:
-                self.storage.add_symbols_batch(result.symbols)
-
-            # Store identifiers
-            if result.identifiers:
-                self.storage.add_identifiers_batch(result.identifiers)
-
-            # Store relationships
-            if result.relationships:
-                self.storage.add_relationships_batch(result.relationships)
-
-            db_time = time.time() - db_start
-
-            # Phase 3: Generate embeddings
-            embedding_time = 0.0
-            if result.symbols:
-                embedding_start = time.time()
-                vectors = self.embeddings.embed_batch(result.symbols)
-
-                # Store in LanceDB (using relative path)
-                self.vector_store.update_file_symbols(relative_path, result.symbols, vectors)
-                embedding_time = time.time() - embedding_start
-
-            return (True, extraction_time, embedding_time, db_time)
-
-        except Exception as e:
-            # Log error but continue with other files
-            logger.warning(f"Failed to index {file_path}: {e}")
-            return (False, 0.0, 0.0, 0.0)
-
-    async def _index_file(self, file_path: Path) -> bool:
-        """
-        Index a single file (without timing instrumentation).
-
-        Args:
-            file_path: Path to file (absolute)
-
-        Returns:
-            True if successful, False if error
-        """
-        if miller_core is None:
-            return False
-
-        try:
-            # Convert to relative Unix-style path (like Julie does)
-            # e.g., /Users/murphy/source/miller/src/lib.rs -> src/lib.rs
-            relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
-
-            # Read file
-            content = file_path.read_text(encoding="utf-8")
-
-            # Detect language
-            language = miller_core.detect_language(str(file_path))
-            if not language:
-                return False
-
-            # Extract symbols (pass relative path so symbols have correct file_path)
-            result = miller_core.extract_file(content, language, relative_path)
-
-            # Compute hash
-            file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-            # Store file metadata (using relative path)
-            self.storage.add_file(
-                file_path=relative_path,
-                language=language,
-                content=content,
-                hash=file_hash,
-                size=len(content),
-            )
-
-            # Store symbols
-            if result.symbols:
-                self.storage.add_symbols_batch(result.symbols)
-
-            # Store identifiers
-            if result.identifiers:
-                self.storage.add_identifiers_batch(result.identifiers)
-
-            # Store relationships
-            if result.relationships:
-                self.storage.add_relationships_batch(result.relationships)
-
-            # Generate embeddings
-            if result.symbols:
-                vectors = self.embeddings.embed_batch(result.symbols)
-
-                # Store in LanceDB (using relative path)
-                self.vector_store.update_file_symbols(relative_path, result.symbols, vectors)
-
-            return True
-
-        except Exception as e:
-            # Log error but continue with other files
-            logger.warning(f"Failed to index {file_path}: {e}")
-            return False
-
-    def _get_database_mtime(self) -> float:
-        """
-        Get modification time of symbols.db file.
-
-        Returns:
-            Timestamp of database file, or 0 if doesn't exist (or in-memory)
-
-        Note: Following Julie's staleness check pattern for performance
-        """
-        # Handle in-memory databases (used in tests)
-        if self.storage.db_path == ":memory:":
-            # For in-memory DB, use current time (always considered fresh)
-            # This prevents false positives in staleness check during testing
-            import time
-
-            return time.time()
-
-        db_path = Path(self.storage.db_path)
-        if not db_path.exists():
-            return 0  # DB doesn't exist, very old
-
-        try:
-            return db_path.stat().st_mtime
-        except Exception:
-            return 0
-
-    def _get_max_file_mtime(self, disk_files: list[Path]) -> float:
-        """
-        Get the newest file modification time in workspace.
-
-        Args:
-            disk_files: List of file paths to check
-
-        Returns:
-            Maximum mtime found, or 0 if no files
-
-        Note: Following Julie's staleness check pattern for performance
-        """
-        max_mtime = 0.0
-        for file_path in disk_files:
-            try:
-                mtime = file_path.stat().st_mtime
-                if mtime > max_mtime:
-                    max_mtime = mtime
-            except Exception:
-                continue  # Skip files we can't stat
-        return max_mtime
+        return hash_tracking.needs_indexing(file_path, self.workspace_root, db_files_map)
 
     async def check_if_indexing_needed(self) -> bool:
         """
@@ -398,9 +155,6 @@ class WorkspaceScanner:
         Returns:
             Dict with indexing statistics
         """
-        import asyncio
-        import time
-
         start_time = time.time()
 
         stats = IndexStats()

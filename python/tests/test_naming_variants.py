@@ -7,7 +7,7 @@ These tests define the exact behavior we expect from the naming variant system.
 
 import pytest
 
-from miller.tools.naming_variants import (
+from miller.tools.naming import (
     generate_variants,
     parse_symbol_words,
     pluralize,

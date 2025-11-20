@@ -1,0 +1,173 @@
+"""
+Tests for FileWatcher debouncing, batching, and event deduplication.
+
+These tests focus on:
+1. Debouncing rapid file modifications into single callbacks
+2. Batching changes to multiple files
+3. Deduplicating conflicting events (CREATED + DELETED, etc.)
+4. DebounceQueue unit tests
+"""
+
+import pytest
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock
+from miller.watcher import FileEvent, FileWatcher, DebounceQueue
+
+
+# ============================================================================
+# DEBOUNCING TESTS
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_watcher_debounces_rapid_modifications(watcher, sample_file, mock_callback):
+    """Test: Multiple rapid modifications to same file → single callback."""
+    watcher.start()
+
+    # Modify file rapidly 10 times
+    for i in range(10):
+        sample_file.write_text(f"def hello(): return {i}")
+        await asyncio.sleep(0.01)  # 10ms between writes
+
+    # Wait for debounce window
+    await asyncio.sleep(0.3)
+
+    # Should only trigger callback ONCE (debounced)
+    mock_callback.assert_called_once()
+    events = mock_callback.call_args[0][0]
+    assert len(events) == 1
+    event_type, _ = events[0]
+    assert event_type == FileEvent.MODIFIED
+
+    watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_watcher_batches_multiple_files(watcher, temp_workspace, mock_callback):
+    """Test: Changes to multiple files are batched into single callback."""
+    watcher.start()
+
+    # Create multiple files rapidly
+    files = []
+    for i in range(5):
+        file_path = temp_workspace / f"file_{i}.py"
+        file_path.write_text(f"def func_{i}(): pass")
+        files.append(file_path)
+        await asyncio.sleep(0.01)
+
+    # Wait for debounce
+    await asyncio.sleep(0.3)
+
+    # Should batch all 5 files into single callback
+    mock_callback.assert_called_once()
+    events = mock_callback.call_args[0][0]
+    assert len(events) == 5
+
+    # All should be CREATED events
+    for event_type, file_path in events:
+        assert event_type == FileEvent.CREATED
+        assert file_path in files
+
+    watcher.stop()
+
+
+# ============================================================================
+# DEDUPLICATION TESTS
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_debounce_queue_deduplicates_created_modified():
+    """Test: CREATED + MODIFIED for same file → single CREATED event."""
+    callback = AsyncMock()
+    queue = DebounceQueue(debounce_delay=0.1)
+    queue._flush_callback = callback  # type: ignore
+
+    file_path = Path("/test/file.py")
+
+    queue.add(FileEvent.CREATED, file_path)
+    queue.add(FileEvent.MODIFIED, file_path)
+
+    await asyncio.sleep(0.2)  # Wait for flush
+
+    callback.assert_called_once()
+    events = callback.call_args[0][0]
+    assert len(events) == 1
+    assert events[0] == (FileEvent.CREATED, file_path)
+
+
+@pytest.mark.asyncio
+async def test_debounce_queue_deduplicates_created_deleted():
+    """Test: CREATED + DELETED for same file → no event (cancel out)."""
+    callback = AsyncMock()
+    queue = DebounceQueue(debounce_delay=0.1)
+    queue._flush_callback = callback  # type: ignore
+
+    file_path = Path("/test/file.py")
+
+    queue.add(FileEvent.CREATED, file_path)
+    queue.add(FileEvent.DELETED, file_path)
+
+    await asyncio.sleep(0.2)  # Wait for flush
+
+    # No event should be fired (created then deleted = no-op)
+    callback.assert_called_once()
+    events = callback.call_args[0][0]
+    assert len(events) == 0
+
+
+@pytest.mark.asyncio
+async def test_debounce_queue_deduplicates_modified_deleted():
+    """Test: MODIFIED + DELETED for same file → single DELETED event."""
+    callback = AsyncMock()
+    queue = DebounceQueue(debounce_delay=0.1)
+    queue._flush_callback = callback  # type: ignore
+
+    file_path = Path("/test/file.py")
+
+    queue.add(FileEvent.MODIFIED, file_path)
+    queue.add(FileEvent.DELETED, file_path)
+
+    await asyncio.sleep(0.2)  # Wait for flush
+
+    callback.assert_called_once()
+    events = callback.call_args[0][0]
+    assert len(events) == 1
+    assert events[0] == (FileEvent.DELETED, file_path)
+
+
+# ============================================================================
+# DEBOUNCE QUEUE UNIT TESTS
+# ============================================================================
+
+
+def test_debounce_queue_init():
+    """Test: DebounceQueue initializes with valid delay."""
+    queue = DebounceQueue(debounce_delay=0.5)
+    assert queue is not None
+
+
+def test_debounce_queue_init_invalid_delay():
+    """Test: DebounceQueue raises ValueError for invalid delay."""
+    with pytest.raises(ValueError):
+        DebounceQueue(debounce_delay=0.0)
+
+    with pytest.raises(ValueError):
+        DebounceQueue(debounce_delay=-1.0)
+
+    with pytest.raises(ValueError):
+        DebounceQueue(debounce_delay=11.0)
+
+
+@pytest.mark.asyncio
+async def test_debounce_queue_flush_empty_queue():
+    """Test: Flushing empty DebounceQueue is safe (no-op)."""
+    callback = AsyncMock()
+    queue = DebounceQueue(debounce_delay=0.1)
+    queue._flush_callback = callback  # type: ignore
+
+    await queue.flush()
+
+    # Should not crash, callback called with empty list
+    callback.assert_called_once_with([])

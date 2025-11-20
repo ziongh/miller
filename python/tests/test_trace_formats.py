@@ -1,0 +1,153 @@
+"""
+Tests for trace_call_path output formats and statistics.
+
+TDD Phase 2: Write tests BEFORE implementation.
+These tests define the exact behavior of output formatting and result statistics.
+"""
+
+import pytest
+
+from miller.tools.trace_types import TraceDirection, TraceNode, TracePath
+
+
+# Import the implementation
+try:
+    from miller.tools.trace import trace_call_path
+    TRACE_AVAILABLE = True
+except ImportError:
+    TRACE_AVAILABLE = False
+
+# Skip all tests if trace module not available
+pytestmark = pytest.mark.skipif(
+    not TRACE_AVAILABLE,
+    reason="trace_call_path module not available"
+)
+
+
+class TestOutputFormats:
+    """Test different output formats."""
+
+    @pytest.mark.asyncio
+    async def test_json_format(self, sample_indexed_workspace):
+        """Test JSON output format (default)."""
+        from miller.tools.trace import trace_call_path
+
+        storage = sample_indexed_workspace
+
+        result = await trace_call_path(
+            storage=storage,
+            symbol_name="function_a",
+            output_format="json"
+        )
+
+        assert isinstance(result, dict)
+        assert "root" in result
+        assert "total_nodes" in result
+        assert "execution_time_ms" in result
+
+    @pytest.mark.asyncio
+    async def test_tree_format(self, sample_indexed_workspace):
+        """
+        Test tree output format (human-readable).
+
+        Expected output:
+            function_a (python) @ src/main.py:10
+            ├─[Call]→ function_b (python) @ src/utils.py:5
+            └─[Call]→ function_c (python) @ src/helpers.py:12
+        """
+        from miller.tools.trace import trace_call_path
+
+        storage = sample_indexed_workspace
+
+        result = await trace_call_path(
+            storage=storage,
+            symbol_name="function_a",
+            output_format="tree",
+            max_depth=1
+        )
+
+        assert isinstance(result, str)
+        assert "function_a" in result
+        assert "→" in result  # Tree connector
+        assert "python" in result  # Language indicator
+        assert "src/" in result  # File paths
+
+
+class TestStatistics:
+    """Test statistics and metadata in results."""
+
+    @pytest.mark.asyncio
+    async def test_languages_found(self, cross_language_workspace):
+        """Test languages_found list."""
+        from miller.tools.trace import trace_call_path
+
+        storage = cross_language_workspace
+
+        result = await trace_call_path(
+            storage=storage,
+            symbol_name="UserService",
+            direction="downstream",
+            max_depth=3
+        )
+
+        # Should include all languages encountered
+        assert "languages_found" in result
+        assert "typescript" in result["languages_found"]
+        assert "python" in result["languages_found"]
+
+    @pytest.mark.asyncio
+    async def test_match_types_counts(self, cross_language_workspace):
+        """Test match_types count dictionary."""
+        from miller.tools.trace import trace_call_path
+
+        storage = cross_language_workspace
+
+        result = await trace_call_path(
+            storage=storage,
+            symbol_name="IUser",
+            direction="downstream",
+            max_depth=2
+        )
+
+        # Should count exact, variant, and semantic matches
+        assert "match_types" in result
+        assert isinstance(result["match_types"], dict)
+        # Should have at least variant matches (IUser → User)
+        assert result["match_types"].get("variant", 0) > 0
+
+    @pytest.mark.asyncio
+    async def test_relationship_kinds_counts(self, sample_indexed_workspace):
+        """Test relationship_kinds count dictionary."""
+        from miller.tools.trace import trace_call_path
+
+        storage = sample_indexed_workspace
+
+        result = await trace_call_path(
+            storage=storage,
+            symbol_name="function_a",
+            direction="downstream",
+            max_depth=2
+        )
+
+        # Should count relationship types (Call, Import, Reference, etc.)
+        assert "relationship_kinds" in result
+        assert isinstance(result["relationship_kinds"], dict)
+        assert result["relationship_kinds"].get("Call", 0) > 0
+
+    @pytest.mark.asyncio
+    async def test_execution_time(self, sample_indexed_workspace):
+        """Test execution_time_ms is recorded."""
+        from miller.tools.trace import trace_call_path
+
+        storage = sample_indexed_workspace
+
+        result = await trace_call_path(
+            storage=storage,
+            symbol_name="function_a",
+            direction="downstream",
+            max_depth=2
+        )
+
+        assert "execution_time_ms" in result
+        assert isinstance(result["execution_time_ms"], (int, float))
+        assert result["execution_time_ms"] > 0

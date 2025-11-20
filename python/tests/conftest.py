@@ -1,9 +1,25 @@
 """
 Pytest configuration and fixtures for Miller tests.
+
+Specialized fixtures are organized in the fixtures/ directory:
+- fixtures.trace_basic: Basic trace workspace fixtures
+- fixtures.trace_advanced: Advanced trace scenarios (semantic, cyclic)
+- fixtures.trace_edge: Edge cases (ambiguous symbols)
+- fixtures.memory: Memory tool fixtures (checkpoint, recall, plan)
+- fixtures.watcher: FileWatcher fixtures
 """
 
 import pytest
 from pathlib import Path
+
+# Load fixture modules
+pytest_plugins = [
+    "tests.fixtures.trace_basic",
+    "tests.fixtures.trace_advanced",
+    "tests.fixtures.trace_edge",
+    "tests.fixtures.memory",
+    "tests.fixtures.watcher",
+]
 
 
 @pytest.fixture
@@ -107,7 +123,6 @@ def clean_server_storage():
     import miller.server as server
     from miller.storage import StorageManager
     from miller.embeddings import VectorStore
-    from miller.workspace import WorkspaceScanner
 
     # Close old connections if they exist
     if hasattr(server.storage, 'conn'):
@@ -127,13 +142,18 @@ def clean_server_storage():
         from miller.embeddings import EmbeddingManager
         server.embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
 
-    # Initialize scanner for tests
-    server.scanner = WorkspaceScanner(
-        workspace_root=Path.cwd(),
-        storage=server.storage,
-        embeddings=server.embeddings,
-        vector_store=server.vector_store
-    )
+    # Initialize scanner for tests (only if WorkspaceScanner is available)
+    try:
+        from miller.workspace import WorkspaceScanner
+        server.scanner = WorkspaceScanner(
+            workspace_root=Path.cwd(),
+            storage=server.storage,
+            embeddings=server.embeddings,
+            vector_store=server.vector_store
+        )
+    except (ImportError, ModuleNotFoundError):
+        # WorkspaceScanner not yet available, skip initialization
+        server.scanner = None
 
     yield
 
@@ -230,3 +250,5 @@ def index_file_helper():
             return False
 
     return _index_file
+
+
