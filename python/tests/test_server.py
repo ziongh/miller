@@ -52,7 +52,7 @@ class TestServerInitialization:
 
     def test_server_imports(self):
         """Test that server module can be imported."""
-        from miller import server
+        import miller.server as server
         assert server is not None
 
     def test_server_has_mcp_instance(self):

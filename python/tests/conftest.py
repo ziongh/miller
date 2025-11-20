@@ -104,7 +104,7 @@ def clean_server_storage():
     This fixture runs automatically before each test to ensure
     tests don't interfere with each other by using fresh in-memory databases.
     """
-    from miller import server
+    import miller.server as server
     from miller.storage import StorageManager
     from miller.embeddings import VectorStore
     from miller.workspace import WorkspaceScanner
@@ -157,7 +157,7 @@ def index_file_helper():
     """
     async def _index_file(file_path: str | Path) -> bool:
         """Index a single file for testing."""
-        from miller import server
+        import miller.server as server
         from pathlib import Path
         import hashlib
         import numpy as np

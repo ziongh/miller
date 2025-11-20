@@ -103,6 +103,12 @@ async def lifespan(_app):
         global storage, vector_store, embeddings, scanner, workspace_root
 
         try:
+            # CRITICAL: Yield to event loop BEFORE heavy imports
+            # Python imports are synchronous and block the event loop. Even though this is an
+            # async task, importing torch/sentence-transformers blocks the thread for 3+ seconds.
+            # This delay ensures the MCP handshake completes BEFORE we start blocking imports.
+            await asyncio.sleep(0.1)  # 100ms delay - lets handshake complete first
+
             # PHASE 1: Initialize components (in background, doesn't block handshake)
             logger.info("🔧 Initializing Miller components in background...")
 

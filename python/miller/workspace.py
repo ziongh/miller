@@ -357,48 +357,30 @@ class WorkspaceScanner:
 
     async def check_if_indexing_needed(self) -> bool:
         """
-        Check if workspace needs indexing.
+        Check if workspace needs indexing (O(1) fast check).
 
-        Follows Julie's optimized pattern:
-        1. Check if DB is empty (fast)
-        2. Check staleness: DB mtime vs max file mtime (fast!)
-        3. Check for new files: workspace files vs DB files (moderate)
+        Julie's ACTUAL pattern (not what we thought):
+        1. Check if DB is empty (O(1)) → needs indexing
+        2. Otherwise assume file watcher keeps it current → skip expensive walk
+
+        The expensive directory walk (O(n)) only happens during actual indexing,
+        not during the startup check. This makes startup instant.
+
+        For explicit re-indexing: use manage_workspace(operation="index", force=True)
 
         Returns:
-            True if indexing needed (DB empty or files changed), False otherwise
+            True if indexing needed (DB empty only), False otherwise
         """
-        # 1. Check if DB has any files
+        # ONLY check if DB is empty - this is O(1) and fast
         db_files = self.storage.get_all_files()
 
         if not db_files:
-            logger.info("📊 Database is empty - indexing needed")
+            logger.info("📊 Database is empty - initial indexing needed")
             return True
 
-        # 2. FAST-PATH: Staleness check (Julie's optimization)
-        # Compare DB modification time vs newest file modification time
-        # If DB is newer than all files, we can skip the expensive hash checks!
-        disk_files = self._walk_directory()
-        db_mtime = self._get_database_mtime()
-        max_file_mtime = self._get_max_file_mtime(disk_files)
-
-        if max_file_mtime > db_mtime:
-            logger.info("📊 Database is stale (files modified after last index) - indexing needed")
-            return True
-
-        # 3. Check for new files not in DB
-        # Build lookup map for O(1) access (fixes O(n²) bug!)
-        db_files_map = {f["path"]: f for f in db_files}
-        disk_files_set = {
-            str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files
-        }
-
-        new_files = disk_files_set - set(db_files_map.keys())
-        if new_files:
-            logger.info(f"📊 Found {len(new_files)} new files not in database - indexing needed")
-            return True
-
-        # All checks passed - no indexing needed
-        logger.info("✅ Index is up-to-date - no indexing needed")
+        # DB has files - assume index is current
+        # File watcher will handle incremental updates after startup
+        logger.info("✅ Index exists - assuming current (file watcher will track changes)")
         return False
 
     async def index_workspace(self) -> dict[str, int]:

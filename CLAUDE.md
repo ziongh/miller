@@ -34,6 +34,127 @@ Rust Core (Performance)
 
 ---
 
+## 🔴 MANDATORY: LAZY LOADING - DO NOT BREAK THIS
+
+### Non-Negotiable Rule: MCP Handshake Must Be Sub-Second
+
+**Miller's MCP handshake must complete in under 1 second.** This requires strict lazy loading discipline.
+
+### The Problem
+
+Heavy ML libraries (torch, sentence-transformers) take 5-6 seconds to import on modern hardware. If these are imported during module initialization, the MCP handshake is blocked until imports complete, making Claude Code wait 5-6 seconds to connect.
+
+**This is unacceptable.**
+
+### The Solution: Background Task Pattern
+
+Miller uses Julie's proven pattern:
+1. **Server starts** → MCP handshake completes immediately (~100ms)
+2. **Background task** → Imports heavy libraries and initializes components
+3. **Indexing** → Runs in background after initialization
+
+**Code locations (DO NOT MODIFY these patterns):**
+
+#### `python/miller/__init__.py`
+```python
+# ❌ NEVER DO THIS (adds 5+ seconds to startup):
+from miller import embeddings, server, storage
+
+# ✅ ALWAYS DO THIS (instant startup):
+# DO NOT import modules here - lazy loading is critical for fast MCP handshake
+__all__ = ["miller_core"]
+```
+
+**Rationale**: The MCP server entry point is `server.py`, not `__init__.py`. There is ZERO reason to import heavy modules at package level.
+
+#### `python/miller/server.py` (lines 109-112)
+```python
+# Lazy imports - only load heavy ML libraries in background task
+from miller.embeddings import EmbeddingManager, VectorStore
+from miller.storage import StorageManager
+from miller.workspace import WorkspaceScanner
+```
+
+**Rationale**: These imports happen INSIDE the `background_initialization_and_indexing()` async function, which runs AFTER the MCP handshake completes. The server becomes ready immediately, then loads libraries in the background.
+
+#### `python/miller/embeddings.py` (lines 16-17)
+```python
+import torch
+from sentence_transformers import SentenceTransformer
+```
+
+**Rationale**: These are heavy imports, but they're OK here because this module is ONLY imported in the background task, never at package initialization time.
+
+### Verification
+
+After any changes, verify handshake speed:
+
+```bash
+# Start Miller
+uv run miller-server
+
+# In another terminal, time the connection
+time claude-mcp-client connect miller
+
+# Should see: real 0m0.5s (or similar sub-second time)
+# If you see 5-6 seconds, YOU BROKE LAZY LOADING
+```
+
+### Common Mistakes That Break Lazy Loading
+
+❌ **Importing heavy modules in `__init__.py`**
+```python
+# python/miller/__init__.py
+from miller import embeddings  # ❌ WRONG - loads torch at import time
+```
+
+❌ **Importing heavy modules at module level in `server.py`**
+```python
+# python/miller/server.py (at top of file)
+from miller.embeddings import EmbeddingManager  # ❌ WRONG - blocks handshake
+```
+
+❌ **Creating instances at module level**
+```python
+# python/miller/server.py (at top of file)
+embeddings = EmbeddingManager()  # ❌ WRONG - loads torch before handshake
+```
+
+✅ **Correct: Import inside background task**
+```python
+# python/miller/server.py (inside async function)
+async def background_initialization_and_indexing():
+    from miller.embeddings import EmbeddingManager  # ✅ CORRECT
+    embeddings = EmbeddingManager()  # ✅ CORRECT
+```
+
+### Why This Matters
+
+**User experience:**
+- Fast handshake: Claude Code connects instantly, user can start working immediately
+- Slow handshake: Claude Code waits 5-6 seconds, user sees "Connecting..." spinner, terrible UX
+
+**Developer experience:**
+- Fast handshake: Quick iteration during development, fast testing
+- Slow handshake: Every server restart takes 5-6 seconds, dev velocity destroyed
+
+**This is not optional. Do not break lazy loading. Ever.**
+
+If you find yourself tempted to import a heavy module at module level, STOP. Find another way. Use lazy imports, use background tasks, use dependency injection - anything except module-level imports of torch/sentence-transformers.
+
+### Emergency Fix
+
+If lazy loading breaks and you need to fix it immediately:
+
+1. **Find the culprit**: `rg "^from miller.embeddings import" python/miller/`
+2. **Check where it's called**: If it's NOT inside a function, it's wrong
+3. **Move import inside function**: Wrap in async function or background task
+4. **Verify**: Time the handshake again
+
+**DO NOT COMMIT BROKEN LAZY LOADING. EVER.**
+
+---
+
 ## 🔴 MANDATORY: Always Verify Latest Package Versions
 
 ### Non-Negotiable Rule: NO OUTDATED DEPENDENCIES

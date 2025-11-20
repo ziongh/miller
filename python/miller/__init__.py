@@ -16,7 +16,8 @@ except ImportError:
     miller_core = None
     __rust_version__ = None
 
-# Export main modules
-from miller import embeddings, server, storage
+# DO NOT import modules here - lazy loading is critical for fast MCP handshake
+# The MCP server entry point is server.py, which handles imports in background tasks
+# Importing embeddings/storage here breaks the ~100ms handshake target (adds 5+ seconds)
 
-__all__ = ["miller_core", "storage", "embeddings", "server"]
+__all__ = ["miller_core"]

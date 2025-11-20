@@ -850,7 +850,7 @@ async def get_symbols_enhanced(
         List of symbol dictionaries with metadata based on mode
     """
     # Import miller_core from server module (it handles the Rust binding import)
-    from miller import server
+    import miller.server as server
 
     path = Path(file_path)
 
