@@ -1,9 +1,9 @@
 # Miller - Technical Debt & Remediation Plan
 
 **Generated:** 2025-11-20
-**Updated:** 2025-11-20 (Session 3 - File Splitting in Progress)
+**Updated:** 2025-11-20 (Session 3 Complete - 50% File Reduction!)
 **Code Review Score:** 82/100 (B-) ⬆️ from 74/100 (+8 points!)
-**Status:** ✅ File size violations: 8 → 5 files (37.5% complete!)
+**Status:** ✅ File size violations: 8 → 4 files (50% complete! 🎉)
 
 ## 🎉 Session 2 Accomplishments (2025-11-20)
 
@@ -31,7 +31,7 @@
 
 ## 🎉 Session 3 Accomplishments (2025-11-20)
 
-### File Splitting: 3/8 Worst Offenders Fixed (37.5% Complete)
+### File Splitting: 4/8 Files Fixed (50% Complete!)
 
 **Files Fixed:**
 - ✅ **test_get_symbols.py** (1,546 lines → 4 files)
@@ -55,19 +55,26 @@
   - naming/inflection.py (150 lines)
   - naming/parsers.py (243 lines)
 
-**Metrics:**
-- Files Over 500 Lines: 8 → **5** (-37.5%)
-- Lines Eliminated: **3,291 lines** of violations fixed
-- All Tests Passing: ✅ 100% (conftest: 6 tests, naming: 55 tests, get_symbols: 63 tests)
+- ✅ **trace.py** (608 lines → 5 files)
+  - trace/__init__.py (7 lines)
+  - trace/core.py (140 lines) - main trace_call_path
+  - trace/builder.py (267 lines) - node building
+  - trace/search.py (176 lines) - symbol finding
+  - trace/utils.py (52 lines) - formatting
 
-**Remaining Files (5):**
-- trace.py (608 lines - 1.2x over)
+**Metrics:**
+- Files Over 500 Lines: 8 → **4** (-50%!)
+- Lines Eliminated: **3,899 lines** of violations fixed
+- All Tests Passing: ✅ 77 tests (trace: 16, naming: 55, get_symbols: 6+)
+- Total Files Created: 20 modular files, all < 500 lines
+
+**Remaining Files (4):**
 - server.py (596 lines - 1.2x over)
 - test_embeddings.py (582 lines - 1.2x over)
 - memory.py (551 lines - 1.1x over)
 - test_pattern_search.py (502 lines - 1.0x over)
 
-**Next Priority:** Continue file splitting (all remaining files are barely over limit)
+**Next Priority:** Finish remaining 4 files (all barely over limit, easy targets)
 
 ---
 
@@ -102,8 +109,8 @@
   - Split into: workspace/scanner.py, workspace/indexer.py
 - [x] **test_watcher.py** (622 lines � 1.2x over) - ✅ FIXED (Earlier)
   - Split into: test_watcher_basic.py, test_watcher_events.py
-- [ ] **tools/trace.py** (608 lines � 1.2x over) - 🔴 TODO
-  - Split into: trace/core.py, trace/formatter.py
+- [x] **tools/trace.py** (608 lines � 1.2x over) - ✅ FIXED (Session 3)
+  - Split into: trace/__init__ (7), core (140), builder (267), search (176), utils (52)
 - [ ] **server.py** (596 lines � 1.2x over) - 🔴 TODO
   - Split into: server/core.py, server/tools.py, server/lifecycle.py
 - [ ] **test_embeddings.py** (582 lines � 1.2x over) - 🔴 TODO
@@ -292,7 +299,7 @@
 
 | Metric | Before | Current | Target | Status |
 |--------|--------|---------|--------|--------|
-| Files > 500 lines | 25 | **5** ⬇️ | 0 | 🟡 **-20 files (80% done!)** |
+| Files > 500 lines | 8 (Session 3) | **4** ⬇️ | 0 | 🟡 **-4 files (50% session reduction!)** |
 | Test Coverage | 78.87% | ~79% | 80%+ | =� |
 | Test Pass Rate | 92.4% | **100%** ✅ | 100% | ✅ **+16 tests fixed!** |
 | Unwrap() count | 171 | 171 | 0 (prod) | =4 |
