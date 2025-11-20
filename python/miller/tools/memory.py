@@ -98,19 +98,23 @@ async def checkpoint(
 
 async def recall(
     _ctx: Context,
+    query: Optional[str] = None,
     type: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """
-    Retrieve development memory checkpoints with filtering.
+    Retrieve development memory checkpoints with filtering and semantic search.
 
-    Scans `.memories/YYYY-MM-DD/` directories and returns memories in reverse
-    chronological order (newest first). Supports time-based and type-based filtering.
+    Two modes:
+    1. Time-based (fast filesystem scan): When no query provided
+    2. Semantic search (indexed): When query provided - uses hybrid text+semantic search
 
     Args:
         ctx: FastMCP context
+        query: Optional natural language search query (enables semantic search mode)
+               Example: "authentication bug", "PostgreSQL decision", "indexing performance"
         type: Filter by memory type ("checkpoint", "decision", "learning", "observation")
         since: Memories since this date (ISO 8601: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS")
                Uses local timezone - automatically converted to UTC for filtering
@@ -127,28 +131,133 @@ async def recall(
         - git: Dict with branch, commit, dirty, files_changed
 
     Examples:
-        # Get last 10 memories
-        >>> memories = await recall(ctx)
-
-        # Filter by type
+        # Time-based filtering (filesystem scan - fast)
+        >>> memories = await recall(ctx)  # Last 10 memories
+        >>> recent = await recall(ctx, since="2025-11-17")
         >>> decisions = await recall(ctx, type="decision", limit=20)
 
-        # Time range filtering
-        >>> recent = await recall(ctx, since="2025-11-17")
-        >>> yesterday = await recall(ctx, since="2025-11-17", until="2025-11-18")
+        # Semantic search (NEW - uses indexed embeddings)
+        >>> auth_bugs = await recall(ctx, query="authentication bug we fixed")
+        >>> db_choices = await recall(ctx, query="why PostgreSQL", type="decision")
+        >>> perf = await recall(ctx, query="performance optimization", since="2025-11-01")
 
-        # Combined filters
-        >>> arch_decisions = await recall(
-        ...     ctx,
-        ...     type="decision",
-        ...     since="2025-11-01",
-        ...     limit=50
-        ... )
+        # Combined (semantic + time/type filters)
+        >>> await recall(ctx, query="startup indexing", since="2d", limit=20)
 
     Notes:
+        - Semantic search requires memories to be indexed (file watcher handles this)
         - Returns empty list [] if no memories found
         - Gracefully handles corrupt JSON files (skips them)
         - Date strings in local timezone, converted to UTC automatically
+    """
+    # SEMANTIC SEARCH MODE: Use indexed embeddings for natural language queries
+    if query:
+        return await _recall_semantic(query, type, since, until, limit)
+
+    # FILESYSTEM SCAN MODE: Fast time-based filtering (original implementation)
+    return await _recall_filesystem(type, since, until, limit)
+
+
+async def _recall_semantic(
+    query: str,
+    type: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Semantic search over indexed memories using hybrid text+semantic search.
+
+    Flow:
+    1. Search vector store with query (get more results for filtering)
+    2. Filter to only .memories/ paths
+    3. Load actual JSON files
+    4. Apply time/type filters
+    5. Return top results by relevance score
+    """
+    # Import server globals for vector_store access
+    from miller.server import vector_store
+
+    if vector_store is None:
+        # Indexing not complete yet - fall back to filesystem scan
+        return await _recall_filesystem(type, since, until, limit)
+
+    # Search with higher limit since we'll filter by path
+    # Use hybrid search for best results (combines text + semantic)
+    search_results = vector_store.search(query, method="hybrid", limit=limit * 5)
+
+    # Filter to only memory files (.memories/ paths)
+    memory_paths = set()
+    for result in search_results:
+        file_path = result.get("file_path", "")
+        if file_path.startswith(".memories/") and file_path.endswith(".json"):
+            memory_paths.add(file_path)
+
+    # Parse date filters
+    since_timestamp = None
+    until_timestamp = None
+
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since)
+            since_timestamp = int(since_dt.timestamp())
+        except ValueError:
+            pass
+
+    if until:
+        try:
+            until_dt = datetime.fromisoformat(until)
+            if "T" not in until:
+                until_dt = until_dt.replace(hour=23, minute=59, second=59)
+            until_timestamp = int(until_dt.timestamp())
+        except ValueError:
+            pass
+
+    # Load JSON files and apply filters
+    all_checkpoints = []
+    for file_path in memory_paths:
+        try:
+            full_path = Path(file_path)
+            if not full_path.exists():
+                continue
+
+            data = read_json_file(full_path)
+
+            # Apply type filter
+            if type and data.get("type") != type:
+                continue
+
+            # Apply time filters
+            checkpoint_timestamp = data.get("timestamp", 0)
+
+            if since_timestamp and checkpoint_timestamp < since_timestamp:
+                continue
+
+            if until_timestamp and checkpoint_timestamp > until_timestamp:
+                continue
+
+            all_checkpoints.append(data)
+
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    # Sort by timestamp descending (most recent first)
+    all_checkpoints.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+
+    # Apply limit
+    return all_checkpoints[:limit]
+
+
+async def _recall_filesystem(
+    type: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Fast filesystem scan for time-based memory retrieval (original implementation).
+
+    Used when no semantic query is provided - optimized for chronological filtering.
     """
     memories_dir = Path(".memories")
 

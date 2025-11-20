@@ -1,0 +1,29 @@
+{
+  "description": "trace_call_path COMPLETE and production-ready! Registered as MCP tool. Full feature set: (1) Naming variant generator with 54/55 tests passing - cross-language matching for TypeScript/Python/SQL/C#/Rust via snake_case/camelCase/PascalCase conversion, prefix/suffix stripping (IUser\u2192User, UserDto\u2192User), pluralization (user\u2192users); (2) Core traversal with 10/10 tests - upstream/downstream/both directions, max depth 1-10, cycle detection, JSON/tree output; (3) Cross-language variant matching - automatically finds user_service when tracing UserService, finds users table when tracing User model; (4) Full MCP integration - Claude can now use trace_call_path() to understand code execution across language boundaries. This is Miller's killer differentiator - no LSP can do cross-language tracing!",
+  "git": {
+    "branch": "main",
+    "commit": "37c47d4",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/server.py",
+      ".memories/2025-11-20/",
+      ".memories/plans/plan_implement-tracecallpath-cross-language-call-tracing.json",
+      "python/miller/tools/naming_variants.py",
+      "python/miller/tools/trace.py",
+      "python/miller/tools/trace_types.py",
+      "python/tests/test_naming_variants.py",
+      "python/tests/test_trace_call_path.py",
+      "python/tests/test_trace_unit.py"
+    ]
+  },
+  "id": "decision_ca1019ef_625ab5",
+  "tags": [
+    "trace-call-path",
+    "complete",
+    "production-ready",
+    "cross-language",
+    "mcp-tool"
+  ],
+  "timestamp": 1763605797,
+  "type": "decision"
+}

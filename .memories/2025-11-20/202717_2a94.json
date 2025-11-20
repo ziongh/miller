@@ -1,0 +1,27 @@
+{
+  "description": "Core trace_call_path implementation complete. 10/10 unit tests passing. Traverses relationships in upstream/downstream/both directions. Max depth limiting (1-10). Cycle detection using visited sets. Output formats: JSON (TracePath dict) and tree (ASCII art). Statistics: languages_found, match_types, relationship_kinds, execution_time. Symbol lookup with optional context_file disambiguation. Next: enhance with naming variant matching for true cross-language tracing.",
+  "git": {
+    "branch": "main",
+    "commit": "37c47d4",
+    "dirty": true,
+    "files_changed": [
+      ".memories/2025-11-20/",
+      ".memories/plans/plan_implement-tracecallpath-cross-language-call-tracing.json",
+      "python/miller/tools/naming_variants.py",
+      "python/miller/tools/trace.py",
+      "python/miller/tools/trace_types.py",
+      "python/tests/test_naming_variants.py",
+      "python/tests/test_trace_call_path.py",
+      "python/tests/test_trace_unit.py"
+    ]
+  },
+  "id": "checkpoint_ab58f3b3_366a8a",
+  "tags": [
+    "trace-call-path",
+    "tdd",
+    "tests-passing",
+    "traversal"
+  ],
+  "timestamp": 1763605637,
+  "type": "checkpoint"
+}

@@ -1,5 +1,5 @@
 ---
-allowed-tools: recall, mcp__miller__fast_search
+allowed-tools: recall
 argument-hint: [time|topic] [--type type] [--since time]
 description: Retrieve development memories (user)
 ---
@@ -24,17 +24,23 @@ Determine query mode from $ARGUMENTS and execute the appropriate tool NOW:
 💡 TIP: For very recent memories (< 30 minutes), just use limit instead:
    "/recall" (no args) → last 10 memories
 
-**Topic-based query** (e.g., "db path bug", "auth implementation"):
-1. IMMEDIATELY call mcp__miller__fast_search with:
-   - query=$ARGUMENTS
-   - search_method="hybrid"
-   - file_pattern=".memories/**/*.json"
-   - limit=20
+**Topic-based query** (e.g., "startup indexing", "authentication bug", "PostgreSQL decision"):
+1. IMMEDIATELY call recall tool with:
+   - query=$ARGUMENTS (enables semantic search using indexed embeddings)
+   - limit=20 (get more results for topic searches)
+
+💡 NEW: Semantic search uses Miller's hybrid text+semantic engine for intelligent topic matching!
 
 **Filtered query** (e.g., "--type decision", "--since 2d"):
 1. Parse the flags (--type, --since)
 2. IMMEDIATELY call recall tool with the appropriate filters
-3. Can combine with fast_search for topic + filter combinations
+3. Can combine with query for semantic + filter combinations
+
+**Combined query** (e.g., "authentication --type decision --since 2d"):
+1. Parse flags from $ARGUMENTS
+2. Extract remaining text as query
+3. IMMEDIATELY call recall with both query and filters
+   Example: recall(query="authentication", type="decision", since="2025-11-17")
 
 **No arguments provided**:
 1. IMMEDIATELY call recall tool with limit=10 to get the last 10 memories
