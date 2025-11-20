@@ -10,7 +10,7 @@ mod relationship;
 mod symbol;
 
 // Re-export for lib.rs
-pub use api::{detect_language, extract_file, supported_languages};
+pub use api::{detect_language, extract_file, extract_files_batch, supported_languages};
 pub use extraction_results::PyExtractionResults;
 pub use identifier::PyIdentifier;
 pub use relationship::PyRelationship;

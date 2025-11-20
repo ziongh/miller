@@ -24,6 +24,7 @@ fn miller_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bindings::extract_file, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::detect_language, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::supported_languages, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::extract_files_batch, m)?)?;
 
     // Add Python classes
     m.add_class::<bindings::PySymbol>()?;

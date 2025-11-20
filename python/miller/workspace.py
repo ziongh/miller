@@ -398,6 +398,7 @@ class WorkspaceScanner:
         Returns:
             Dict with indexing statistics
         """
+        import asyncio
         import time
 
         start_time = time.time()
@@ -453,34 +454,62 @@ class WorkspaceScanner:
         for batch_idx in range(0, len(files_to_process), BATCH_SIZE):
             batch = files_to_process[batch_idx : batch_idx + BATCH_SIZE]
 
-            # Phase 2a: Extract symbols from all files in batch
-            batch_data = []  # List of (file_path, action, symbols, relative_path, content, language, hash)
+            # Phase 2a: Prepare batch for parallel extraction
+            extraction_batch = []
+            action_map = {}  # Map relative_path -> action for O(1) lookup
+
             for file_path, action in batch:
                 try:
-                    relative_path = str(file_path.relative_to(self.workspace_root)).replace(
-                        "\\", "/"
-                    )
+                    relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
                     content = file_path.read_text(encoding="utf-8")
                     language = miller_core.detect_language(str(file_path))
 
-                    extraction_start = time.time()
-                    result = miller_core.extract_file(
-                        content=content, language=language, file_path=relative_path
-                    )
-                    total_extraction_time += time.time() - extraction_start
-
-                    file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-                    batch_data.append(
-                        (file_path, action, result, relative_path, content, language, file_hash)
-                    )
+                    if language:
+                        extraction_batch.append((content, language, relative_path))
+                        action_map[relative_path] = action  # Store action for later lookup
+                    else:
+                        # Should not happen due to discovery filter, but safe fallback
+                        stats.skipped += 1
                 except Exception as e:
-                    logger.warning(f"Failed to extract {file_path}: {e}")
+                    logger.warning(f"Failed to read {file_path}: {e}")
                     stats.errors += 1
 
-            if not batch_data:
+            if not extraction_batch:
                 continue
 
-            # Phase 2b: Batch embed ALL symbols from this batch of files at once
+            # Phase 2b: Parallel extraction in Rust (releases GIL)
+            # This runs on multiple threads in Rust, not blocking Python
+            extraction_start = time.time()
+            try:
+                # Run in thread pool to avoid blocking event loop during FFI call
+                # Pass workspace_root for proper symbol path resolution
+                results = await asyncio.to_thread(
+                    miller_core.extract_files_batch,
+                    extraction_batch,
+                    str(self.workspace_root)
+                )
+            except Exception as e:
+                logger.error(f"Batch extraction failed: {e}")
+                stats.errors += len(extraction_batch)
+                continue
+
+            total_extraction_time += time.time() - extraction_start
+
+            # Phase 2c: Process results
+            batch_data = []
+            for i, result in enumerate(results):
+                content, language, relative_path = extraction_batch[i]
+                file_path = self.workspace_root / relative_path
+
+                # O(1) action lookup using pre-built map
+                action = action_map.get(relative_path, "indexed")
+
+                file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                batch_data.append(
+                    (file_path, action, result, relative_path, content, language, file_hash)
+                )
+
+            # Phase 2d: Batch embed ALL symbols from this batch of files at once
             all_symbols = []
             symbol_file_map = []  # Track which file each symbol belongs to
             for _, _, result, relative_path, _, _, _ in batch_data:
