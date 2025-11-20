@@ -448,11 +448,100 @@ async def fast_refs(
             workspace_storage.close()
 
 
+# Import trace tool
+from miller.tools.trace import trace_call_path as trace_impl
+
+async def trace_call_path(
+    symbol_name: str,
+    direction: Literal["upstream", "downstream", "both"] = "downstream",
+    max_depth: int = 3,
+    context_file: Optional[str] = None,
+    output_format: Literal["json", "tree"] = "json",
+    workspace: str = "primary"
+) -> dict[str, Any] | str:
+    """
+    Trace call paths across language boundaries using naming variants.
+
+    Miller's killer feature - traces execution flow across TypeScript → Python → SQL
+    using intelligent naming variant matching (UserService → user_service → users).
+
+    Args:
+        symbol_name: Symbol to trace from (e.g., "UserService", "calculate_age")
+        direction: Trace direction
+            - "upstream": Find callers (who calls this?)
+            - "downstream": Find callees (what does this call?)
+            - "both": Bidirectional trace
+        max_depth: Maximum depth to traverse (1-10, default 3)
+        context_file: Optional file path to disambiguate symbols with same name
+        output_format: Return format
+            - "json": Structured TracePath dict (for programmatic use)
+            - "tree": ASCII tree visualization (for human reading)
+        workspace: Workspace to query ("primary" or workspace_id)
+
+    Returns:
+        TracePath dict with root node, statistics, and metadata if json format.
+        Formatted ASCII tree string if tree format.
+
+    Examples:
+        # Find who calls this function
+        await trace_call_path("handleRequest", direction="upstream")
+
+        # Trace execution flow with visualization
+        await trace_call_path("UserService", direction="downstream", output_format="tree")
+
+        # Deep trace across language boundaries
+        await trace_call_path("IUser", direction="both", max_depth=5)
+
+    Cross-Language Magic:
+        Automatically matches symbols across languages using naming variants:
+        - TypeScript IUser → Python user → SQL users
+        - C# UserDto → Python User → TypeScript userService
+        - Rust user_service → TypeScript UserService
+
+    Note: Currently uses exact name matching. Variant matching coming soon!
+    """
+    from miller.storage import StorageManager
+    from miller.workspace_paths import get_workspace_db_path
+    from miller.workspace_registry import WorkspaceRegistry
+
+    # Get workspace-specific storage
+    if workspace != "primary":
+        registry = WorkspaceRegistry()
+        workspace_entry = registry.get_workspace(workspace)
+        if not workspace_entry:
+            return {
+                "symbol": symbol_name,
+                "error": f"Workspace '{workspace}' not found"
+            }
+        db_path = get_workspace_db_path(workspace)
+        workspace_storage = StorageManager(db_path=str(db_path))
+    else:
+        # Use primary workspace storage
+        workspace_storage = storage
+
+    try:
+        result = await trace_impl(
+            storage=workspace_storage,
+            symbol_name=symbol_name,
+            direction=direction,
+            max_depth=max_depth,
+            context_file=context_file,
+            output_format=output_format,
+            workspace=workspace,
+        )
+        return result
+    finally:
+        # Close workspace storage if it's not the default
+        if workspace != "primary":
+            workspace_storage.close()
+
+
 # Register tools with FastMCP
 mcp.tool()(fast_search)
 mcp.tool()(fast_goto)
 mcp.tool()(get_symbols)
 mcp.tool()(fast_refs)
+mcp.tool()(trace_call_path)
 
 # Register memory tools
 mcp.tool()(checkpoint)
