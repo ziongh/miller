@@ -62,8 +62,10 @@ class TestGetSymbolsToonContent:
         """Test that TOON output includes symbol names."""
         result = await get_symbols(str(temp_python_file), output_format="toon")
 
-        # Should include function/class names from the file
-        assert len(result) > 0
+        # Should include specific symbol names from the file
+        assert "function_one" in result
+        assert "function_two" in result
+        assert "TestClass" in result
 
     @pytest.mark.asyncio
     async def test_toon_includes_symbol_kinds(self, temp_python_file):
@@ -78,8 +80,13 @@ class TestGetSymbolsToonContent:
         """Test that TOON output includes line numbers."""
         result = await get_symbols(str(temp_python_file), output_format="toon")
 
-        # Should include line numbers
-        assert any(char.isdigit() for char in result)
+        # Should include line numbers (check for TOON CSV format with start_line column)
+        # TOON format looks like: [N]{name,kind,...,start_line,...}:\n  value,value,...,2,...
+        assert "start_line" in result, "Should have start_line column in TOON table"
+        # Also verify numeric line numbers appear in the data rows
+        import re
+        # After the header, there should be lines with comma-separated values including line numbers
+        assert re.search(r',\d+,', result), "Should contain numeric line numbers in data rows"
 
 
 class TestGetSymbolsToonTokenReduction:
@@ -128,9 +135,14 @@ class TestGetSymbolsToonEdgeCases:
         minimal = await get_symbols(str(temp_python_file), mode="minimal", output_format="toon")
         full = await get_symbols(str(temp_python_file), mode="full", output_format="toon")
 
+        # Verify all return strings
         assert isinstance(struct, str)
         assert isinstance(minimal, str)
         assert isinstance(full, str)
+
+        # Verify that full mode has more content than structure mode
+        # (full includes code bodies, structure doesn't)
+        assert len(full) >= len(struct), "Full mode should have more content than structure mode"
 
 
 # Fixtures for test files

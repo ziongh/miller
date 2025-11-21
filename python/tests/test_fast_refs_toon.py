@@ -77,8 +77,11 @@ class TestFastRefsToonContent:
         """Test that TOON output includes reference counts."""
         result = await fast_refs("test_function", output_format="toon")
 
-        # Should include numeric counts
-        assert any(char.isdigit() for char in result)
+        # Should include reference count fields (check for specific patterns)
+        import re
+        # Look for patterns like "total_references:15" or "references_count:15"
+        count_pattern = r'(total_references|references_count)[:\s]+\d+'
+        assert re.search(count_pattern, result, re.IGNORECASE), "Should contain reference count fields"
 
 
 class TestFastRefsToonTokenReduction:
