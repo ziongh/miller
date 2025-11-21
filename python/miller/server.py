@@ -473,7 +473,7 @@ async def fast_refs(
         workspace_storage = storage
 
     try:
-        result = find_references(
+        raw_result = find_references(
             storage=workspace_storage,
             symbol_name=symbol_name,
             kind_filter=kind_filter,
@@ -482,29 +482,19 @@ async def fast_refs(
             limit=limit
         )
 
-        # Apply TOON encoding if requested (using standard nested TOON)
-        if output_format in ["toon", "auto"] and isinstance(result, dict):
-            from miller.toon_types import should_use_toon, ToonConfig
-            from toon_format import encode as toon_encode
+        # Use Julie's simple pattern: same structure for both JSON and TOON
+        # fast_refs already returns TOON-friendly nested dicts
+        from miller.toon_utils import create_toonable_result
 
-            # Auto mode: use TOON if ≥10 total references (indicates large result)
-            # Using standard nested TOON (20-40% reduction for 2-level structures)
-            refs_config = ToonConfig(threshold=10, fallback_on_error=True, max_doc_length=100)
-            if output_format == "toon" or should_use_toon("auto", result.get("total_references", 0), refs_config):
-                try:
-                    # Use standard nested TOON encoding (preserves all metadata)
-                    result = toon_encode(result)
-                except Exception as e:
-                    # Graceful fallback to JSON if TOON encoding fails
-                    if refs_config["fallback_on_error"]:
-                        from miller.logging_config import setup_logging
-                        logger = setup_logging()
-                        logger.warning(f"fast_refs TOON encoding failed, falling back to JSON: {e}")
-                        # Keep original dict format
-                    else:
-                        raise
-
-        return result
+        # Simple helper decides TOON vs JSON (same data, different encoding)
+        return create_toonable_result(
+            json_data=raw_result,           # Full result as-is
+            toon_data=raw_result,           # Same structure - TOON handles nesting
+            output_format=output_format,
+            auto_threshold=10,              # 10+ refs → TOON
+            result_count=raw_result.get("total_references", 0),
+            tool_name="fast_refs"
+        )
     finally:
         # Close workspace storage if it's not the default
         if workspace != "primary":
@@ -600,20 +590,18 @@ async def trace_call_path(
             workspace=workspace,
         )
 
-        # Apply TOON encoding if requested
-        if output_format in ["toon", "auto"] and isinstance(result, dict):
-            from miller.toon_types import encode_hierarchical_toon, should_use_toon, ToonConfig
-            from miller.tools.trace_types import TracePathFlattener
+        # Use Julie's simple pattern: TOON handles nested structures natively
+        from miller.toon_utils import create_toonable_result
 
-            # For auto mode, check if result is large enough (≥5 nodes)
-            # Using hierarchical TOON for 63% token reduction (vs 45.6% with nested)
-            trace_config = ToonConfig(threshold=5, fallback_on_error=True, max_doc_length=100)
-            if output_format == "toon" or should_use_toon("auto", result.get("total_nodes", 0), trace_config):
-                # Wrap TracePath in flattener and encode using hierarchical TOON
-                flattener = TracePathFlattener(result)
-                result = encode_hierarchical_toon(flattener, trace_config)
-
-        return result
+        # Simple helper decides TOON vs JSON (same data, TOON handles nesting)
+        return create_toonable_result(
+            json_data=result,               # Full result as-is
+            toon_data=result,               # Same - TOON handles nested TraceNodes
+            output_format=output_format,
+            auto_threshold=5,               # 5+ nodes → TOON
+            result_count=result.get("total_nodes", 0),
+            tool_name="trace_call_path"
+        )
     finally:
         # Close workspace storage if it's not the default
         if workspace != "primary":

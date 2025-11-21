@@ -32,7 +32,7 @@ class TestFastRefsToonModes:
 
         # Should return TOON string
         assert isinstance(result, str)
-        # TOON format markers
+        # TOON format markers (nested structure with metadata)
         assert "symbol:" in result or "total_references:" in result
 
     @pytest.mark.asyncio
@@ -62,6 +62,7 @@ class TestFastRefsToonContent:
         """Test that TOON output includes symbol name."""
         result = await fast_refs("test_function", output_format="toon")
 
+        # Nested TOON format includes metadata
         assert "test_function" in result
 
     @pytest.mark.asyncio
@@ -74,14 +75,11 @@ class TestFastRefsToonContent:
 
     @pytest.mark.asyncio
     async def test_toon_includes_reference_counts(self, storage_with_test_data):
-        """Test that TOON output includes reference counts."""
+        """Test that TOON output includes reference counts and metadata."""
         result = await fast_refs("test_function", output_format="toon")
 
-        # Should include reference count fields (check for specific patterns)
-        import re
-        # Look for patterns like "total_references:15" or "references_count:15"
-        count_pattern = r'(total_references|references_count)[:\s]+\d+'
-        assert re.search(count_pattern, result, re.IGNORECASE), "Should contain reference count fields"
+        # Should include reference counts in metadata
+        assert "total_references:" in result or "references_count:" in result
 
 
 class TestFastRefsToonTokenReduction:
