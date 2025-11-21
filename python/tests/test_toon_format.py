@@ -38,8 +38,9 @@ class TestFormatSymbolForToon:
         assert result["kind"] == "Function"
         assert result["file_path"] == "test.py"
         assert result["start_line"] == 42
-        assert "signature" not in result  # Optional field not present
-        assert "doc_comment" not in result
+        # Schema homogeneity: optional fields included with None values
+        assert result["signature"] is None
+        assert result["doc_comment"] is None
 
     def test_formats_full_symbol_with_all_fields(self):
         """Test formatting symbol with all optional fields."""
@@ -126,7 +127,7 @@ class TestFormatSymbolForToon:
         assert isinstance(result["score"], float)
 
     def test_handles_invalid_score_value(self):
-        """Test that invalid score values default to 0.0."""
+        """Test that invalid score values default to None."""
         symbol = {
             "name": "test",
             "kind": "Function",
@@ -137,10 +138,10 @@ class TestFormatSymbolForToon:
 
         result = format_symbol_for_toon(symbol)
 
-        assert result["score"] == 0.0
+        assert result["score"] is None
 
     def test_omits_empty_optional_fields(self):
-        """Test that empty optional fields are not included."""
+        """Test that empty optional fields are included with None for schema homogeneity."""
         symbol = {
             "name": "test",
             "kind": "Function",
@@ -152,8 +153,9 @@ class TestFormatSymbolForToon:
 
         result = format_symbol_for_toon(symbol)
 
-        assert "signature" not in result  # Empty string not included
-        assert "doc_comment" not in result  # None not included
+        # Schema homogeneity: empty/None fields included with None values
+        assert result["signature"] is None  # Empty string converted to None
+        assert result["doc_comment"] is None  # None preserved
 
 
 class TestShouldUseToon:
