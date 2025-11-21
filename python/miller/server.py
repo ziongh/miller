@@ -11,7 +11,7 @@ stdout/stderr are reserved for JSON-RPC protocol. Use logger instead.
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from fastmcp import FastMCP
 
@@ -199,7 +199,8 @@ async def fast_search(
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 50,
     workspace_id: Optional[str] = None,
-) -> list[dict[str, Any]]:
+    output_format: Literal["json", "toon", "auto"] = "json",
+) -> Union[list[dict[str, Any]], str]:
     """
     Search indexed code using text, semantic, or hybrid methods.
 
@@ -212,6 +213,11 @@ async def fast_search(
     - semantic: Vector similarity (conceptual matches)
     - hybrid: Combines text + semantic with RRF fusion
 
+    Output format (default: json):
+    - json: Returns list of dicts (structured data, default for backward compatibility)
+    - toon: Returns TOON-formatted string (30-60% token reduction)
+    - auto: Uses TOON for ≥20 results, JSON for <20 results
+
     Examples:
         # Auto-detection (recommended)
         fast_search("authentication logic")        # Auto → hybrid
@@ -223,6 +229,10 @@ async def fast_search(
         fast_search("map<int, string>", method="text")  # Force text
         fast_search("user auth", method="semantic")     # Force semantic
 
+        # TOON format (token-efficient output)
+        fast_search("auth", output_format="toon")   # Always TOON
+        fast_search("auth", output_format="auto")   # TOON if ≥20 results
+
         # Workspace-specific search
         fast_search("auth", workspace_id="my-lib_abc123")  # Search specific workspace
 
@@ -232,9 +242,12 @@ async def fast_search(
         limit: Maximum results to return
         workspace_id: Optional workspace ID to search (defaults to primary workspace)
                      Get workspace IDs from manage_workspace(operation="list")
+        output_format: Output format - "json" (default), "toon", or "auto"
 
     Returns:
-        List of matching symbols with scores and metadata
+        - JSON mode: List of symbol dicts
+        - TOON mode: TOON-formatted string
+        - Auto mode: TOON if ≥20 results, JSON if <20 results
 
     Indexing:
         - Primary workspace: Indexed automatically in background after server starts
@@ -286,7 +299,15 @@ async def fast_search(
             }
         )
 
-    return formatted
+    # Apply output format (TOON or JSON)
+    from miller.toon_types import encode_toon, should_use_toon
+
+    if should_use_toon(output_format, len(formatted)):
+        # Return TOON-formatted string
+        return encode_toon(formatted)
+    else:
+        # Return JSON (list of dicts)
+        return formatted
 
 
 async def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
@@ -322,8 +343,9 @@ async def get_symbols(
     max_depth: int = 1,
     target: Optional[str] = None,
     limit: Optional[int] = None,
-    workspace: str = "primary"
-) -> list[dict[str, Any]]:
+    workspace: str = "primary",
+    output_format: Literal["json", "toon", "auto"] = "json"
+) -> Union[list[dict[str, Any]], str]:
     """
     Get file structure with enhanced filtering and modes.
 
@@ -339,9 +361,15 @@ async def get_symbols(
         target: Filter to symbols matching this name (case-insensitive partial match)
         limit: Maximum number of symbols to return
         workspace: Workspace to query ("primary" or workspace_id)
+        output_format: Output format - "json" (default), "toon", or "auto"
+                      - "json": Standard list format
+                      - "toon": TOON-encoded string (30-40% token reduction)
+                      - "auto": TOON if ≥20 symbols, else JSON
 
     Returns:
-        List of symbol dictionaries with metadata based on mode
+        - JSON mode: List of symbol dictionaries
+        - TOON mode: TOON-encoded string (compact table format)
+        - Auto mode: Switches based on result count
 
     Examples:
         # Quick structure overview (no code)
@@ -354,8 +382,9 @@ async def get_symbols(
         await get_symbols("src/utils.py", mode="full", max_depth=2)
     """
     from miller.tools.symbols import get_symbols_enhanced
+    from miller.toon_types import encode_toon, should_use_toon
 
-    return await get_symbols_enhanced(
+    result = await get_symbols_enhanced(
         file_path=file_path,
         mode=mode,
         max_depth=max_depth,
@@ -364,6 +393,14 @@ async def get_symbols(
         workspace=workspace
     )
 
+    # Apply TOON encoding if requested
+    # Auto mode: use TOON if ≥20 symbols (indicates large file)
+    # DEFAULT_TOON_CONFIG has threshold=20, which is perfect for get_symbols
+    if should_use_toon(output_format, len(result)):
+        return encode_toon(result)
+    else:
+        return result
+
 
 async def fast_refs(
     symbol_name: str,
@@ -371,8 +408,9 @@ async def fast_refs(
     include_context: bool = False,
     context_file: Optional[str] = None,
     limit: Optional[int] = None,
-    workspace: str = "primary"
-) -> dict[str, Any]:
+    workspace: str = "primary",
+    output_format: Literal["json", "toon", "auto"] = "json"
+) -> Union[dict[str, Any], str]:
     """
     Find all references to a symbol (where it's used).
 
@@ -387,13 +425,15 @@ async def fast_refs(
         context_file: Optional file path to disambiguate symbols (only find symbols in this file)
         limit: Maximum number of references to return (for pagination with large result sets)
         workspace: Workspace to query ("primary" or workspace_id)
+        output_format: Output format - "json" (default), "toon", or "auto"
+                      - "json": Standard dict format
+                      - "toon": TOON-encoded string (30-40% token reduction)
+                      - "auto": TOON if ≥10 references, else JSON
 
     Returns:
-        Dictionary with:
-        - symbol: str (name queried)
-        - total_references: int (total count, even if limited)
-        - truncated: bool (if results were limited)
-        - files: list of {path, references_count, references: [{line, kind, context}]}
+        - JSON mode: Dictionary with symbol, total_references, truncated, files list
+        - TOON mode: TOON-encoded string (compact format)
+        - Auto mode: Switches based on result size
 
     Examples:
         # Find all references
@@ -441,7 +481,23 @@ async def fast_refs(
             context_file=context_file,
             limit=limit
         )
-        return result
+
+        # Apply TOON encoding if requested
+        from miller.toon_types import should_use_toon, ToonConfig
+        from toon_format import encode as toon_encode
+
+        # Auto mode: use TOON if ≥10 total references (indicates large result)
+        # Create config with lower threshold for refs (10 vs default 20)
+        refs_config = ToonConfig(threshold=10, fallback_on_error=True, max_doc_length=100)
+        if should_use_toon(output_format, result.get("total_references", 0), refs_config):
+            try:
+                # Use raw toon_encode since fast_refs returns a dict, not a list
+                return toon_encode(result)
+            except Exception:
+                # Graceful fallback to JSON if TOON encoding fails
+                return result
+        else:
+            return result
     finally:
         # Close workspace storage if it's not the default
         if workspace != "primary":
@@ -456,7 +512,7 @@ async def trace_call_path(
     direction: Literal["upstream", "downstream", "both"] = "downstream",
     max_depth: int = 3,
     context_file: Optional[str] = None,
-    output_format: Literal["json", "tree"] = "json",
+    output_format: Literal["json", "tree", "toon", "auto"] = "json",
     workspace: str = "primary"
 ) -> dict[str, Any] | str:
     """
@@ -474,13 +530,17 @@ async def trace_call_path(
         max_depth: Maximum depth to traverse (1-10, default 3)
         context_file: Optional file path to disambiguate symbols with same name
         output_format: Return format
-            - "json": Structured TracePath dict (for programmatic use)
+            - "json": Structured TracePath dict (default, for programmatic use)
             - "tree": ASCII tree visualization (for human reading)
+            - "toon": TOON-formatted string (40-50% token reduction)
+            - "auto": Uses TOON for deep traces (≥5 nodes), JSON for shallow
         workspace: Workspace to query ("primary" or workspace_id)
 
     Returns:
-        TracePath dict with root node, statistics, and metadata if json format.
-        Formatted ASCII tree string if tree format.
+        - "json" mode: TracePath dict with root node, statistics, and metadata
+        - "tree" mode: Formatted ASCII tree string
+        - "toon" mode: TOON-encoded string (token-efficient)
+        - "auto" mode: TOON if ≥5 total_nodes, else JSON
 
     Examples:
         # Find who calls this function
@@ -520,15 +580,28 @@ async def trace_call_path(
         workspace_storage = storage
 
     try:
+        # For TOON/auto modes, always get JSON first, then encode
+        actual_format = output_format if output_format in ["json", "tree"] else "json"
+
         result = await trace_impl(
             storage=workspace_storage,
             symbol_name=symbol_name,
             direction=direction,
             max_depth=max_depth,
             context_file=context_file,
-            output_format=output_format,
+            output_format=actual_format,
             workspace=workspace,
         )
+
+        # Apply TOON encoding if requested
+        if output_format in ["toon", "auto"] and isinstance(result, dict):
+            from miller.toon_types import encode_trace_path_toon, should_use_toon, ToonConfig
+
+            # For auto mode, check if result is large enough (≥5 nodes)
+            trace_config = ToonConfig(threshold=5, fallback_on_error=True, max_doc_length=100)
+            if output_format == "toon" or should_use_toon("auto", result.get("total_nodes", 0), trace_config):
+                result = encode_trace_path_toon(result, trace_config)
+
         return result
     finally:
         # Close workspace storage if it's not the default

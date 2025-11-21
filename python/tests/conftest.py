@@ -168,6 +168,104 @@ def clean_server_storage():
 
 
 @pytest.fixture
+def storage_with_test_data():
+    """
+    Populate global server storage with test data for fast_refs tests.
+
+    Creates symbols with different reference counts:
+    - test_function: 15 references (triggers TOON in auto mode)
+    - small_symbol: 5 references (uses JSON in auto mode)
+    - large_symbol: 25 references (triggers TOON in auto mode)
+    """
+    import miller.server as server
+    from miller import miller_core
+
+    # Index test code with multiple symbols and references
+    code = """
+def test_function():
+    '''A function with many references.'''
+    pass
+
+def small_symbol():
+    '''A function with few references.'''
+    pass
+
+def large_symbol():
+    '''A function with many references.'''
+    pass
+
+# Create references to test_function (15 calls)
+def caller1(): test_function()
+def caller2(): test_function()
+def caller3(): test_function()
+def caller4(): test_function()
+def caller5(): test_function()
+def caller6(): test_function()
+def caller7(): test_function()
+def caller8(): test_function()
+def caller9(): test_function()
+def caller10(): test_function()
+def caller11(): test_function()
+def caller12(): test_function()
+def caller13(): test_function()
+def caller14(): test_function()
+def caller15(): test_function()
+
+# Create references to small_symbol (5 calls)
+def small_caller1(): small_symbol()
+def small_caller2(): small_symbol()
+def small_caller3(): small_symbol()
+def small_caller4(): small_symbol()
+def small_caller5(): small_symbol()
+
+# Create references to large_symbol (25 calls)
+def large_caller1(): large_symbol()
+def large_caller2(): large_symbol()
+def large_caller3(): large_symbol()
+def large_caller4(): large_symbol()
+def large_caller5(): large_symbol()
+def large_caller6(): large_symbol()
+def large_caller7(): large_symbol()
+def large_caller8(): large_symbol()
+def large_caller9(): large_symbol()
+def large_caller10(): large_symbol()
+def large_caller11(): large_symbol()
+def large_caller12(): large_symbol()
+def large_caller13(): large_symbol()
+def large_caller14(): large_symbol()
+def large_caller15(): large_symbol()
+def large_caller16(): large_symbol()
+def large_caller17(): large_symbol()
+def large_caller18(): large_symbol()
+def large_caller19(): large_symbol()
+def large_caller20(): large_symbol()
+def large_caller21(): large_symbol()
+def large_caller22(): large_symbol()
+def large_caller23(): large_symbol()
+def large_caller24(): large_symbol()
+def large_caller25(): large_symbol()
+"""
+
+    # Extract and store symbols
+    result = miller_core.extract_file(code, "python", "test_refs.py")
+
+    # Add file to storage
+    server.storage.add_file(
+        file_path="test_refs.py",
+        language="python",
+        content=code,
+        hash="test_hash",
+        size=len(code)
+    )
+
+    # Add symbols and relationships using batch methods
+    server.storage.add_symbols_batch(result.symbols)
+    server.storage.add_relationships_batch(result.relationships)
+
+    return server.storage
+
+
+@pytest.fixture
 def index_file_helper():
     """
     Provide an async helper function for indexing files in tests.
