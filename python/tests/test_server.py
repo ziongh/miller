@@ -270,6 +270,55 @@ class TestGetSymbolsTool:
         assert "start_line" in sym
         assert "signature" in sym
 
+    @pytest.mark.asyncio
+    async def test_get_symbols_code_format_returns_raw_code(self, test_workspace):
+        """Test output_format='code' returns raw source code without metadata."""
+        from miller.server import get_symbols
+
+        file_path = str(test_workspace / "test.py")
+        result = await get_symbols(file_path, mode="minimal", output_format="code")
+
+        # Should return plain string (same as TOON format)
+        assert isinstance(result, str)
+
+        # Should contain file header
+        assert "// ===" in result
+        assert "test.py" in result
+        # Should contain actual code
+        assert "def calculate_age" in result
+        assert "def get_user_profile" in result
+        # Should NOT contain JSON metadata keys
+        assert '"name":' not in result
+        assert '"kind":' not in result
+
+    @pytest.mark.asyncio
+    async def test_get_symbols_code_format_minimal_mode(self, test_workspace):
+        """Test code format with minimal mode only extracts top-level symbols."""
+        from miller.server import get_symbols
+
+        file_path = str(test_workspace / "lib.js")
+        result = await get_symbols(file_path, mode="minimal", output_format="code")
+
+        # Should return plain string
+        assert isinstance(result, str)
+
+        # Should contain top-level function and class
+        assert "function fetchData" in result
+        assert "class UserManager" in result
+
+    @pytest.mark.asyncio
+    async def test_get_symbols_code_format_structure_mode_empty(self, test_workspace):
+        """Test code format with structure mode returns no code bodies."""
+        from miller.server import get_symbols
+
+        file_path = str(test_workspace / "test.py")
+        result = await get_symbols(file_path, mode="structure", output_format="code")
+
+        # Structure mode has no code bodies, so code format should be minimal
+        # Just the file header with no code - returns plain string
+        assert isinstance(result, str)
+        assert "// ===" in result
+
 
 class TestWorkspaceIndexing:
     """Test workspace-level indexing."""

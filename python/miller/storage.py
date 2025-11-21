@@ -438,6 +438,104 @@ class StorageManager:
         """)
         return [dict(row) for row in cursor.fetchall()]
 
+    # Type intelligence queries
+
+    def find_type_implementations(self, type_name: str) -> list[dict]:
+        """
+        Find classes/structs that implement a given interface or type.
+
+        Queries relationships with kind='implements' where the target symbol
+        matches the given type name.
+
+        Args:
+            type_name: Name of the interface/type to find implementations for
+
+        Returns:
+            List of symbol dicts representing implementing classes
+        """
+        cursor = self.conn.execute("""
+            SELECT s.* FROM symbols s
+            JOIN relationships r ON s.id = r.from_symbol_id
+            JOIN symbols target ON r.to_symbol_id = target.id
+            WHERE r.kind = 'implements' AND target.name = ?
+        """, (type_name,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def find_type_hierarchy(self, type_name: str) -> tuple[list[dict], list[dict]]:
+        """
+        Find the type hierarchy for a given type.
+
+        Returns both parent types (what this type extends/implements) and
+        child types (what extends/implements this type).
+
+        Args:
+            type_name: Name of the type to find hierarchy for
+
+        Returns:
+            Tuple of (parents, children) where each is a list of symbol dicts
+        """
+        # Find parents (types that this type extends)
+        parents_cursor = self.conn.execute("""
+            SELECT target.* FROM symbols target
+            JOIN relationships r ON target.id = r.to_symbol_id
+            JOIN symbols s ON r.from_symbol_id = s.id
+            WHERE r.kind = 'extends' AND s.name = ?
+        """, (type_name,))
+        parents = [dict(row) for row in parents_cursor.fetchall()]
+
+        # Find children (types that extend this type)
+        children_cursor = self.conn.execute("""
+            SELECT s.* FROM symbols s
+            JOIN relationships r ON s.id = r.from_symbol_id
+            JOIN symbols target ON r.to_symbol_id = target.id
+            WHERE r.kind = 'extends' AND target.name = ?
+        """, (type_name,))
+        children = [dict(row) for row in children_cursor.fetchall()]
+
+        return parents, children
+
+    def find_functions_returning_type(self, type_name: str) -> list[dict]:
+        """
+        Find functions that return a given type.
+
+        Queries relationships with kind='returns' where the target symbol
+        matches the given type name.
+
+        Args:
+            type_name: Name of the return type to search for
+
+        Returns:
+            List of function symbol dicts
+        """
+        cursor = self.conn.execute("""
+            SELECT s.* FROM symbols s
+            JOIN relationships r ON s.id = r.from_symbol_id
+            JOIN symbols target ON r.to_symbol_id = target.id
+            WHERE r.kind = 'returns' AND target.name = ?
+        """, (type_name,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def find_functions_with_parameter_type(self, type_name: str) -> list[dict]:
+        """
+        Find functions that take a given type as a parameter.
+
+        Queries relationships with kind='parameter' where the target symbol
+        matches the given type name.
+
+        Args:
+            type_name: Name of the parameter type to search for
+
+        Returns:
+            List of function symbol dicts
+        """
+        cursor = self.conn.execute("""
+            SELECT s.* FROM symbols s
+            JOIN relationships r ON s.id = r.from_symbol_id
+            JOIN symbols target ON r.to_symbol_id = target.id
+            WHERE r.kind = 'parameter' AND target.name = ?
+        """, (type_name,))
+        return [dict(row) for row in cursor.fetchall()]
+
     def close(self):
         """Close database connection."""
         self.conn.close()

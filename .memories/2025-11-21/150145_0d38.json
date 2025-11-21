@@ -1,0 +1,25 @@
+{
+  "description": "Implemented two new features: (1) output_format='code' for get_symbols - returns raw treesitter-extracted code without metadata overhead, (2) fast_explore types mode - type intelligence queries for finding implementations, type hierarchy, and function usage patterns",
+  "git": {
+    "branch": "main",
+    "commit": "ef8879c",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/tests/test_server.py",
+      "python/miller/tools/explore.py",
+      "python/tests/test_types_mode.py"
+    ]
+  },
+  "id": "checkpoint_e417e637_bb5a0e",
+  "tags": [
+    "feature",
+    "types-mode",
+    "code-format",
+    "token-efficiency"
+  ],
+  "timestamp": 1763758905,
+  "type": "checkpoint"
+}

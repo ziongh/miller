@@ -358,7 +358,7 @@ async def get_symbols(
     target: Optional[str] = None,
     limit: Optional[int] = None,
     workspace: str = "primary",
-    output_format: Literal["json", "toon", "auto"] = "json"
+    output_format: Literal["json", "toon", "auto", "code"] = "json"
 ) -> Union[list[dict[str, Any]], str]:
     """
     Get file structure with enhanced filtering and modes.
@@ -382,15 +382,17 @@ async def get_symbols(
         target: Filter to symbols matching this name (case-insensitive partial match)
         limit: Maximum number of symbols to return
         workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "json" (default), "toon", or "auto"
+        output_format: Output format - "json" (default), "toon", "auto", or "code"
                       - "json": Standard list format
                       - "toon": TOON-encoded string (30-40% token reduction)
                       - "auto": TOON if ≥20 symbols, else JSON
+                      - "code": Raw source code without metadata (optimal for AI reading)
 
     Returns:
         - JSON mode: List of symbol dictionaries
         - TOON mode: TOON-encoded string (compact table format)
         - Auto mode: Switches based on result count
+        - Code mode: Raw source code string with minimal file header
 
     Examples:
         # Quick structure overview (no code) - USE THIS FIRST!
@@ -401,6 +403,9 @@ async def get_symbols(
 
         # Get complete implementation (only when you really need the code)
         await get_symbols("src/utils.py", mode="full", max_depth=2)
+
+        # Get raw code for AI consumption (minimal tokens, maximum readability)
+        await get_symbols("src/utils.py", mode="minimal", output_format="code")
 
     Workflow: get_symbols(mode="structure") → identify what you need → get_symbols(target="X", mode="full")
     This two-step approach reads ONLY the code you need. Much better than reading entire files!
@@ -417,6 +422,11 @@ async def get_symbols(
         workspace=workspace
     )
 
+    # Handle "code" output format - raw source code without metadata
+    # Return plain string (same as TOON format)
+    if output_format == "code":
+        return _format_code_output(file_path, result)
+
     # Apply TOON encoding if requested
     # Auto mode: use TOON if ≥20 symbols (indicates large file)
     # DEFAULT_TOON_CONFIG has threshold=20, which is perfect for get_symbols
@@ -424,6 +434,89 @@ async def get_symbols(
         return encode_toon(result)
     else:
         return result
+
+
+def _format_code_output(file_path: str, symbols: list[dict[str, Any]]) -> str:
+    """Format symbols as raw code output - optimal for AI reading.
+
+    Returns code bodies separated by blank lines with a minimal file header.
+    This format has zero metadata overhead - just the code the agent needs.
+
+    Only includes meaningful code definitions (functions, classes, methods, etc.),
+    NOT imports or standalone variables.
+
+    Args:
+        file_path: Path to file (for header)
+        symbols: List of symbol dicts with optional 'code_body' field
+
+    Returns:
+        Formatted string: "// === file_path ===\\n\\n<code1>\\n\\n<code2>..."
+    """
+    from pathlib import Path
+
+    # Symbol kinds that represent actual code definitions worth showing
+    # Excludes imports, variables, and other non-definition symbols
+    CODE_DEFINITION_KINDS = {
+        "Function", "Method", "Class", "Struct", "Interface", "Trait",
+        "Enum", "Constructor", "Module", "Namespace", "Type",
+        # Lowercase variants for compatibility
+        "function", "method", "class", "struct", "interface", "trait",
+        "enum", "constructor", "module", "namespace", "type",
+    }
+
+    # Minimal file header
+    output = f"// === {Path(file_path).name} ===\n\n"
+
+    # First pass: collect all code definition symbols with their line ranges
+    code_symbols = []
+    for symbol in symbols:
+        kind = symbol.get("kind", "")
+        if kind in CODE_DEFINITION_KINDS:
+            code_symbols.append({
+                "start_line": symbol.get("start_line", 0),
+                "end_line": symbol.get("end_line", 0),
+                "code_body": symbol.get("code_body"),
+                "parent_id": symbol.get("parent_id"),
+            })
+
+    # Sort by start_line to process in order
+    code_symbols.sort(key=lambda s: s["start_line"])
+
+    # Second pass: filter out nested definitions (those contained within another symbol's range)
+    # This handles cases where parent_id isn't set but the symbol is clearly nested
+    seen_bodies = set()
+    code_bodies = []
+    covered_ranges = []  # List of (start, end) tuples
+
+    for symbol in code_symbols:
+        start = symbol["start_line"]
+        end = symbol["end_line"]
+        code_body = symbol["code_body"]
+        parent_id = symbol["parent_id"]
+
+        # Skip if explicitly has a parent
+        if parent_id:
+            continue
+
+        # Skip if this symbol falls entirely within an already-added symbol's range
+        # (i.e., it's a nested definition even without parent_id)
+        is_nested = any(
+            covered_start < start and end < covered_end
+            for covered_start, covered_end in covered_ranges
+        )
+        if is_nested:
+            continue
+
+        if code_body and code_body not in seen_bodies:
+            seen_bodies.add(code_body)
+            code_bodies.append(code_body)
+            covered_ranges.append((start, end))
+
+    # Join code bodies with blank lines
+    output += "\n\n".join(code_bodies)
+
+    # Ensure single newline at end
+    return output.rstrip() + "\n"
 
 
 async def fast_refs(
@@ -620,16 +713,26 @@ async def trace_call_path(
         workspace_storage = storage
 
     try:
-        # For TOON/auto modes, always get JSON first, then encode
-        actual_format = output_format if output_format in ["json", "tree"] else "json"
+        # For tree format, return directly (it's already a formatted string)
+        if output_format == "tree":
+            return await trace_impl(
+                storage=workspace_storage,
+                symbol_name=symbol_name,
+                direction=direction,
+                max_depth=max_depth,
+                context_file=context_file,
+                output_format="tree",
+                workspace=workspace,
+            )
 
+        # For TOON/auto modes, get JSON first then encode
         result = await trace_impl(
             storage=workspace_storage,
             symbol_name=symbol_name,
             direction=direction,
             max_depth=max_depth,
             context_file=context_file,
-            output_format=actual_format,
+            output_format="json",
             workspace=workspace,
         )
 
@@ -651,12 +754,89 @@ async def trace_call_path(
             workspace_storage.close()
 
 
+async def fast_explore(
+    mode: Literal["types"] = "types",
+    type_name: Optional[str] = None,
+    limit: int = 10,
+    workspace: str = "primary",
+) -> dict[str, Any]:
+    """
+    Explore codebases with different modes - currently supports type intelligence.
+
+    Use this to understand type relationships in OOP codebases:
+    - What classes implement an interface?
+    - What's the inheritance hierarchy?
+    - What functions return or take a specific type?
+
+    Args:
+        mode: Exploration mode - currently only "types" is supported
+        type_name: Name of type to explore (required for types mode)
+              Examples: "IUser", "PaymentProcessor", "BaseService"
+        limit: Maximum results per category (default: 10)
+        workspace: Workspace to query ("primary" or workspace_id)
+
+    Returns:
+        Dict with exploration results:
+        - type_name: The queried type
+        - implementations: Classes implementing this interface
+        - hierarchy: {parents: [...], children: [...]} - inheritance tree
+        - returns: Functions that return this type
+        - parameters: Functions taking this type as parameter
+        - total_found: Total matches across all categories
+
+    Examples:
+        # Find what implements an interface
+        await fast_explore(mode="types", type_name="IUserService")
+
+        # Explore a base class hierarchy
+        await fast_explore(mode="types", type_name="BaseController")
+
+    Type Intelligence Workflow:
+        1. fast_explore(type_name="IService") → See all implementations
+        2. get_symbols on implementing class → Understand the implementation
+        3. trace_call_path on implementation → See how it's used
+    """
+    from miller.tools.explore import fast_explore as explore_impl
+
+    # Get workspace-specific storage if needed
+    if workspace != "primary":
+        from miller.storage import StorageManager
+        from miller.workspace_paths import get_workspace_db_path
+        from miller.workspace_registry import WorkspaceRegistry
+
+        registry = WorkspaceRegistry()
+        workspace_entry = registry.get_workspace(workspace)
+        if not workspace_entry:
+            return {
+                "type_name": type_name,
+                "error": f"Workspace '{workspace}' not found"
+            }
+        db_path = get_workspace_db_path(workspace)
+        workspace_storage = StorageManager(db_path=str(db_path))
+    else:
+        workspace_storage = storage
+
+    try:
+        return await explore_impl(
+            mode=mode,
+            type_name=type_name,
+            storage=workspace_storage,
+            limit=limit,
+        )
+    finally:
+        if workspace != "primary" and workspace_storage:
+            workspace_storage.close()
+
+
 # Register tools with FastMCP
-mcp.tool()(fast_search)
-mcp.tool()(fast_goto)
-mcp.tool()(get_symbols)
-mcp.tool()(fast_refs)
-mcp.tool()(trace_call_path)
+# output_schema=None disables structured content wrapping (avoids {"result": ...} for strings)
+# All tools that return TOON/code strings need this to render properly
+mcp.tool(output_schema=None)(fast_search)      # Returns TOON string
+mcp.tool()(fast_goto)                          # Returns dict only
+mcp.tool(output_schema=None)(get_symbols)      # Returns TOON/code string
+mcp.tool(output_schema=None)(fast_refs)        # Returns TOON string
+mcp.tool(output_schema=None)(trace_call_path)  # Returns TOON/tree string
+mcp.tool()(fast_explore)                       # Returns dict only
 
 # Register memory tools
 mcp.tool()(checkpoint)
@@ -681,6 +861,7 @@ __all__ = [
     "fast_goto",
     "get_symbols",
     "fast_refs",
+    "fast_explore",
     "checkpoint",
     "recall",
     "plan",
