@@ -143,7 +143,7 @@ pub fn extract_files_batch(
     let workspace_root_path = Path::new(&workspace_root);
 
     // Release GIL for parallel processing
-    let results = py.allow_threads(move || {
+    let results = py.detach(move || {
         files
             .par_iter()
             .map(|(content, _language, file_path)| {

@@ -32,6 +32,14 @@ async def checkpoint(
     """
     Create immutable development memory checkpoint.
 
+    USE THIS PROACTIVELY! Your memory persists across sessions. When you discover
+    something important, make a decision, or learn something new - checkpoint it!
+
+    Future you (or another agent) will thank you for leaving breadcrumbs.
+
+    IMPORTANT: Don't wait to be asked - checkpoint important findings, decisions,
+    and learnings as you go. This builds a knowledge base that makes future work faster.
+
     Checkpoints are stored in `.memories/YYYY-MM-DD/` (UTC timezone) with
     automatic git context capture (branch, commit, dirty status, changed files).
 
@@ -44,11 +52,17 @@ async def checkpoint(
     Returns:
         Checkpoint ID (format: {type}_{8hex}_{6hex})
 
-    Examples:
-        # Simple checkpoint
-        >>> id = await checkpoint(ctx, "Fixed authentication bug")
+    When to Checkpoint:
+        - After fixing a tricky bug → type="checkpoint"
+        - When making an architectural choice → type="decision"
+        - When discovering how something works → type="learning"
+        - When noticing something important → type="observation"
 
-        # With tags and type
+    Examples:
+        # After fixing something
+        >>> id = await checkpoint(ctx, "Fixed authentication bug - was missing await on token validation")
+
+        # After making a decision
         >>> id = await checkpoint(
         ...     ctx,
         ...     "Decided to use PostgreSQL over MongoDB for better transactions",
@@ -56,18 +70,13 @@ async def checkpoint(
         ...     type="decision"
         ... )
 
-        # Learning checkpoint
+        # After learning something
         >>> id = await checkpoint(
         ...     ctx,
         ...     "Learned that async context managers need __aenter__ and __aexit__",
         ...     tags=["python", "async"],
         ...     type="learning"
         ... )
-
-    Storage:
-        - File: .memories/2025-11-18/182824_4ec9.json
-        - Format: Pretty-printed JSON (indent=2, sorted keys)
-        - Git-friendly: Trailing newline for clean diffs
     """
     # Generate checkpoint ID and timestamp
     checkpoint_id = generate_checkpoint_id(type)
@@ -107,6 +116,11 @@ async def recall(
     """
     Retrieve development memory checkpoints with filtering and semantic search.
 
+    USE THIS WHEN RESUMING WORK OR INVESTIGATING PAST DECISIONS!
+
+    Your checkpoints persist across sessions. When you're working on something related
+    to past work, recall what you (or previous agents) learned. Don't reinvent the wheel!
+
     Two modes:
     1. Time-based (fast filesystem scan): When no query provided
     2. Semantic search (indexed): When query provided - uses hybrid text+semantic search
@@ -130,25 +144,25 @@ async def recall(
         - tags: List of tags
         - git: Dict with branch, commit, dirty, files_changed
 
+    When to Recall:
+        - Starting work on a feature → recall related past work
+        - Debugging a bug → recall past fixes in the area
+        - Making a decision → recall past architectural decisions
+        - Onboarding to unfamiliar code → recall learnings about it
+
     Examples:
-        # Time-based filtering (filesystem scan - fast)
+        # What did we do recently?
         >>> memories = await recall(ctx)  # Last 10 memories
-        >>> recent = await recall(ctx, since="2025-11-17")
+
+        # What decisions did we make?
         >>> decisions = await recall(ctx, type="decision", limit=20)
 
-        # Semantic search (NEW - uses indexed embeddings)
+        # Semantic search - find related work
         >>> auth_bugs = await recall(ctx, query="authentication bug we fixed")
         >>> db_choices = await recall(ctx, query="why PostgreSQL", type="decision")
-        >>> perf = await recall(ctx, query="performance optimization", since="2025-11-01")
 
-        # Combined (semantic + time/type filters)
-        >>> await recall(ctx, query="startup indexing", since="2d", limit=20)
-
-    Notes:
-        - Semantic search requires memories to be indexed (file watcher handles this)
-        - Returns empty list [] if no memories found
-        - Gracefully handles corrupt JSON files (skips them)
-        - Date strings in local timezone, converted to UTC automatically
+    The memories are complete and accurate - trust them! Past decisions and learnings
+    are valuable context for current work.
     """
     # SEMANTIC SEARCH MODE: Use indexed embeddings for natural language queries
     if query:
@@ -336,16 +350,19 @@ async def plan(
     """
     Manage mutable development plans.
 
-    Plans are stored in `.memories/plans/` as mutable documents that track
-    development goals and progress. Enforces single-active-plan pattern.
+    USE THIS TO TRACK COMPLEX TASKS! Plans help you stay organized and provide
+    context when resuming work. Only one plan can be active at a time - this
+    keeps you focused.
+
+    Plans are stored in `.memories/plans/` and persist across sessions.
 
     Actions:
-        - save: Create new plan
+        - save: Create new plan (start a new task)
         - get: Retrieve specific plan by ID
-        - list: See all plans (optionally filter by status)
-        - activate: Set as active plan (deactivates all others)
-        - update: Modify existing plan (content, status, etc.)
-        - complete: Mark plan as done (adds completed_at timestamp)
+        - list: See all plans (check what's in progress)
+        - activate: Set as active plan (switch focus)
+        - update: Modify existing plan (track progress)
+        - complete: Mark plan as done (celebrate!)
 
     Args:
         ctx: FastMCP context
@@ -364,53 +381,37 @@ async def plan(
         - update: Updated plan dict
         - complete: Completed plan dict (with completed_at timestamp)
 
+    Workflow:
+        1. plan(action="save", title="Feature X") → Start tracking
+        2. Work on the feature, update plan as you go
+        3. plan(action="update", id="...", content="## Progress\\n...") → Track progress
+        4. plan(action="complete", id="...") → Mark done when finished
+
     Examples:
-        # Create and activate a plan
+        # Start a new task
         >>> plan_result = await plan(
         ...     ctx,
         ...     action="save",
         ...     title="Add Search Feature",
         ...     content="## Goal\\nImplement full-text search\\n\\n## Tasks\\n- [ ] FTS index\\n- [ ] UI"
         ... )
-        >>> print(plan_result["id"])  # "plan_add-search-feature"
 
-        # List all active plans
+        # Check what's active
         >>> active_plans = await plan(ctx, action="list", status="active")
 
-        # Get specific plan
-        >>> my_plan = await plan(ctx, action="get", id="plan_add-search-feature")
-
-        # Update plan content
+        # Update progress
         >>> updated = await plan(
         ...     ctx,
         ...     action="update",
         ...     id="plan_add-search-feature",
-        ...     content="## Goal\\n...updated content..."
+        ...     content="## Goal\\n...\\n\\n## Done\\n- [x] FTS index\\n\\n## Remaining\\n- [ ] UI"
         ... )
 
-        # Complete a plan
+        # Mark complete when done
         >>> completed = await plan(ctx, action="complete", id="plan_add-search-feature")
-        >>> print(completed["completed_at"])  # Unix timestamp
 
-        # Activate different plan (deactivates others)
-        >>> await plan(ctx, action="activate", id="plan_refactor-core")
-
-    Storage:
-        - File: .memories/plans/plan_{slug}.json
-        - Format: Pretty-printed JSON (indent=2, sorted keys)
-        - Single-active enforcement: Only one plan can be active at a time
-
-    Plan Structure:
-        {
-          "id": "plan_add-search-feature",
-          "timestamp": 1763488903,
-          "type": "plan",
-          "title": "Add Search Feature",
-          "status": "active",
-          "content": "## Goal\\n...",
-          "git": {...},
-          "completed_at": 1763490000  // Only if status="completed"
-        }
+    Note: Single-active enforcement means activating a new plan deactivates others.
+    This keeps you focused on one task at a time.
     """
     plans_dir = Path(".memories/plans")
 
