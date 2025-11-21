@@ -482,22 +482,29 @@ async def fast_refs(
             limit=limit
         )
 
-        # Apply TOON encoding if requested
-        from miller.toon_types import should_use_toon, ToonConfig
-        from toon_format import encode as toon_encode
+        # Apply TOON encoding if requested (using standard nested TOON)
+        if output_format in ["toon", "auto"] and isinstance(result, dict):
+            from miller.toon_types import should_use_toon, ToonConfig
+            from toon_format import encode as toon_encode
 
-        # Auto mode: use TOON if ≥10 total references (indicates large result)
-        # Create config with lower threshold for refs (10 vs default 20)
-        refs_config = ToonConfig(threshold=10, fallback_on_error=True, max_doc_length=100)
-        if should_use_toon(output_format, result.get("total_references", 0), refs_config):
-            try:
-                # Use raw toon_encode since fast_refs returns a dict, not a list
-                return toon_encode(result)
-            except Exception:
-                # Graceful fallback to JSON if TOON encoding fails
-                return result
-        else:
-            return result
+            # Auto mode: use TOON if ≥10 total references (indicates large result)
+            # Using standard nested TOON (20-40% reduction for 2-level structures)
+            refs_config = ToonConfig(threshold=10, fallback_on_error=True, max_doc_length=100)
+            if output_format == "toon" or should_use_toon("auto", result.get("total_references", 0), refs_config):
+                try:
+                    # Use standard nested TOON encoding (preserves all metadata)
+                    result = toon_encode(result)
+                except Exception as e:
+                    # Graceful fallback to JSON if TOON encoding fails
+                    if refs_config["fallback_on_error"]:
+                        from miller.logging_config import setup_logging
+                        logger = setup_logging()
+                        logger.warning(f"fast_refs TOON encoding failed, falling back to JSON: {e}")
+                        # Keep original dict format
+                    else:
+                        raise
+
+        return result
     finally:
         # Close workspace storage if it's not the default
         if workspace != "primary":
@@ -595,12 +602,16 @@ async def trace_call_path(
 
         # Apply TOON encoding if requested
         if output_format in ["toon", "auto"] and isinstance(result, dict):
-            from miller.toon_types import encode_trace_path_toon, should_use_toon, ToonConfig
+            from miller.toon_types import encode_hierarchical_toon, should_use_toon, ToonConfig
+            from miller.tools.trace_types import TracePathFlattener
 
             # For auto mode, check if result is large enough (≥5 nodes)
+            # Using hierarchical TOON for 63% token reduction (vs 45.6% with nested)
             trace_config = ToonConfig(threshold=5, fallback_on_error=True, max_doc_length=100)
             if output_format == "toon" or should_use_toon("auto", result.get("total_nodes", 0), trace_config):
-                result = encode_trace_path_toon(result, trace_config)
+                # Wrap TracePath in flattener and encode using hierarchical TOON
+                flattener = TracePathFlattener(result)
+                result = encode_hierarchical_toon(flattener, trace_config)
 
         return result
     finally:

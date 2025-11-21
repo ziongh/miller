@@ -1,0 +1,32 @@
+{
+  "description": "Phase 2 trace_call_path TOON complete! \ud83c\udf89 Added toon/auto modes to trace_call_path with 5-node threshold. Implemented recursive format_trace_node_for_toon and encode_trace_path_toon helpers. All 8 tests passing. Integration: intercepts JSON output, encodes to TOON before return. Backward compatible (defaults to json). Expected 40-50% token reduction for deep trees. Files: extended toon_types.py (+160 lines), updated server.py trace_call_path, test_trace_toon.py (8 tests). Next: measure actual reduction, extend to fast_refs/get_symbols",
+  "git": {
+    "branch": "main",
+    "commit": "57f38e0",
+    "dirty": true,
+    "files_changed": [
+      "TODO.md",
+      "pyproject.toml",
+      "python/miller/server.py",
+      ".memories/2025-11-20/143714_6c59.json",
+      ".memories/2025-11-20/144744_f6d3.json",
+      ".memories/2025-11-20/144942_879b.json",
+      ".memories/plans/plan_toon-format-migration-fastsearch-pilot.json",
+      "python/miller/toon_types.py",
+      "python/tests/measure_token_reduction.py",
+      "python/tests/test_fast_search_toon.py",
+      "python/tests/test_toon_format.py",
+      "python/tests/test_trace_toon.py"
+    ]
+  },
+  "id": "checkpoint_a2f48e00_812aff",
+  "tags": [
+    "toon-format",
+    "trace-call-path",
+    "phase-2-complete",
+    "nested-encoding",
+    "recursive-trees"
+  ],
+  "timestamp": 1763672059,
+  "type": "checkpoint"
+}

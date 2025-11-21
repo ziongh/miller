@@ -6,6 +6,7 @@ This file serves as the specification before implementation (TDD Phase 1).
 """
 
 from typing import Literal, Optional, TypedDict
+from miller.hierarchical_toon import FlatNode, flatten_tree_recursive
 
 
 class TraceNode(TypedDict):
@@ -254,3 +255,57 @@ Expected Outputs:
      "error": "Workspace 'invalid_workspace' not found"
    }
 """
+
+
+class TracePathFlattener:
+    """
+    Wrapper for TracePath that implements hierarchical TOON flattening.
+
+    This class provides the flatten() method needed for hierarchical TOON encoding,
+    converting a nested TracePath structure into a flat table with parent_id references.
+    """
+
+    def __init__(self, trace_path: TracePath):
+        """
+        Initialize flattener with a TracePath dict.
+
+        Args:
+            trace_path: TracePath dict with nested TraceNode structure
+        """
+        self.trace_path = trace_path
+
+    def flatten(self) -> list[FlatNode]:
+        """
+        Flatten TracePath into single flat table with parent_id references.
+
+        Performs depth-first traversal of the TraceNode tree, assigning unique IDs
+        and tracking parent_id references for reconstruction.
+
+        Returns:
+            List of FlatNode objects ready for TOON encoding
+
+        Example output:
+            [
+                FlatNode(id=0, parent_id=None, group=0, level=0, data={name: "UserService", ...}),
+                FlatNode(id=1, parent_id=0, group=0, level=1, data={name: "user_service", ...}),
+                FlatNode(id=2, parent_id=1, group=0, level=2, data={name: "UserDto", ...}),
+            ]
+        """
+        result: list[FlatNode] = []
+        id_counter = [0]  # Use list for mutable reference
+
+        # Flatten the root node and its children
+        if "root" in self.trace_path and self.trace_path["root"]:
+            root = self.trace_path["root"]
+            # Convert TraceNode to dict and flatten recursively
+            flatten_tree_recursive(
+                node=dict(root),  # Convert TypedDict to dict
+                result=result,
+                id_counter=id_counter,
+                parent_id=None,  # Root has no parent
+                group=0,  # Single tree, group=0
+                level=0,  # Root is level 0
+                children_key="children",
+            )
+
+        return result

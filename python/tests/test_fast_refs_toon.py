@@ -94,10 +94,19 @@ class TestFastRefsToonTokenReduction:
         import json
         json_str = json.dumps(json_result)
 
+        # First verify toon_result is actually a string (not a list or other type)
+        assert isinstance(toon_result, str), f"TOON format must return string, got {type(toon_result)}"
+
         # TOON should be more compact
-        assert len(toon_result) < len(json_str)
+        print(f"\n*** Token Reduction Measurement ***")
+        print(f"JSON size: {len(json_str)} chars")
+        print(f"TOON size: {len(toon_result)} chars")
         reduction_pct = (1 - len(toon_result) / len(json_str)) * 100
-        assert reduction_pct > 15  # Should achieve at least 15% reduction (adjusted from 20%)
+        print(f"Reduction: {reduction_pct:.1f}%")
+        print(f"**********************************\n")
+
+        assert len(toon_result) < len(json_str), f"TOON ({len(toon_result)} chars) should be smaller than JSON ({len(json_str)} chars)"
+        assert reduction_pct > 15, f"Expected >15% reduction, got {reduction_pct:.1f}%"
 
 
 class TestFastRefsToonEdgeCases:
@@ -110,7 +119,7 @@ class TestFastRefsToonEdgeCases:
 
         # Should handle empty gracefully
         assert isinstance(result, str)
-        assert "0" in result or "No" in result.lower()
+        assert "0" in result or "no" in result.lower()
 
     @pytest.mark.asyncio
     async def test_default_mode_is_json(self, storage_with_test_data):
