@@ -72,7 +72,7 @@ class ToonConfig(TypedDict):
 
 # Default TOON configuration (matches Julie's proven settings)
 DEFAULT_TOON_CONFIG: ToonConfig = {
-    "threshold": 5,  # ≥5 results → use TOON in auto mode (matches Julie)
+    "threshold": 20,  # ≥20 results → use TOON in auto mode (fast_search, get_symbols)
     "fallback_on_error": True,  # Graceful fallback to JSON
     "max_doc_length": 100,  # Truncate long docstrings
 }
@@ -242,9 +242,9 @@ def should_use_toon(
         False
         >>> should_use_toon("toon", 2)
         True
-        >>> should_use_toon("auto", 10)  # ≥5 threshold
+        >>> should_use_toon("auto", 25)  # ≥20 threshold
         True
-        >>> should_use_toon("auto", 3)  # <5 threshold
+        >>> should_use_toon("auto", 15)  # <20 threshold
         False
     """
     if output_format == "json":

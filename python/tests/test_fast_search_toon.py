@@ -42,8 +42,8 @@ class TestFastSearchOutputFormat:
 
         # Should have correct type annotation
         param = sig.parameters["output_format"]
-        # Default should be "json" for backward compatibility
-        assert param.default == "json", "output_format should default to 'json'"
+        # Default is "auto" - automatically uses TOON for large results (best UX)
+        assert param.default == "auto", "output_format should default to 'auto'"
 
     def test_json_mode_returns_list(self):
         """Test that output_format='json' returns list even with many results."""
@@ -83,7 +83,7 @@ class TestFastSearchOutputFormat:
         assert "output_format" in sig.parameters
 
     def test_backward_compatibility_without_output_format(self):
-        """Test that fast_search works without output_format (defaults to JSON)."""
+        """Test that fast_search works without output_format (has default value)."""
         from miller.server import fast_search
         import inspect
 
@@ -92,7 +92,8 @@ class TestFastSearchOutputFormat:
         # Should have output_format parameter with default
         param = sig.parameters.get("output_format")
         assert param is not None
-        assert param.default == "json", "Must default to 'json' for backward compatibility"
+        # Default is "auto" - best UX, automatically uses TOON for large results
+        assert param.default == "auto", "Must have default value for backward compatibility"
 
 
 class TestFastSearchReturnType:

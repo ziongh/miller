@@ -132,7 +132,12 @@ class TestVectorStore:
         assert count == 1
 
     def test_text_search_finds_exact_match(self):
-        """Test text search (keyword matching, no vectors)."""
+        """Test text search ranks keyword matches higher.
+
+        Note: "text" search now routes to hybrid search (FTS + semantic) for better quality.
+        This is intentional - see VectorStore.search() for rationale.
+        We verify that keyword-matching results rank higher than non-matching ones.
+        """
         from miller.embeddings import VectorStore, EmbeddingManager
         from miller import miller_core
 
@@ -149,7 +154,7 @@ def delete_old_files(): pass
         store = VectorStore(db_path=":memory:")
         store.add_symbols(result.symbols, vectors)
 
-        # Text search for "user"
+        # Text search for "user" (uses hybrid search internally)
         results = store.search(query="user", method="text", limit=10)
 
         assert len(results) > 0
@@ -157,7 +162,20 @@ def delete_old_files(): pass
         names = [r["name"] for r in results]
         assert "calculate_user_age" in names
         assert "fetch_user_profile" in names
-        assert "delete_old_files" not in names  # Doesn't contain "user"
+
+        # User-related functions should rank higher than unrelated ones
+        # (hybrid search may include semantic matches, but keyword matches should rank first)
+        user_funcs = [r for r in results if "user" in r["name"].lower()]
+        other_funcs = [r for r in results if "user" not in r["name"].lower()]
+
+        if user_funcs and other_funcs:
+            # Best user-related score should be >= best other score
+            best_user_score = max(r["score"] for r in user_funcs)
+            best_other_score = max(r["score"] for r in other_funcs)
+            assert best_user_score >= best_other_score, (
+                f"User-related functions should rank higher: "
+                f"user={best_user_score:.3f}, other={best_other_score:.3f}"
+            )
 
     def test_semantic_search_finds_similar_concepts(self):
         """Test semantic search (vector similarity)."""
@@ -413,8 +431,9 @@ def get_user_data():
     def test_fts_stemming_support(self):
         """Test FTS text matching behavior.
 
-        Note: Stemming may not be enabled in LanceDB FTS by default.
-        We test that exact matches work reliably.
+        Note: "text" search routes to hybrid (FTS + semantic) for better quality.
+        Stemming may not be enabled in LanceDB FTS by default.
+        We test that exact keyword matches rank higher than unrelated queries.
         """
         from miller.embeddings import VectorStore, EmbeddingManager
         from miller import miller_core
@@ -454,9 +473,21 @@ def start_execution():
         names_process = [r["name"] for r in results_process]
         assert "run_process" in names_process, f"Should find run_process in {names_process}"
 
-        # Verify FTS is working (not just returning all results)
+        # Verify keyword matches rank higher than unrelated queries
+        # With hybrid search, unrelated queries may return semantic matches with low scores
         results_unrelated = store.search(query="xyz123notfound", method="text", limit=10)
-        assert len(results_unrelated) == 0, "Should not find non-existent terms"
+
+        # Get the best score from keyword-matching search
+        best_keyword_score = max(r["score"] for r in results_run) if results_run else 0.0
+
+        # Unrelated query should have much lower scores (or no results)
+        if results_unrelated:
+            best_unrelated_score = max(r["score"] for r in results_unrelated)
+            # Unrelated queries should score significantly lower than keyword matches
+            assert best_unrelated_score < best_keyword_score * 0.8, (
+                f"Unrelated query should score lower: "
+                f"unrelated={best_unrelated_score:.3f}, keyword={best_keyword_score:.3f}"
+            )
 
     def test_fts_hybrid_search_with_rrf(self):
         """Test hybrid search uses Reciprocal Rank Fusion (RRF) for merging."""

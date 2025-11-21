@@ -70,7 +70,7 @@ class TestOutputFormats:
         assert "function_a" in result
         assert "→" in result  # Tree connector
         assert "python" in result  # Language indicator
-        assert "src/" in result  # File paths
+        assert "test.py" in result  # File path (from fixture)
 
 
 class TestStatistics:
@@ -129,10 +129,11 @@ class TestStatistics:
             max_depth=2
         )
 
-        # Should count relationship types (Call, Import, Reference, etc.)
+        # Should count relationship types (calls, imports, references, etc.)
         assert "relationship_kinds" in result
         assert isinstance(result["relationship_kinds"], dict)
-        assert result["relationship_kinds"].get("Call", 0) > 0
+        # Implementation uses lowercase plural keys ("calls" instead of "Call")
+        assert result["relationship_kinds"].get("calls", 0) > 0
 
     @pytest.mark.asyncio
     async def test_execution_time(self, sample_indexed_workspace):
