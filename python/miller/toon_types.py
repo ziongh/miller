@@ -58,7 +58,7 @@ class ToonConfig(TypedDict):
     Configuration for TOON encoding behavior.
 
     threshold: Number of results where auto mode switches from JSON to TOON.
-               Default: 20 results (based on Julie's proven threshold)
+               Default: 5 results (matches Julie's proven threshold)
     fallback_on_error: If True, return JSON when TOON encoding fails.
                        Default: True (graceful degradation)
     max_doc_length: Maximum doc_comment length to include in TOON output.
@@ -72,7 +72,7 @@ class ToonConfig(TypedDict):
 
 # Default TOON configuration (matches Julie's proven settings)
 DEFAULT_TOON_CONFIG: ToonConfig = {
-    "threshold": 20,  # ≥20 results → use TOON in auto mode
+    "threshold": 5,  # ≥5 results → use TOON in auto mode (matches Julie)
     "fallback_on_error": True,  # Graceful fallback to JSON
     "max_doc_length": 100,  # Truncate long docstrings
 }
@@ -240,11 +240,11 @@ def should_use_toon(
     Examples:
         >>> should_use_toon("json", 100)
         False
-        >>> should_use_toon("toon", 5)
+        >>> should_use_toon("toon", 2)
         True
-        >>> should_use_toon("auto", 25)  # ≥20 threshold
+        >>> should_use_toon("auto", 10)  # ≥5 threshold
         True
-        >>> should_use_toon("auto", 15)  # <20 threshold
+        >>> should_use_toon("auto", 3)  # <5 threshold
         False
     """
     if output_format == "json":

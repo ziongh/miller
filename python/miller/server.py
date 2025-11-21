@@ -197,9 +197,9 @@ logger.info("✓ FastMCP server created (components will initialize post-handsha
 async def fast_search(
     query: str,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
-    limit: int = 50,
+    limit: int = 20,
     workspace_id: Optional[str] = None,
-    output_format: Literal["json", "toon", "auto"] = "json",
+    output_format: Literal["json", "toon", "auto"] = "auto",
 ) -> Union[list[dict[str, Any]], str]:
     """
     Search indexed code using text, semantic, or hybrid methods.
@@ -213,14 +213,14 @@ async def fast_search(
     - semantic: Vector similarity (conceptual matches)
     - hybrid: Combines text + semantic with RRF fusion
 
-    Output format (default: json):
-    - json: Returns list of dicts (structured data, default for backward compatibility)
-    - toon: Returns TOON-formatted string (30-60% token reduction)
-    - auto: Uses TOON for ≥20 results, JSON for <20 results
+    Output format (default: auto):
+    - auto: Smart mode - uses TOON for ≥5 results, JSON for <5 results (RECOMMENDED)
+    - json: Always returns list of dicts (structured data)
+    - toon: Always returns TOON-formatted string (30-60% token reduction)
 
     Examples:
-        # Auto-detection (recommended)
-        fast_search("authentication logic")        # Auto → hybrid
+        # Auto-detection (recommended - uses best format automatically)
+        fast_search("authentication logic")        # Auto → hybrid, TOON if ≥5 results
         fast_search(": BaseClass")                 # Auto → pattern
         fast_search("ILogger<UserService>")        # Auto → pattern
         fast_search("[Fact]")                      # Auto → pattern
@@ -229,9 +229,9 @@ async def fast_search(
         fast_search("map<int, string>", method="text")  # Force text
         fast_search("user auth", method="semantic")     # Force semantic
 
-        # TOON format (token-efficient output)
+        # Format control (rarely needed - auto mode is best)
+        fast_search("auth", output_format="json")   # Always JSON
         fast_search("auth", output_format="toon")   # Always TOON
-        fast_search("auth", output_format="auto")   # TOON if ≥20 results
 
         # Workspace-specific search
         fast_search("auth", workspace_id="my-lib_abc123")  # Search specific workspace
@@ -239,15 +239,15 @@ async def fast_search(
     Args:
         query: Search query (code patterns, keywords, or natural language)
         method: Search method (auto-detects by default)
-        limit: Maximum results to return
+        limit: Maximum results to return (default: 20)
         workspace_id: Optional workspace ID to search (defaults to primary workspace)
                      Get workspace IDs from manage_workspace(operation="list")
-        output_format: Output format - "json" (default), "toon", or "auto"
+        output_format: Output format - "auto" (default), "json", or "toon"
 
     Returns:
         - JSON mode: List of symbol dicts
-        - TOON mode: TOON-formatted string
-        - Auto mode: TOON if ≥20 results, JSON if <20 results
+        - TOON mode: TOON-formatted string (40-60% fewer tokens)
+        - Auto mode: TOON if ≥5 results, JSON if <5 results
 
     Indexing:
         - Primary workspace: Indexed automatically in background after server starts
