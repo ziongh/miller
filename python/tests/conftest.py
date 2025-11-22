@@ -299,15 +299,16 @@ def index_file_helper():
                 return False
 
             # Extract symbols
-            relative_path = file_path.name  # Use filename for test files
-            result = server.miller_core.extract_file(content, language, relative_path)
+            # Use absolute path so context extraction can find the file
+            stored_path = str(file_path.resolve())
+            result = server.miller_core.extract_file(content, language, stored_path)
 
             # Compute hash
             file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
             # Store file metadata
             server.storage.add_file(
-                file_path=relative_path,
+                file_path=stored_path,
                 language=language,
                 content=content,
                 hash=file_hash,

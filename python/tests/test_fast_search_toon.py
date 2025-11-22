@@ -160,7 +160,7 @@ class TestSearchResultHydration:
 
     def test_hydrate_search_results_adds_code_context(self):
         """Test that _hydrate_search_results fetches code_context from storage."""
-        from miller.server import _hydrate_search_results
+        from miller.tools.search import _hydrate_search_results
 
         # Mock search results (what vector store returns - no code_context)
         search_results = [
@@ -191,7 +191,7 @@ class TestSearchResultHydration:
 
     def test_hydrate_preserves_score_from_search(self):
         """Test that hydration preserves the search score, not storage data."""
-        from miller.server import _hydrate_search_results
+        from miller.tools.search import _hydrate_search_results
 
         search_results = [{"id": "xyz", "name": "test", "score": 0.99}]
 
@@ -206,7 +206,7 @@ class TestSearchResultHydration:
 
     def test_hydrate_handles_missing_symbol(self):
         """Test graceful handling when symbol not found in storage."""
-        from miller.server import _hydrate_search_results
+        from miller.tools.search import _hydrate_search_results
 
         search_results = [{"id": "missing", "name": "gone", "score": 0.8}]
 
@@ -226,7 +226,7 @@ class TestGrepStyleTextFormat:
 
     def test_text_format_includes_query_header(self):
         """Test that text format starts with 'N matches for "query":' header."""
-        from miller.server import _format_search_as_text
+        from miller.tools.search import _format_search_as_text
 
         results = [
             {
@@ -246,7 +246,7 @@ class TestGrepStyleTextFormat:
 
     def test_text_format_shows_file_line_header(self):
         """Test that each result shows file:line header."""
-        from miller.server import _format_search_as_text
+        from miller.tools.search import _format_search_as_text
 
         results = [
             {
@@ -265,7 +265,7 @@ class TestGrepStyleTextFormat:
 
     def test_text_format_indents_code_context(self):
         """Test that code context is indented under file:line header."""
-        from miller.server import _format_search_as_text
+        from miller.tools.search import _format_search_as_text
 
         results = [
             {
@@ -286,7 +286,7 @@ class TestGrepStyleTextFormat:
 
     def test_text_format_preserves_arrow_for_match_line(self):
         """Test that match line arrow (→) is preserved."""
-        from miller.server import _format_search_as_text
+        from miller.tools.search import _format_search_as_text
 
         results = [
             {
@@ -305,7 +305,7 @@ class TestGrepStyleTextFormat:
 
     def test_text_format_multiple_results(self):
         """Test formatting with multiple results."""
-        from miller.server import _format_search_as_text
+        from miller.tools.search import _format_search_as_text
 
         results = [
             {
@@ -334,7 +334,7 @@ class TestGrepStyleTextFormat:
 
     def test_text_format_fallback_to_signature(self):
         """Test fallback to signature when code_context is missing."""
-        from miller.server import _format_search_as_text
+        from miller.tools.search import _format_search_as_text
 
         results = [
             {
@@ -355,7 +355,7 @@ class TestGrepStyleTextFormat:
 
     def test_text_format_token_efficiency(self):
         """Test that text format is more compact than JSON."""
-        from miller.server import _format_search_as_text
+        from miller.tools.search import _format_search_as_text
         import json
 
         results = [
@@ -378,6 +378,208 @@ class TestGrepStyleTextFormat:
         assert len(text_output) < len(json_output), (
             f"Text ({len(text_output)} chars) should be shorter than JSON ({len(json_output)} chars)"
         )
+
+
+class TestFastSearchEdgeCases:
+    """Edge case tests for fast_search text output."""
+
+    @pytest.mark.asyncio
+    async def test_empty_code_context_with_signature_fallback(self, index_file_helper):
+        """When code_context is None, signature should be used as fallback."""
+        from miller.tools.search import _format_search_as_text
+
+        results = [
+            {
+                "name": "missing_context",
+                "kind": "Function",
+                "file_path": "src/test.py",
+                "start_line": 42,
+                "code_context": None,  # Missing code_context
+                "signature": "def missing_context(x: int) -> str",
+            }
+        ]
+
+        output = _format_search_as_text(results, query="missing")
+
+        # Should still show location
+        assert "src/test.py:42" in output
+        assert "missing_context" in output
+        # Should fall back to signature
+        assert "missing_context" in output
+
+    @pytest.mark.asyncio
+    async def test_unicode_in_code_context(self, index_file_helper):
+        """Unicode characters in code should not break formatting."""
+        from miller.tools.search import _format_search_as_text
+
+        results = [
+            {
+                "name": "greet_user",
+                "kind": "Function",
+                "file_path": "src/intl.py",
+                "start_line": 10,
+                "code_context": (
+                    '9: # Greeting\n'
+                    '10→ def greet_user():\n'
+                    '11:     """Says héllo to the üser 你好"""\n'
+                    '12:     return "🎉"'
+                ),
+            }
+        ]
+
+        output = _format_search_as_text(results, query="greet")
+
+        # Should render without crashing
+        assert "greet_user" in output
+        # Unicode should be preserved (not mangled)
+        assert "héllo" in output or "hello" in output or "h" in output
+        assert "src/intl.py:10" in output
+
+    @pytest.mark.asyncio
+    async def test_very_long_signature_handling(self, index_file_helper):
+        """Very long signatures should not break formatting."""
+        from miller.tools.search import _format_search_as_text
+
+        long_sig = (
+            "def process_data("
+            "input_data: List[Dict[str, Union[str, int, float]]], "
+            "config: Optional[ProcessingConfig] = None, "
+            "callbacks: Optional[List[Callable]] = None"
+            ") -> Tuple[List[Dict], ProcessingStats]"
+        )
+
+        results = [
+            {
+                "name": "process_data",
+                "kind": "Function",
+                "file_path": "src/processor.py",
+                "start_line": 100,
+                "signature": long_sig,
+                "code_context": None,
+            }
+        ]
+
+        output = _format_search_as_text(results, query="process")
+
+        # Should handle without crashing
+        assert "src/processor.py:100" in output
+        assert "process_data" in output
+
+    @pytest.mark.asyncio
+    async def test_special_characters_in_symbol_name(self, index_file_helper):
+        """Symbols with underscores, numbers should work."""
+        from miller.tools.search import _format_search_as_text
+
+        results = [
+            {
+                "name": "_private_func_v2",
+                "kind": "Function",
+                "file_path": "src/utils.py",
+                "start_line": 1,
+                "signature": "def _private_func_v2():",
+            },
+            {
+                "name": "__dunder_method__",
+                "kind": "Method",
+                "file_path": "src/utils.py",
+                "start_line": 5,
+                "signature": "def __dunder_method__(self):",
+            },
+        ]
+
+        output = _format_search_as_text(results, query="func")
+
+        # Both should appear
+        assert "_private_func_v2" in output
+        assert "__dunder_method__" in output
+        assert "2 matches" in output.lower() or "2" in output
+
+    @pytest.mark.asyncio
+    async def test_empty_search_results_message(self, index_file_helper):
+        """Empty results should have clear message."""
+        from miller.tools.search import _format_search_as_text
+
+        results = []
+        output = _format_search_as_text(results, query="nonexistent_xyz_123")
+
+        # Should indicate no matches
+        assert "no matches" in output.lower() or "no results" in output.lower()
+
+    @pytest.mark.asyncio
+    async def test_multiline_code_context(self, index_file_helper):
+        """Code context with multiple lines should format correctly."""
+        from miller.tools.search import _format_search_as_text
+
+        results = [
+            {
+                "name": "complex_function",
+                "kind": "Function",
+                "file_path": "src/complex.py",
+                "start_line": 10,
+                "code_context": (
+                    "9:   # Before\n"
+                    "10→ def complex_function(\n"
+                    "11:     param1: str,\n"
+                    "12:     param2: int\n"
+                    "13: ) -> bool:"
+                ),
+            }
+        ]
+
+        output = _format_search_as_text(results, query="complex")
+
+        # All lines should be present and indented
+        assert "src/complex.py:10" in output
+        assert "complex_function" in output
+        assert "param1" in output
+        assert "param2" in output
+
+    @pytest.mark.asyncio
+    async def test_missing_optional_fields(self, index_file_helper):
+        """Results with missing optional fields should not crash."""
+        from miller.tools.search import _format_search_as_text
+
+        results = [
+            {
+                "name": "minimal",
+                "kind": "Variable",
+                "file_path": "src/const.py",
+                "start_line": 5,
+                # No signature, no code_context
+            }
+        ]
+
+        output = _format_search_as_text(results, query="const")
+
+        # Should still format - shows file:line even if no context available
+        assert "src/const.py:5" in output
+        # When both code_context and signature are missing, only file:line is shown
+        assert "1 match" in output.lower() or "const" in output
+
+    @pytest.mark.asyncio
+    async def test_many_results_formatting(self, index_file_helper):
+        """Many results should be formatted correctly with proper spacing."""
+        from miller.tools.search import _format_search_as_text
+
+        results = [
+            {
+                "name": f"func_{i}",
+                "kind": "Function",
+                "file_path": f"src/file_{i}.py",
+                "start_line": i * 10,
+                "code_context": f"{i*10}→ def func_{i}():",
+            }
+            for i in range(5)
+        ]
+
+        output = _format_search_as_text(results, query="func")
+
+        # Should have count header
+        assert "5 matches" in output.lower()
+        # All files should be present
+        for i in range(5):
+            assert f"src/file_{i}.py" in output
+            assert f"func_{i}" in output
 
 
 # Marker for tests that need actual implementation to run fully

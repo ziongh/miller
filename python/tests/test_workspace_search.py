@@ -29,7 +29,8 @@ class TestWorkspaceSearch:
             try:
                 # Search should work without workspace_id (uses default workspace)
                 # This should not crash - we may or may not have results
-                results = await fast_search("test")
+                # Use output_format="json" to get structured results for testing
+                results = await fast_search("test", output_format="json")
 
                 # Should return a list (may be empty if nothing indexed)
                 assert isinstance(results, list)
@@ -63,7 +64,8 @@ class TestWorkspaceSearch:
                 workspace_id = workspaces[0]["workspace_id"]
 
                 # Search that specific workspace
-                results = await fast_search("hello", workspace_id=workspace_id)
+                # Use output_format="json" to get structured results for testing
+                results = await fast_search("hello", workspace_id=workspace_id, output_format="json")
 
                 # Should return a list
                 assert isinstance(results, list)
@@ -102,7 +104,8 @@ def unique_function_abc123():
                 workspace_id = registry.list_workspaces()[0]["workspace_id"]
 
                 # Search in that workspace
-                results = await fast_search("unique_function_abc123", workspace_id=workspace_id)
+                # Use output_format="json" to get structured results for testing
+                results = await fast_search("unique_function_abc123", workspace_id=workspace_id, output_format="json")
 
                 # Should find the symbol
                 assert len(results) > 0
@@ -142,11 +145,11 @@ def unique_function_abc123():
                 ws_a_id = workspaces["Workspace A"]
                 ws_b_id = workspaces["Workspace B"]
 
-                # Search workspace A
-                results_a = await fast_search("symbol", workspace_id=ws_a_id)
+                # Search workspace A (use json format for structured results)
+                results_a = await fast_search("symbol", workspace_id=ws_a_id, output_format="json")
 
-                # Search workspace B
-                results_b = await fast_search("symbol", workspace_id=ws_b_id)
+                # Search workspace B (use json format for structured results)
+                results_b = await fast_search("symbol", workspace_id=ws_b_id, output_format="json")
 
                 # Results should be different (each workspace has different symbols)
                 # Workspace A should have symbol_in_a
@@ -204,11 +207,11 @@ def unique_function_abc123():
                 registry = WorkspaceRegistry()
                 workspace_id = registry.list_workspaces()[0]["workspace_id"]
 
-                # Test all search methods with workspace_id
-                results_auto = await fast_search("test", workspace_id=workspace_id, method="auto")
-                results_text = await fast_search("test", workspace_id=workspace_id, method="text")
-                results_semantic = await fast_search("test", workspace_id=workspace_id, method="semantic")
-                results_hybrid = await fast_search("test", workspace_id=workspace_id, method="hybrid")
+                # Test all search methods with workspace_id (use json format for structured results)
+                results_auto = await fast_search("test", workspace_id=workspace_id, method="auto", output_format="json")
+                results_text = await fast_search("test", workspace_id=workspace_id, method="text", output_format="json")
+                results_semantic = await fast_search("test", workspace_id=workspace_id, method="semantic", output_format="json")
+                results_hybrid = await fast_search("test", workspace_id=workspace_id, method="hybrid", output_format="json")
 
                 # Verify all methods return valid results (list of dicts with expected keys)
                 for results, method in [

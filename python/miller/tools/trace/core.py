@@ -133,7 +133,7 @@ async def trace_call_path(
     }
 
     if output_format == "tree":
-        return _format_as_tree(root)
+        return _format_as_tree(root, max_depth=max_depth, max_depth_reached=max_depth_reached)
     else:
         return result
 
