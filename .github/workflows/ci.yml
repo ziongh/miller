@@ -25,28 +25,53 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Create virtualenv and install dependencies
+      - name: Create virtualenv and install dependencies (Unix)
+        if: runner.os != 'Windows'
         run: |
           python -m venv .venv
-          source .venv/bin/activate || .venv\Scripts\activate.bat
+          source .venv/bin/activate
           python -m pip install --upgrade pip
           pip install maturin pytest pytest-asyncio pytest-cov
           pip install fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy toon-format
         shell: bash
 
-      - name: Build and install extension
-        # Use maturin develop for editable install - this ensures Python finds
-        # both the source code and the compiled Rust extension correctly
+      - name: Create virtualenv and install dependencies (Windows)
+        if: runner.os == 'Windows'
         run: |
-          source .venv/bin/activate || .venv\Scripts\activate.bat
+          python -m venv .venv
+          .venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+          pip install maturin pytest pytest-asyncio pytest-cov
+          pip install fastmcp sentence-transformers lancedb pandas torch pathspec watchdog tantivy toon-format
+        shell: pwsh
+
+      - name: Build and install extension (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          source .venv/bin/activate
           maturin develop --release
         shell: bash
 
-      - name: Run Python tests
+      - name: Build and install extension (Windows)
+        if: runner.os == 'Windows'
         run: |
-          source .venv/bin/activate || .venv\Scripts\activate.bat
+          .venv\Scripts\Activate.ps1
+          maturin develop --release
+        shell: pwsh
+
+      - name: Run Python tests (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          source .venv/bin/activate
           pytest python/tests/ -v
         shell: bash
+
+      - name: Run Python tests (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          .venv\Scripts\Activate.ps1
+          pytest python/tests/ -v
+        shell: pwsh
 
       - name: Run Rust tests
         run: cargo test --release
