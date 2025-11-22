@@ -2,7 +2,7 @@
 //
 // Represents a relationship between two symbols (calls, extends, implements, etc.)
 
-use crate::extractors::base::types::Relationship;
+use julie_extractors::Relationship;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 

@@ -11,63 +11,20 @@ name = "miller_core"
 crate-type = ["cdylib"]  # CRITICAL: Makes it a Python extension module
 
 [dependencies]
+# Julie's extractors crate - provides all 31 language parsers
+# This is the SINGLE SOURCE OF TRUTH for symbol extraction
+julie-extractors = { git = "https://github.com/anortham/julie.git", tag = "v1.16.0" }
+
 # PyO3 for Python bindings
 # Version verified via web search 2025-11-17: https://github.com/PyO3/pyo3/releases
 # v0.27.1 supports Python 3.14 and free-threaded Python
 pyo3 = { version = "0.27.1", features = ["extension-module", "anyhow"] }
 
-# Tree-sitter core
-# ⚠️ LOCKED TO JULIE'S VERSION - DO NOT UPDATE WITHOUT TESTING ALL 31 EXTRACTORS
-# Tree-sitter is extremely version-sensitive; even patch versions can break parsers
-tree-sitter = "0.25"
-
-# All 31 language grammars (EXACT versions from Julie's working Cargo.toml)
-# ⚠️  WARNING: DO NOT CHANGE THESE TREE-SITTER VERSIONS! ⚠️
-# ⚠️  CHANGING THESE WILL BREAK EVERYTHING DUE TO API INCOMPATIBILITIES ⚠️
-tree-sitter-rust = "0.24"
-tree-sitter-python = "0.23"
-tree-sitter-typescript = "0.23"
-tree-sitter-javascript = "0.23"
-tree-sitter-go = "0.23"
-tree-sitter-java = "0.23"
-tree-sitter-c = "0.24"
-tree-sitter-cpp = "0.23"
-tree-sitter-c-sharp = "0.23"
-tree-sitter-php = "0.24"
-tree-sitter-ruby = "0.23"
-tree-sitter-swift = "0.7"
-tree-sitter-kotlin-ng = "1.1.0"  # Modern API for tree-sitter 0.25
-harper-tree-sitter-dart = "0.0.5"  # Requires tree-sitter 0.25.6+
-tree-sitter-lua = "0.2"
-tree-sitter-r = "1.2.0"
-tree-sitter-bash = "0.23"
-tree-sitter-powershell = { git = "https://github.com/airbus-cert/tree-sitter-powershell" }
-tree-sitter-gdscript = "5.0"
-tree-sitter-html = "0.23"
-tree-sitter-css = "0.23"
-# tree-sitter-vue removed - parse SFC sections manually (like Julie)
-tree-sitter-qmljs = { git = "https://github.com/yuja/tree-sitter-qmljs" }
-tree-sitter-regex = "0.23"
-tree-sitter-sequel = "0.3.10"  # SQL parser
-tree-sitter-razor = { git = "https://github.com/tris203/tree-sitter-razor" }
-# Documentation and config languages
-tree-sitter-md = "0.5.1"         # Markdown
-tree-sitter-json = "0.24.8"      # JSON
-tree-sitter-toml-ng = "0.7.0"    # TOML (modern version)
-tree-sitter-yaml = "0.7"         # YAML
-tree-sitter-zig = "1.1.2"
-
-# Core utilities (from Julie)
-rayon = "1.10"          # Parallel iteration
-regex = "1.11"
-glob = "0.3"
-anyhow = "1.0"
-thiserror = "2.0"
+# Core utilities (Miller-specific)
+rayon = "1.10"          # Parallel iteration for batch extraction
+anyhow = "1.0"          # Error handling
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-md5 = "0.7"             # For symbol ID hashing
-blake3 = "1.5"          # For file hashing
-once_cell = "1.20"      # For lazy statics
+serde_json = "1.0"      # For metadata serialization
 tracing = "0.1"         # For logging
 
 [dev-dependencies]

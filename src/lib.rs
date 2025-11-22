@@ -5,9 +5,7 @@
 
 use pyo3::prelude::*;
 
-// Julie's extractors (unchanged - 100% reuse)
-pub mod extractors;
-pub mod language;
+// Miller-specific utilities
 pub mod utils;
 
 // PyO3 bindings layer (Miller-specific)

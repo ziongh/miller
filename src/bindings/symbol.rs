@@ -2,7 +2,7 @@
 //
 // This wrapper allows Python code to access Symbol fields via zero-copy borrowing.
 
-use crate::extractors::base::types::Symbol;
+use julie_extractors::Symbol;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 

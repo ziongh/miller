@@ -72,7 +72,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::debug;
 
-use crate::extractors::SymbolKind;
+use julie_extractors::SymbolKind;
 
 //****************************//
 // Naming Convention Variants //

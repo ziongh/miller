@@ -3,8 +3,7 @@
 // These functions provide the public API for Miller's extraction functionality.
 
 use super::PyExtractionResults;
-use crate::extractors::manager::ExtractorManager;
-use crate::language;
+use julie_extractors::{detect_language_from_extension, ExtractionResults, ExtractorManager};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::path::Path;
@@ -51,11 +50,12 @@ pub fn extract_file(
         .map_err(|e| PyValueError::new_err(format!("Relationship extraction failed: {}", e)))?;
 
     // Create ExtractionResults
-    let results = crate::extractors::base::types::ExtractionResults {
+    let results = ExtractionResults {
         symbols,
         identifiers,
         relationships,
-        types: std::collections::HashMap::new(), // Type inference not needed for basic tests
+        pending_relationships: Vec::new(), // Cross-file resolution not needed for Miller
+        types: std::collections::HashMap::new(),
     };
 
     Ok(PyExtractionResults::from_extraction_results(results))
@@ -76,7 +76,7 @@ pub fn detect_language(file_path: &str) -> PyResult<Option<String>> {
     let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
     // Use Julie's language detection
-    let lang = language::detect_language_from_extension(extension);
+    let lang = detect_language_from_extension(extension);
 
     Ok(lang.map(|s| s.to_string()))
 }
@@ -173,10 +173,11 @@ pub fn extract_files_batch(
                         Vec::new()
                     });
 
-                let results = crate::extractors::base::types::ExtractionResults {
+                let results = ExtractionResults {
                     symbols,
                     identifiers,
                     relationships,
+                    pending_relationships: Vec::new(),
                     types: std::collections::HashMap::new(),
                 };
 
