@@ -253,6 +253,47 @@ def _find_related_symbols(
                 match_type = "exact"
             results.append((symbol_dict, relationship_kind, match_type))
 
+    # FALLBACK: Use identifiers table for upstream when relationships are missing
+    # This handles the case where calls exist but relationships weren't created
+    # (e.g., calls to imported functions that aren't resolved at extraction time)
+    if (direction == "upstream" or direction == "both") and len(results) == 0:
+        # Find identifiers that reference this symbol by name or target_symbol_id
+        # Then look up their containing_symbol_id to find the calling functions
+        cursor.execute(
+            """
+            SELECT DISTINCT s.id, s.name, s.kind, s.language, s.file_path,
+                   s.start_line, s.end_line, s.signature, s.doc_comment
+            FROM identifiers i
+            JOIN symbols s ON i.containing_symbol_id = s.id
+            WHERE (i.name = ? OR i.target_symbol_id = ?)
+              AND i.containing_symbol_id IS NOT NULL
+              AND i.containing_symbol_id != ?
+            """,
+            (symbol_name, symbol_id, symbol_id),
+        )
+
+        for row in cursor.fetchall():
+            containing_symbol_id = row[0]
+
+            if containing_symbol_id in visited:
+                cycles_detected_ref[0] += 1
+                continue  # Skip cycles
+
+            symbol_dict = {
+                "id": row[0],
+                "name": row[1],
+                "kind": row[2],
+                "language": row[3],
+                "file_path": row[4],
+                "start_line": row[5],
+                "end_line": row[6],
+                "signature": row[7],
+                "doc_comment": row[8],
+            }
+
+            # These are callers found via identifiers - mark as "Call" relationship
+            results.append((symbol_dict, "Call", "exact"))
+
     # Add variant matching for cross-language relationships
     # This is the MAGIC: find symbols with different names but similar meanings
     # Example: UserService → user_service → users
