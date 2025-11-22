@@ -4,7 +4,10 @@ LanceDB vector storage and search.
 Manages vector storage, FTS indexing, and multi-method search (text, pattern, semantic, hybrid).
 """
 
+import logging
 import tempfile
+
+logger = logging.getLogger("miller.vector_store")
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -84,10 +87,12 @@ class VectorStore:
         self._pattern_index_created = False  # Separate flag for pattern index
         try:
             self._table = self.db.open_table(self.table_name)
+            logger.debug(f"Opened existing LanceDB table '{self.table_name}'")
             # If table exists, try to create FTS indexes
             self._create_fts_index()
         except Exception:
             # Table doesn't exist yet, will be created on first add_symbols
+            logger.debug(f"LanceDB table '{self.table_name}' not found, will create on first add")
             self._table = None
 
     def _create_fts_index(self):
@@ -118,8 +123,10 @@ class VectorStore:
             )
             self._fts_index_created = True
             self._pattern_index_created = True  # Same index serves both purposes
-        except Exception:
+            logger.debug("FTS index created successfully on code_pattern field")
+        except Exception as e:
             # FTS index creation might fail on older LanceDB versions
+            logger.warning(f"FTS index creation failed: {e}", exc_info=True)
             self._fts_index_created = False
             self._pattern_index_created = False
 
@@ -271,9 +278,10 @@ class VectorStore:
 
             return results
 
-        except (ValueError, Exception):
+        except (ValueError, Exception) as e:
             # Tantivy might reject malformed queries
             # Return empty results instead of crashing (safe failure mode)
+            logger.warning(f"Pattern search failed for query '{query}': {e}")
             return []
 
     def _search_text(self, query: str, limit: int) -> list[dict]:
@@ -320,9 +328,10 @@ class VectorStore:
             # Return top results after enhancement
             return results[:limit]
 
-        except (ValueError, Exception):
+        except (ValueError, Exception) as e:
             # Tantivy raises ValueError for malformed queries (e.g., SQL injection attempts)
             # Return empty results instead of crashing (safe failure mode)
+            logger.warning(f"Text search failed for query '{query}': {e}")
             return []
 
     def _search_text_fallback(self, query: str, limit: int) -> list[dict]:
@@ -420,9 +429,10 @@ class VectorStore:
             # Now truncate to requested limit (after re-ranking)
             return results[:limit]
 
-        except Exception:
+        except Exception as e:
             # Hybrid search might not be supported in this LanceDB version
             # Fall back to manual merging
+            logger.debug(f"Native hybrid search failed, using fallback: {e}")
             return self._search_hybrid_fallback(query, limit)
 
     def _search_hybrid_fallback(self, query: str, limit: int) -> list[dict]:
@@ -721,9 +731,18 @@ class VectorStore:
         Rebuild the FTS index.
 
         Call this after batch operations where rebuild_index=False was used.
+        Always attempts rebuild regardless of previous state - this allows
+        recovery from failed index creation.
         """
+        if self._table is None:
+            logger.debug("Cannot rebuild FTS index: no table exists")
+            return
+        logger.debug("Rebuilding FTS index...")
+        self._create_fts_index()
         if self._fts_index_created:
-            self._create_fts_index()
+            logger.info("FTS index rebuilt successfully")
+        else:
+            logger.warning("FTS index rebuild failed - text search may be degraded")
 
     def close(self):
         """Close database and cleanup temp directories."""
