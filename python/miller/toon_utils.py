@@ -22,42 +22,56 @@ def create_toonable_result(
     output_format: Optional[str],
     auto_threshold: int,
     result_count: int,
-    tool_name: str
+    tool_name: str,
+    text_formatter: Optional[callable] = None,
 ) -> Union[str, Any]:
     """
-    Return either TOON or JSON based on output_format.
+    Return text, TOON, or JSON based on output_format.
 
     This is Julie's direct pattern - simple and effective.
+    Extended to support lean text output as the new default.
 
     Args:
         json_data: Full result with metadata (for JSON mode)
         toon_data: Optimized flat structure (for TOON mode)
-        output_format: "json", "toon", "auto", or None
+        output_format: "text" (default), "json", "toon", or "auto"
         auto_threshold: Minimum result count for auto→TOON
         result_count: Number of results (for auto mode)
         tool_name: Tool name for logging
+        text_formatter: Optional function(json_data) -> str for text mode
 
     Returns:
+        - Text mode: Formatted string (lean, grep-style)
         - TOON mode: TOON-encoded string
         - JSON mode: Original data structure
         - Auto mode: TOON if >= threshold, else JSON
 
     Example:
-        >>> result = SearchResult(query="foo", results=[...])
+        >>> result = {"symbol": "foo", "references": [...]}
         >>> return create_toonable_result(
-        ...     json_data=result.to_json(),
-        ...     toon_data=result.to_toon_flat(),
-        ...     output_format="auto",
+        ...     json_data=result,
+        ...     toon_data=result,
+        ...     output_format="text",
         ...     auto_threshold=20,
-        ...     result_count=len(result.results),
-        ...     tool_name="fast_search"
+        ...     result_count=len(result["references"]),
+        ...     tool_name="fast_refs",
+        ...     text_formatter=format_refs_as_text
         ... )
     """
     from toon_format import encode as toon_encode
 
     logger = setup_logging()
 
-    if output_format == "toon":
+    if output_format == "text":
+        # Text mode: lean grep-style output (new default)
+        if text_formatter:
+            return text_formatter(json_data)
+        else:
+            # Fallback to JSON if no formatter provided
+            logger.warning(f"{tool_name} has no text formatter, falling back to JSON")
+            return json_data
+
+    elif output_format == "toon":
         # TOON mode: encode toon_data only
         try:
             return toon_encode(toon_data)
@@ -77,5 +91,5 @@ def create_toonable_result(
         return json_data
 
     else:
-        # Default: JSON only (backwards compatible)
+        # JSON mode (explicit or fallback)
         return json_data

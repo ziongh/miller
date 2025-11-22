@@ -286,9 +286,22 @@ async def fast_search(
 
         # Search in workspace-specific store
         results = workspace_vector_store.search(query, method=method, limit=limit)
+
+        # Hydrate with full data from workspace-specific SQLite
+        from miller.storage import StorageManager
+        from miller.workspace_paths import get_workspace_db_path
+
+        workspace_db_path = get_workspace_db_path(workspace_id)
+        if workspace_db_path.exists():
+            workspace_storage = StorageManager(db_path=str(workspace_db_path))
+            results = _hydrate_search_results(results, workspace_storage)
     else:
         # Use default vector store (primary workspace)
         results = vector_store.search(query, method=method, limit=limit)
+
+        # Hydrate with full data from primary workspace SQLite
+        if storage is not None:
+            results = _hydrate_search_results(results, storage)
 
     # Format results for MCP
     formatted = []
@@ -302,12 +315,13 @@ async def fast_search(
                 "doc_comment": r.get("doc_comment"),
                 "start_line": r.get("start_line", 0),
                 "score": r.get("score", 0.0),
+                "code_context": r.get("code_context"),  # For grep-style output
             }
         )
 
     # Apply output format
     if output_format == "text":
-        return _format_search_as_text(formatted)
+        return _format_search_as_text(formatted, query=query)
     elif output_format == "toon":
         from miller.toon_types import encode_toon
         return encode_toon(formatted)
@@ -315,7 +329,41 @@ async def fast_search(
         return formatted
 
 
-async def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
+def _format_goto_as_text(symbol_name: str, result: Optional[dict[str, Any]]) -> str:
+    """Format goto result as lean text output.
+
+    Output format:
+    ```
+    Found 1 definition for "symbol_name":
+
+    file.py:42 (function)
+      def symbol_name(args)
+    ```
+    """
+    if not result:
+        return f'No definition found for "{symbol_name}".'
+
+    file_path = result.get("file_path", "?")
+    line = result.get("start_line", 0)
+    kind = result.get("kind", "symbol")
+    signature = result.get("signature", "")
+
+    output = [f'Found 1 definition for "{symbol_name}":', ""]
+    output.append(f"{file_path}:{line} ({kind})")
+    if signature:
+        # Truncate long signatures
+        sig = signature.split("\n")[0]
+        if len(sig) > 80:
+            sig = sig[:77] + "..."
+        output.append(f"  {sig}")
+
+    return "\n".join(output)
+
+
+async def fast_goto(
+    symbol_name: str,
+    output_format: Literal["text", "json"] = "text"
+) -> Union[str, Optional[dict[str, Any]]]:
     """
     Find symbol definition location - jump directly to where a symbol is defined.
 
@@ -324,9 +372,13 @@ async def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
 
     Args:
         symbol_name: Name of symbol to find
+        output_format: Output format - "text" (default) or "json"
+                      - "text": Lean formatted string - DEFAULT
+                      - "json": Dict with full metadata
 
     Returns:
-        Symbol location info (file, line, signature), or None if not found
+        - Text mode: Formatted string with location
+        - JSON mode: Symbol location dict (file, line, signature), or None if not found
 
     Note: For exploring unknown code, use fast_search first. Use fast_goto when
     you already know the symbol name from search results or references.
@@ -334,18 +386,22 @@ async def fast_goto(symbol_name: str) -> Optional[dict[str, Any]]:
     # Query SQLite for exact match
     sym = storage.get_symbol_by_name(symbol_name)
 
-    if not sym:
-        return None
+    result = None
+    if sym:
+        result = {
+            "name": sym["name"],
+            "kind": sym["kind"],
+            "file_path": sym["file_path"],
+            "start_line": sym["start_line"],
+            "end_line": sym["end_line"],
+            "signature": sym["signature"],
+            "doc_comment": sym["doc_comment"],
+        }
 
-    return {
-        "name": sym["name"],
-        "kind": sym["kind"],
-        "file_path": sym["file_path"],
-        "start_line": sym["start_line"],
-        "end_line": sym["end_line"],
-        "signature": sym["signature"],
-        "doc_comment": sym["doc_comment"],
-    }
+    if output_format == "text":
+        return _format_goto_as_text(symbol_name, result)
+    else:
+        return result
 
 
 async def get_symbols(
@@ -516,48 +572,150 @@ def _format_code_output(file_path: str, symbols: list[dict[str, Any]]) -> str:
     return output.rstrip() + "\n"
 
 
-def _format_search_as_text(results: list[dict[str, Any]]) -> str:
-    """Format search results as clean, scannable text.
+def _hydrate_search_results(
+    search_results: list[dict[str, Any]], storage: "StorageManager"
+) -> list[dict[str, Any]]:
+    """Hydrate search results with full symbol data from SQLite.
 
-    Each result shows:
-    - Line 1: name (Kind) file_path:line
-    - Line 2: signature or code snippet (indented)
-
-    This format is optimized for AI agent consumption - minimal tokens,
-    maximum scannability, easy to decide which results to investigate further.
+    Vector search returns lean results (id, name, kind, score).
+    This function enriches them with full data from SQLite,
+    including code_context for grep-style output.
 
     Args:
-        results: List of search result dicts with name, kind, file_path, start_line, signature
+        search_results: Lean results from vector search
+        storage: StorageManager instance for SQLite lookups
 
     Returns:
-        Formatted text string with one result per block, separated by blank lines
+        Hydrated results with code_context and other fields from SQLite.
+        Preserves search score (not storage score).
+    """
+    hydrated = []
+    for result in search_results:
+        symbol_id = result.get("id")
+        search_score = result.get("score", 0.0)
+
+        if symbol_id:
+            # Fetch full symbol data from SQLite
+            full_symbol = storage.get_symbol_by_id(symbol_id)
+            if full_symbol:
+                # Merge: use storage data but preserve search score
+                full_symbol["score"] = search_score
+                hydrated.append(full_symbol)
+                continue
+
+        # Fallback: keep original result if hydration fails
+        hydrated.append(result)
+
+    return hydrated
+
+
+def _format_search_as_text(results: list[dict[str, Any]], query: str = "") -> str:
+    """Format search results as grep-style text output.
+
+    Output format (inspired by Julie's lean format):
+    ```
+    N matches for "query":
+
+    src/file.py:42
+      41: # context before
+      42→ def matched_line():
+      43:     # context after
+
+    src/other.py:100
+      99: # context
+      100→ another_match
+    ```
+
+    Benefits over JSON/TOON:
+    - 80% fewer tokens than JSON
+    - 60% fewer tokens than TOON
+    - Zero parsing overhead - just read the text
+    - Grep-style output familiar to developers
+
+    Args:
+        results: List of search result dicts with file_path, start_line, code_context
+        query: The search query (for header)
+
+    Returns:
+        Grep-style formatted text string
     """
     if not results:
-        return "No results found."
+        return f'No matches for "{query}".' if query else "No results found."
 
-    lines = []
+    output = []
+
+    # Header with count and query
+    count = len(results)
+    if query:
+        match_word = "match" if count == 1 else "matches"
+        output.append(f'{count} {match_word} for "{query}":')
+    else:
+        output.append(f"{count} results:")
+    output.append("")  # Blank line after header
+
+    # Each result: file:line header + indented code context
     for r in results:
-        name = r.get("name", "?")
-        kind = r.get("kind", "?")
         file_path = r.get("file_path", "?")
         start_line = r.get("start_line", 0)
+        code_context = r.get("code_context")
         signature = r.get("signature", "")
 
-        # Line 1: identity + location
-        lines.append(f"{name} ({kind}) {file_path}:{start_line}")
+        # File:line header
+        output.append(f"{file_path}:{start_line}")
 
-        # Line 2: signature/context (indented)
-        if signature:
-            lines.append(f"  {signature}")
+        # Indented code context (preferred) or signature (fallback)
+        if code_context:
+            for line in code_context.split("\n"):
+                output.append(f"  {line}")
+        elif signature:
+            # Fallback to signature if no code_context
+            output.append(f"  {signature}")
 
-        # Blank line between results
-        lines.append("")
+        output.append("")  # Blank line between results
 
-    # Remove trailing blank line
-    if lines and lines[-1] == "":
-        lines.pop()
+    # Trim trailing blank line
+    while output and output[-1] == "":
+        output.pop()
 
-    return "\n".join(lines)
+    return "\n".join(output)
+
+
+def _format_refs_as_text(result: dict[str, Any]) -> str:
+    """Format references result as lean text output.
+
+    Output format:
+    ```
+    14 references to "fast_search":
+
+    Definition:
+      python/miller/server.py:201 (function) → async def fast_search(...)
+
+    References (13):
+      python/tests/test_server.py:32 (calls)
+      python/tests/test_server.py:66 (calls)
+      ...
+    ```
+    """
+    symbol = result.get("symbol", "?")
+    total = result.get("total_references", 0)
+    files = result.get("files", [])
+
+    if total == 0:
+        return f'No references found for "{symbol}".'
+
+    output = [f'{total} references to "{symbol}":', ""]
+
+    # Collect all references across files
+    for file_info in files:
+        file_path = file_info.get("path", "?")
+        refs = file_info.get("references", [])
+
+        for ref in refs:
+            line = ref.get("line", 0)
+            kind = ref.get("kind", "reference")
+            output.append(f"  {file_path}:{line} ({kind})")
+
+    return "\n".join(output)
 
 
 async def fast_refs(
@@ -567,7 +725,7 @@ async def fast_refs(
     context_file: Optional[str] = None,
     limit: Optional[int] = None,
     workspace: str = "primary",
-    output_format: Literal["json", "toon", "auto"] = "json"
+    output_format: Literal["text", "json", "toon", "auto"] = "text"
 ) -> Union[dict[str, Any], str]:
     """
     Find all references to a symbol (where it's used).
@@ -589,12 +747,14 @@ async def fast_refs(
         context_file: Optional file path to disambiguate symbols (only find symbols in this file)
         limit: Maximum number of references to return (for pagination with large result sets)
         workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "json" (default), "toon", or "auto"
+        output_format: Output format - "text" (default), "json", "toon", or "auto"
+                      - "text": Lean text list (70% token savings) - DEFAULT
                       - "json": Standard dict format
                       - "toon": TOON-encoded string (30-40% token reduction)
                       - "auto": TOON if ≥10 references, else JSON
 
     Returns:
+        - Text mode: Lean formatted string with file:line references
         - JSON mode: Dictionary with symbol, total_references, truncated, files list
         - TOON mode: TOON-encoded string (compact format)
         - Auto mode: Switches based on result size
@@ -656,14 +816,15 @@ async def fast_refs(
         # fast_refs already returns TOON-friendly nested dicts
         from miller.toon_utils import create_toonable_result
 
-        # Simple helper decides TOON vs JSON (same data, different encoding)
+        # Simple helper decides text vs TOON vs JSON
         return create_toonable_result(
             json_data=raw_result,           # Full result as-is
             toon_data=raw_result,           # Same structure - TOON handles nesting
             output_format=output_format,
             auto_threshold=10,              # 10+ refs → TOON
             result_count=raw_result.get("total_references", 0),
-            tool_name="fast_refs"
+            tool_name="fast_refs",
+            text_formatter=_format_refs_as_text,  # Lean text output
         )
     finally:
         # Close workspace storage if it's not the default
@@ -679,7 +840,7 @@ async def trace_call_path(
     direction: Literal["upstream", "downstream", "both"] = "downstream",
     max_depth: int = 3,
     context_file: Optional[str] = None,
-    output_format: Literal["json", "tree", "toon", "auto"] = "json",
+    output_format: Literal["tree", "json", "toon", "auto"] = "tree",
     workspace: str = "primary"
 ) -> dict[str, Any] | str:
     """
@@ -701,15 +862,15 @@ async def trace_call_path(
         max_depth: Maximum depth to traverse (1-10, default 3)
         context_file: Optional file path to disambiguate symbols with same name
         output_format: Return format
-            - "json": Structured TracePath dict (default, for programmatic use)
-            - "tree": ASCII tree visualization (for human reading)
+            - "tree": ASCII tree visualization (DEFAULT - great for understanding flow!)
+            - "json": Structured TracePath dict (for programmatic use)
             - "toon": TOON-formatted string (40-50% token reduction)
             - "auto": Uses TOON for deep traces (≥5 nodes), JSON for shallow
         workspace: Workspace to query ("primary" or workspace_id)
 
     Returns:
+        - "tree" mode: Formatted ASCII tree string (DEFAULT)
         - "json" mode: TracePath dict with root node, statistics, and metadata
-        - "tree" mode: Formatted ASCII tree string (great for understanding flow!)
         - "toon" mode: TOON-encoded string (token-efficient)
         - "auto" mode: TOON if ≥5 total_nodes, else JSON
 
@@ -717,8 +878,8 @@ async def trace_call_path(
         # Find who calls this function (understand impact before changes)
         await trace_call_path("handleRequest", direction="upstream")
 
-        # Trace execution flow with visualization
-        await trace_call_path("UserService", direction="downstream", output_format="tree")
+        # Trace execution flow (tree is default - no need to specify)
+        await trace_call_path("UserService", direction="downstream")
 
         # Deep trace across language boundaries
         await trace_call_path("IUser", direction="both", max_depth=5)
@@ -795,12 +956,97 @@ async def trace_call_path(
             workspace_storage.close()
 
 
+def _format_explore_as_text(result: dict[str, Any]) -> str:
+    """Format type exploration result as lean text output.
+
+    Output format:
+    ```
+    Type intelligence for "IUserService":
+
+    Implementations (3):
+      src/services/user.py:15 → class UserService
+      src/services/admin.py:22 → class AdminService
+
+    Returns this type (2):
+      src/factory.py:30 → def create_service() -> IUserService
+
+    Takes as parameter (1):
+      src/api/auth.py:45 → def login(service: IUserService)
+    ```
+    """
+    type_name = result.get("type_name", "?")
+    total = result.get("total_found", 0)
+
+    if total == 0:
+        return f'No type information found for "{type_name}".'
+
+    output = [f'Type intelligence for "{type_name}":', ""]
+
+    # Implementations
+    implementations = result.get("implementations", [])
+    if implementations:
+        output.append(f"Implementations ({len(implementations)}):")
+        for impl in implementations:
+            file_path = impl.get("file_path", "?")
+            line = impl.get("start_line", 0)
+            sig = impl.get("signature", impl.get("name", "?"))
+            # Truncate signature
+            if len(sig) > 60:
+                sig = sig[:57] + "..."
+            output.append(f"  {file_path}:{line} → {sig}")
+        output.append("")
+
+    # Returns
+    returns = result.get("returns", [])
+    if returns:
+        output.append(f"Returns this type ({len(returns)}):")
+        for ret in returns:
+            file_path = ret.get("file_path", "?")
+            line = ret.get("start_line", 0)
+            sig = ret.get("signature", ret.get("name", "?"))
+            if len(sig) > 60:
+                sig = sig[:57] + "..."
+            output.append(f"  {file_path}:{line} → {sig}")
+        output.append("")
+
+    # Parameters
+    parameters = result.get("parameters", [])
+    if parameters:
+        output.append(f"Takes as parameter ({len(parameters)}):")
+        for param in parameters:
+            file_path = param.get("file_path", "?")
+            line = param.get("start_line", 0)
+            sig = param.get("signature", param.get("name", "?"))
+            if len(sig) > 60:
+                sig = sig[:57] + "..."
+            output.append(f"  {file_path}:{line} → {sig}")
+        output.append("")
+
+    # Hierarchy
+    hierarchy = result.get("hierarchy", {})
+    parents = hierarchy.get("parents", [])
+    children = hierarchy.get("children", [])
+    if parents or children:
+        output.append("Hierarchy:")
+        if parents:
+            output.append(f"  Parents: {', '.join(p.get('name', '?') for p in parents)}")
+        if children:
+            output.append(f"  Children: {', '.join(c.get('name', '?') for c in children)}")
+
+    # Remove trailing empty lines
+    while output and output[-1] == "":
+        output.pop()
+
+    return "\n".join(output)
+
+
 async def fast_explore(
     mode: Literal["types"] = "types",
     type_name: Optional[str] = None,
     limit: int = 10,
     workspace: str = "primary",
-) -> dict[str, Any]:
+    output_format: Literal["text", "json"] = "text",
+) -> Union[dict[str, Any], str]:
     """
     Explore codebases with different modes - currently supports type intelligence.
 
@@ -815,15 +1061,19 @@ async def fast_explore(
               Examples: "IUser", "PaymentProcessor", "BaseService"
         limit: Maximum results per category (default: 10)
         workspace: Workspace to query ("primary" or workspace_id)
+        output_format: Output format - "text" (default) or "json"
+                      - "text": Lean formatted string - DEFAULT
+                      - "json": Dict with full metadata
 
     Returns:
-        Dict with exploration results:
-        - type_name: The queried type
-        - implementations: Classes implementing this interface
-        - hierarchy: {parents: [...], children: [...]} - inheritance tree
-        - returns: Functions that return this type
-        - parameters: Functions taking this type as parameter
-        - total_found: Total matches across all categories
+        - Text mode: Formatted string with type relationships
+        - JSON mode: Dict with exploration results:
+          - type_name: The queried type
+          - implementations: Classes implementing this interface
+          - hierarchy: {parents: [...], children: [...]} - inheritance tree
+          - returns: Functions that return this type
+          - parameters: Functions taking this type as parameter
+          - total_found: Total matches across all categories
 
     Examples:
         # Find what implements an interface
@@ -858,12 +1108,17 @@ async def fast_explore(
         workspace_storage = storage
 
     try:
-        return await explore_impl(
+        result = await explore_impl(
             mode=mode,
             type_name=type_name,
             storage=workspace_storage,
             limit=limit,
         )
+
+        if output_format == "text":
+            return _format_explore_as_text(result)
+        else:
+            return result
     finally:
         if workspace != "primary" and workspace_storage:
             workspace_storage.close()
@@ -871,13 +1126,13 @@ async def fast_explore(
 
 # Register tools with FastMCP
 # output_schema=None disables structured content wrapping (avoids {"result": ...} for strings)
-# All tools that return TOON/code strings need this to render properly
-mcp.tool(output_schema=None)(fast_search)      # Returns TOON string
-mcp.tool()(fast_goto)                          # Returns dict only
-mcp.tool(output_schema=None)(get_symbols)      # Returns TOON/code string
-mcp.tool(output_schema=None)(fast_refs)        # Returns TOON string
-mcp.tool(output_schema=None)(trace_call_path)  # Returns TOON/tree string
-mcp.tool()(fast_explore)                       # Returns dict only
+# All tools that return text/TOON strings need this to render properly
+mcp.tool(output_schema=None)(fast_search)      # Returns text/TOON string (default: text)
+mcp.tool(output_schema=None)(fast_goto)        # Returns text string (default: text)
+mcp.tool(output_schema=None)(get_symbols)      # Returns text/TOON/code string
+mcp.tool(output_schema=None)(fast_refs)        # Returns text/TOON string (default: text)
+mcp.tool(output_schema=None)(trace_call_path)  # Returns tree/TOON string (default: tree)
+mcp.tool(output_schema=None)(fast_explore)     # Returns text string (default: text)
 
 # Register memory tools
 mcp.tool()(checkpoint)

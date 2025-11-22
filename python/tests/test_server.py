@@ -215,13 +215,13 @@ class TestGotoTool:
         # Index files
         await index_file_helper(str(test_workspace / "test.py"))
 
-        # Go to symbol
+        # Go to symbol (default: text output)
         result = await fast_goto("calculate_age")
 
-        # Should return location info
+        # Should return location info in text format: "Found 1 definition for X:\n\nfile:line (kind)"
         assert "calculate_age" in str(result)
         assert "test.py" in str(result)
-        assert "line" in str(result).lower()
+        assert "definition" in str(result).lower()  # Text format includes "definition"
 
     @pytest.mark.asyncio
     async def test_goto_returns_none_for_unknown_symbol(self, test_workspace, index_file_helper):
@@ -231,11 +231,11 @@ class TestGotoTool:
         # Index files
         await index_file_helper(str(test_workspace / "test.py"))
 
-        # Search for non-existent symbol
+        # Search for non-existent symbol (text output)
         result = await fast_goto("nonexistent_function")
 
-        # Should indicate not found
-        assert result is None or "not found" in str(result).lower()
+        # Should indicate not found in text format: "No definition found for X."
+        assert "no definition found" in str(result).lower()
 
 
 class TestGetSymbolsTool:
