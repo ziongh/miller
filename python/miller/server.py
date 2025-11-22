@@ -203,7 +203,7 @@ async def fast_search(
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 20,
     workspace_id: Optional[str] = None,
-    output_format: Literal["json", "toon", "auto"] = "auto",
+    output_format: Literal["text", "json", "toon"] = "text",
 ) -> Union[list[dict[str, Any]], str]:
     """
     Search indexed code using text, semantic, or hybrid methods.
@@ -226,28 +226,26 @@ async def fast_search(
     - semantic: Vector similarity (conceptual matches)
     - hybrid: Combines text + semantic with RRF fusion
 
-    Output format (default: auto):
-    - auto: Smart mode - uses TOON for ≥5 results, JSON for <5 results (RECOMMENDED)
-    - json: Always returns list of dicts (structured data)
-    - toon: Always returns TOON-formatted string (30-60% token reduction)
+    Output format (default: text):
+    - text: Clean, scannable format optimized for AI reading (DEFAULT)
+    - json: List of dicts with full metadata (for programmatic use)
+    - toon: TOON-formatted string (compact tabular format)
 
     Examples:
-        # Auto-detection (recommended - uses best format automatically)
-        fast_search("authentication logic")        # Auto → hybrid, TOON if ≥5 results
-        fast_search(": BaseClass")                 # Auto → pattern
-        fast_search("ILogger<UserService>")        # Auto → pattern
-        fast_search("[Fact]")                      # Auto → pattern
+        # Simple search (uses text output by default)
+        fast_search("authentication logic")
+        fast_search("StorageManager")
 
-        # Manual override
-        fast_search("map<int, string>", method="text")  # Force text
-        fast_search("user auth", method="semantic")     # Force semantic
+        # Method override
+        fast_search("user auth", method="semantic")     # Force semantic search
+        fast_search(": BaseClass", method="pattern")    # Force pattern search
 
-        # Format control (rarely needed - auto mode is best)
-        fast_search("auth", output_format="json")   # Always JSON
-        fast_search("auth", output_format="toon")   # Always TOON
+        # Format override (rarely needed)
+        fast_search("auth", output_format="json")   # Get structured data
+        fast_search("auth", output_format="toon")   # Get TOON format
 
         # Workspace-specific search
-        fast_search("auth", workspace_id="my-lib_abc123")  # Search specific workspace
+        fast_search("auth", workspace_id="my-lib_abc123")
 
     Args:
         query: Search query (code patterns, keywords, or natural language)
@@ -255,12 +253,12 @@ async def fast_search(
         limit: Maximum results to return (default: 20)
         workspace_id: Optional workspace ID to search (defaults to primary workspace)
                      Get workspace IDs from manage_workspace(operation="list")
-        output_format: Output format - "auto" (default), "json", or "toon"
+        output_format: Output format - "text" (default), "json", or "toon"
 
     Returns:
-        - JSON mode: List of symbol dicts
-        - TOON mode: TOON-formatted string (40-60% fewer tokens)
-        - Auto mode: TOON if ≥5 results, JSON if <5 results
+        - text mode: Clean scannable format (name, kind, location, signature)
+        - json mode: List of symbol dicts with full metadata
+        - toon mode: TOON-formatted string (compact tabular)
 
     Note: Results are complete and accurate. Trust them - no need to verify with file reads!
     """
@@ -307,14 +305,13 @@ async def fast_search(
             }
         )
 
-    # Apply output format (TOON or JSON)
-    from miller.toon_types import encode_toon, should_use_toon
-
-    if should_use_toon(output_format, len(formatted)):
-        # Return TOON-formatted string
+    # Apply output format
+    if output_format == "text":
+        return _format_search_as_text(formatted)
+    elif output_format == "toon":
+        from miller.toon_types import encode_toon
         return encode_toon(formatted)
-    else:
-        # Return JSON (list of dicts)
+    else:  # json
         return formatted
 
 
@@ -517,6 +514,50 @@ def _format_code_output(file_path: str, symbols: list[dict[str, Any]]) -> str:
 
     # Ensure single newline at end
     return output.rstrip() + "\n"
+
+
+def _format_search_as_text(results: list[dict[str, Any]]) -> str:
+    """Format search results as clean, scannable text.
+
+    Each result shows:
+    - Line 1: name (Kind) file_path:line
+    - Line 2: signature or code snippet (indented)
+
+    This format is optimized for AI agent consumption - minimal tokens,
+    maximum scannability, easy to decide which results to investigate further.
+
+    Args:
+        results: List of search result dicts with name, kind, file_path, start_line, signature
+
+    Returns:
+        Formatted text string with one result per block, separated by blank lines
+    """
+    if not results:
+        return "No results found."
+
+    lines = []
+    for r in results:
+        name = r.get("name", "?")
+        kind = r.get("kind", "?")
+        file_path = r.get("file_path", "?")
+        start_line = r.get("start_line", 0)
+        signature = r.get("signature", "")
+
+        # Line 1: identity + location
+        lines.append(f"{name} ({kind}) {file_path}:{start_line}")
+
+        # Line 2: signature/context (indented)
+        if signature:
+            lines.append(f"  {signature}")
+
+        # Blank line between results
+        lines.append("")
+
+    # Remove trailing blank line
+    if lines and lines[-1] == "":
+        lines.pop()
+
+    return "\n".join(lines)
 
 
 async def fast_refs(

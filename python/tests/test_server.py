@@ -125,61 +125,67 @@ class TestSearchTool:
 
     @pytest.mark.asyncio
     async def test_search_text_mode(self, test_workspace, index_file_helper):
-        """Test text search mode."""
+        """Test text search mode with default text output format."""
         from miller.server import fast_search, storage
 
         # Index files
         success = await index_file_helper(str(test_workspace / "test.py"))
         assert success, "Failed to index test file"
 
-        # Text search
+        # Text search (default output_format="text" returns string)
         results = await fast_search(query="age", method="text", limit=10)
 
-        assert len(results) > 0
-        assert any("calculate_age" in str(r) for r in results)
+        # Results is now a string in text format
+        assert isinstance(results, str)
+        assert "calculate_age" in results
 
     @pytest.mark.asyncio
     async def test_search_semantic_mode(self, test_workspace, index_file_helper):
-        """Test semantic search mode."""
+        """Test semantic search mode with default text output format."""
         from miller.server import fast_search
 
         # Index files
         await index_file_helper(str(test_workspace / "test.py"))
 
-        # Semantic search (natural language)
+        # Semantic search (natural language, default text output)
         results = await fast_search(
             query="function that computes user age",
             method="semantic",
             limit=10
         )
 
-        assert len(results) > 0
+        # Results is now a string in text format
+        assert isinstance(results, str)
         # Should find calculate_age based on meaning
-        assert any("calculate_age" in str(r) for r in results)
+        assert "calculate_age" in results
 
     @pytest.mark.asyncio
     async def test_search_hybrid_mode(self, test_workspace, index_file_helper):
-        """Test hybrid search mode."""
+        """Test hybrid search mode with default text output format."""
         from miller.server import fast_search
 
         # Index files
         await index_file_helper(str(test_workspace / "test.py"))
 
-        # Hybrid search
+        # Hybrid search (default text output)
         results = await fast_search(query="user profile", method="hybrid", limit=10)
 
+        # Results is now a string in text format
+        assert isinstance(results, str)
         assert len(results) > 0
 
     @pytest.mark.asyncio
     async def test_search_returns_metadata(self, test_workspace, index_file_helper):
-        """Test that search results include symbol metadata."""
+        """Test that search results include symbol metadata (using json format)."""
         from miller.server import fast_search
 
         # Index files
         await index_file_helper(str(test_workspace / "test.py"))
 
-        # Search
-        results = await fast_search(query="calculate_age", method="text", limit=1)
+        # Search with json output format to get structured data
+        results = await fast_search(
+            query="calculate_age", method="text", limit=1, output_format="json"
+        )
 
         assert len(results) > 0
         result = results[0]
