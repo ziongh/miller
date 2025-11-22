@@ -300,8 +300,10 @@ class VectorStore:
 
         try:
             # Use Tantivy FTS with BM25 scoring (with original query - no preprocessing)
-            # Fetch extra results to allow for quality filtering
-            results = self._table.search(query, query_type="fts").limit(limit * 3).to_list()
+            # Over-fetch to allow kind weighting to re-rank before truncating
+            # Min of 50 ensures high-value symbols (functions) aren't cut before boosting
+            fetch_limit = max(limit * 3, 50)
+            results = self._table.search(query, query_type="fts").limit(fetch_limit).to_list()
 
             # Normalize BM25 scores to 0.0-1.0 range (initial normalization)
             # LanceDB returns _score field with BM25 values
@@ -399,7 +401,11 @@ class VectorStore:
 
             self._embeddings.embed_query(query)
 
-            results = self._table.search(query, query_type="hybrid").limit(limit).to_list()
+            # Over-fetch to allow kind weighting to re-rank before truncating
+            # Without this, high-value symbols (functions, classes) might be cut
+            # before they can be boosted above low-value symbols (imports)
+            fetch_limit = max(limit * 3, limit + 50)
+            results = self._table.search(query, query_type="hybrid").limit(fetch_limit).to_list()
 
             # Normalize scores to 0.0-1.0 range
             if results:
@@ -408,7 +414,11 @@ class VectorStore:
                     raw_score = r.get("_score", 0.0)
                     r["score"] = raw_score / max_score if max_score > 0 else 0.0
 
-            return results
+            # Apply kind weighting, field boosting, etc.
+            results = self._apply_search_enhancements(results, query, method="hybrid")
+
+            # Now truncate to requested limit (after re-ranking)
+            return results[:limit]
 
         except Exception:
             # Hybrid search might not be supported in this LanceDB version
@@ -590,12 +600,16 @@ class VectorStore:
             "Field": 0.8,
             "Constant": 0.9,
             "Parameter": 0.7,
+            # Deboost noise - you want definitions, not these
+            "Import": 0.4,
+            "Namespace": 0.6,
         }
 
         base_score = result.get("score", 0.0)
         kind = result.get("kind", "")
 
-        weight = KIND_WEIGHTS.get(kind, 1.0)  # Default 1.0 for unknown kinds
+        # Normalize kind to title case (data has "function", dict has "Function")
+        weight = KIND_WEIGHTS.get(kind.title(), 1.0)  # Default 1.0 for unknown kinds
         return min(base_score * weight, 1.0)  # Clamp to 1.0
 
     def _filter_low_quality_results(self, results: list[dict], min_score: float = 0.05) -> list[dict]:

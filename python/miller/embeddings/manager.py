@@ -74,6 +74,13 @@ class EmbeddingManager:
         # Load model (suppress stdout/stderr to keep MCP protocol clean)
         # SentenceTransformer downloads models and writes progress to stdout,
         # which breaks MCP's JSON-RPC protocol (stdout must be clean)
+        #
+        # IMPORTANT: Set offline mode to prevent HuggingFace from doing network
+        # "freshness checks" on cached models. Without this, each check can timeout
+        # after 10s with retries, causing 20-30s delays on first search.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
         with open(os.devnull, "w") as devnull, redirect_stdout(devnull), redirect_stderr(devnull):
             self.model = SentenceTransformer(model_name, device=self.device)
 
