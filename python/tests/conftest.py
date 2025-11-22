@@ -9,16 +9,25 @@ Specialized fixtures are organized in the fixtures/ directory:
 - fixtures.watcher: FileWatcher fixtures
 """
 
-import pytest
+import sys
 from pathlib import Path
 
+# Add tests directory to sys.path so pytest can find fixture modules
+# This is needed when running from repo root (e.g., pytest python/tests/)
+_tests_dir = Path(__file__).parent
+if str(_tests_dir) not in sys.path:
+    sys.path.insert(0, str(_tests_dir))
+
+import pytest
+
 # Load fixture modules
+# These are relative to python/tests/ which is now on sys.path
 pytest_plugins = [
-    "tests.fixtures.trace_basic",
-    "tests.fixtures.trace_advanced",
-    "tests.fixtures.trace_edge",
-    "tests.fixtures.memory",
-    "tests.fixtures.watcher",
+    "fixtures.trace_basic",
+    "fixtures.trace_advanced",
+    "fixtures.trace_edge",
+    "fixtures.memory",
+    "fixtures.watcher",
 ]
 
 

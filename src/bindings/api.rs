@@ -153,7 +153,10 @@ pub fn extract_files_batch(
                 let symbols = manager
                     .extract_symbols(file_path, content, workspace_root_path)
                     .unwrap_or_else(|e| {
-                        eprintln!("Warning: Failed to extract symbols from {}: {}", file_path, e);
+                        eprintln!(
+                            "Warning: Failed to extract symbols from {}: {}",
+                            file_path, e
+                        );
                         Vec::new()
                     });
 
@@ -161,7 +164,10 @@ pub fn extract_files_batch(
                 let identifiers = manager
                     .extract_identifiers(file_path, content, &symbols)
                     .unwrap_or_else(|e| {
-                        eprintln!("Warning: Failed to extract identifiers from {}: {}", file_path, e);
+                        eprintln!(
+                            "Warning: Failed to extract identifiers from {}: {}",
+                            file_path, e
+                        );
                         Vec::new()
                     });
 
@@ -169,7 +175,10 @@ pub fn extract_files_batch(
                 let relationships = manager
                     .extract_relationships(file_path, content, &symbols)
                     .unwrap_or_else(|e| {
-                        eprintln!("Warning: Failed to extract relationships from {}: {}", file_path, e);
+                        eprintln!(
+                            "Warning: Failed to extract relationships from {}: {}",
+                            file_path, e
+                        );
                         Vec::new()
                     });
 
