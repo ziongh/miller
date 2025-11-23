@@ -4,13 +4,37 @@
 
 <!-- Add your notes below -->
 
-1. Deep review project startup indexing, incremental indexing, and the manage_workspace functionality. This is foundation of the whole system. Let's dig in and ultrathink about it and do a close compare to ~/source/julie functionality for the same things: startup, incremental, manage_workspace. Obviously we will be a LITTLE different from julie because of our tech stack differences but Julie has had a lot more dogfooding done on it than Miller and that's a theme that's going to be recurring. So while we aren't going to straight copy Julie (we actually want to improve upon Julie in every aspect that we can) we do want to leverage Julie's lessons learned from more extensive dogfooding.
+## ✅ COMPLETED
 
-2. This is really an extension of #1: we need to audit the data we are capturing and where we are storing it. Treesitter extracted data, filenames, filepaths, file content, positional data, relationships, lance indexes, etc. We want to make sure we are at least covering the same data as Julie and then we want to improve upon that. We have lance/tantivy available and that opens up so many more opportunities than we had in Julie. We can create mulitple indexed fields with different tokenizers, whatever we need to do. The extractors are the heart of the project but the resulting data, the indexes, the embeddings, are all the life blood of project and we need to insure that it is of the utmost quality.
+1. ~~Deep review project startup indexing, incremental indexing, and the manage_workspace functionality.~~ **DONE (2025-11-23)**
+   - Achieved parity with Julie PLUS additional improvements
+   - Added: `.millerignore` with smart vendor detection
+   - Added: Staleness detection (mtime vs DB timestamp)
+   - Added: Blake3 hashing in Rust (3x faster)
+   - Added: Atomic batch updates with INSERT OR REPLACE
+   - Added: Per-workspace database paths
+   - Added: `fast_explore` similar and dependencies modes
+
+---
+
+## IN PROGRESS / TODO
+
+2. ~~Audit data capture and storage~~ **PARTIALLY DONE (2025-11-23)**
+   - ✅ Verified 100% schema parity with Julie (symbols, identifiers, relationships, files tables)
+   - ✅ Confirmed LanceDB/Tantivy for FTS (NOT SQLite FTS5)
+   - ✅ PyO3 bindings expose all extractor fields
+   - ✅ LanceDB has `code_pattern` field (Miller-only advantage for pattern search)
+   - ⏳ Remaining: Implement enhancements from "Future Enhancements" section below
 
 3. We need to check the issues on github in Julie, a user posted a comment there about RAG and embeddings that I want us to discuss.
 
-4. I think we should look at the plan tool and discuss how we can enhance it. I noticed that in use, our plans get pretty large, which is fine, but the issue is that our read/update mechanism for plans isn't very token efficient and we start getting token size warnings pretty quickly. Also, in my mind a "task" or list of "tasks" is a fundamental part of a plan and it would be nice if we could enhance the tool to make management of tasks easy. Again we should disucss and zero in on the best way to handle this.
+4. ~~Plan tool token efficiency and task management~~ **DONE (2025-11-23)**
+   - Added summary mode to `list` action (excludes content/git by default)
+   - Added `include_content=True` option for full plan retrieval
+   - Added `task_count` and `completed_count` fields (parses `- [ ]` / `- [x]` checkboxes)
+   - Updated docstring with Task Counting section
+   - Updated server instructions.md with plan tool best practices
+   - All 13 plan tests pass
 
 5. In Julie we created a set of rules to follow when auditing each tool and then went one by one validating each tool (/Users/murphy/source/julie/docs/archive/TOOL_AUDIT_2025-11-11_COMPLETE.md) we should do something similar in Miller to make sure that every tool is leveraging our unique functionality to highest level it can. Also part of this audit should be the specialized output formats. Another point: as we audit the tools we should explore how Julie implemented the same tool, not to copy it but make sure that Julie hasn't already solved some issue we haven't encountered yet or maybe Julie has some genuinely clever implementation we can build on.
 
@@ -18,3 +42,54 @@
 
 7. We have some custom commands we've created at .claude/commands, we should discuss if there are others we should add. We should also discuss if there are any hooks we should create https://code.claude.com/docs/en/hooks-guide
 
+8. Here's a comment I got on the Julie repo that might have some info in it we should discuss: What if we instead of using SQLlite + ONXX cutom embedding storage, we used something like LanceDB and we could also add some improvements, like a ReRanker step at the end of extraction. And LanceDB can do both FTS5 search plus embeddings.
+
+We could also create a small script for Finetunning an Embedding model like "jinaai/jina-code-embeddings-0.5b" using LoRa. It has a context window of 32K tokens, which would allow larger methods/classes/ etc to be better indexed (I know that in a good code base this shouldn't exsit). And by using something like LoRa (Fine-tuning) it would allow companies to embed some of their specific framework knowledge. For instance, on a company there may exist a specific way to access DB in C# that is not simple Dapper or simple EfCore, but a in-house framework. And with fine-tuning the embeddings, we could improve the understanding and parsing of existing code.
+
+---
+
+## Future Enhancements (Ranked by Impact)
+
+*Added 2025-11-23 after data audit confirmed parity with Julie. These are ideas to push Miller beyond Julie.*
+
+### Tier 1: Game Changers 🏆
+
+| Rank | Feature | Impact |
+|------|---------|--------|
+| **#1** | **Re-ranker (cross-encoder)** | Cross-encoder sees query + candidate together for semantic fit. 15-30% relevance improvement. Single biggest search quality win. |
+| **#2** | **Transitive closure table** | Pre-computed call reachability. "If I change X, what breaks?" becomes O(1) lookup instead of BFS traversal. Transforms impact analysis. |
+| **#3** | **Graph expansion on search** | When finding a symbol, auto-include callers, callees, parent class, related tests. Return *understanding*, not just locations. |
+
+### Tier 2: Significant Improvements 🎯
+
+| Rank | Feature | Impact |
+|------|---------|--------|
+| **#4** | **Dual embeddings** | Code model + NL model. "Find auth logic" (NL) vs "IAuthService" (code) use different models for better recall. |
+| **#5** | **Query expansion** | "auth" → also search "authenticate authorization credentials". Catches synonyms embeddings miss. |
+| **#6** | **Field boosting (Tantivy)** | `name^3 signature^2 doc_comment^1`. Name matches rank higher. Simple config, measurable improvement. |
+
+### Tier 3: Valuable Additions 📈
+
+| Rank | Feature | Impact |
+|------|---------|--------|
+| **#7** | **Entry point detection** | Mark symbols as main/handler/test/route. "Show me entry points" for codebase understanding. |
+| **#8** | **Contextual boosting** | Boost results from recently touched files. Workflow-aware search. |
+| **#9** | **Fuzzy search (Tantivy ~)** | Typo tolerance via edit distance. "authentcation~1" finds "authentication". |
+| **#10** | **Call frequency counts** | Track how many times A calls B. Hot path detection. |
+
+### Tier 4: Polish 💅
+
+| Rank | Feature | Impact |
+|------|---------|--------|
+| **#11** | Symbol metrics (LOC, complexity) | Code quality insights |
+| **#12** | Scalar indexes in LanceDB | Performance (already fast enough) |
+| **#13** | AST fingerprints | Structural similarity (embeddings handle this) |
+
+### Key Insight
+
+The top 3 share a theme: **returning understanding, not just locations**.
+- Re-ranker → return the *right* results
+- Transitive closure → return *impact*, not just direct calls
+- Graph expansion → return *context*, not just the symbol
+
+Current search answers "where is X?" — these upgrades answer "what do I need to know about X?"

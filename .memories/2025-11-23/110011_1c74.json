@@ -1,0 +1,46 @@
+{
+  "description": "Implemented blake3 hashing in Rust (miller_core) for 3x faster file change detection. Added incremental_update_atomic() to StorageManager for transaction-safe batch updates. Scanner updated to use atomic pattern but has test failures - PyIdentifier attribute names fixed (start_line/start_column) but still 3 failing tests to debug.",
+  "git": {
+    "branch": "main",
+    "commit": "eccd082",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      "Cargo.toml",
+      "TODO.md",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/miller/tools/explore.py",
+      "python/miller/tools/explore_wrapper.py",
+      "python/miller/tools/workspace/__init__.py",
+      "python/miller/tools/workspace/indexing.py",
+      "python/miller/tools/workspace/stats.py",
+      "python/miller/workspace/hash_tracking.py",
+      "python/miller/workspace/index_stats.py",
+      "python/miller/workspace/indexer.py",
+      "python/miller/workspace/scanner.py",
+      "python/tests/test_manage_workspace.py",
+      "python/tests/test_manage_workspace_health.py",
+      "python/tests/test_server.py",
+      "python/tests/test_workspace.py",
+      "src/bindings/api.rs",
+      "src/bindings/mod.rs",
+      "src/lib.rs",
+      ".memories/2025-11-23/084315_5b5b.json",
+      ".memories/2025-11-23/101437_cee2.json",
+      "docs/PORT_PLAN.md",
+      "python/tests/test_explore_dependencies.py",
+      "python/tests/test_explore_similar.py"
+    ]
+  },
+  "id": "checkpoint_14a7843c_da1caf",
+  "tags": [
+    "blake3",
+    "atomic-update",
+    "performance",
+    "rust",
+    "pyo3"
+  ],
+  "timestamp": 1763917211,
+  "type": "checkpoint"
+}

@@ -1,0 +1,49 @@
+{
+  "description": "Implemented comprehensive indexing improvements: 1) .millerignore support with smart vendor detection (auto-generates on first run, detects libs/, vendor/, jquery/bootstrap files), 2) Staleness detection comparing file mtimes to DB timestamp, 3) New file detection at startup. Uses pathspec library for gitignore-compatible patterns. 629/630 tests pass.",
+  "git": {
+    "branch": "main",
+    "commit": "eccd082",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      "Cargo.toml",
+      "TODO.md",
+      "python/miller/ignore_patterns.py",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/miller/tools/explore.py",
+      "python/miller/tools/explore_wrapper.py",
+      "python/miller/tools/workspace/__init__.py",
+      "python/miller/tools/workspace/indexing.py",
+      "python/miller/tools/workspace/stats.py",
+      "python/miller/workspace/hash_tracking.py",
+      "python/miller/workspace/index_stats.py",
+      "python/miller/workspace/indexer.py",
+      "python/miller/workspace/scanner.py",
+      "python/tests/test_manage_workspace.py",
+      "python/tests/test_manage_workspace_health.py",
+      "python/tests/test_server.py",
+      "python/tests/test_workspace.py",
+      "src/bindings/api.rs",
+      "src/bindings/mod.rs",
+      "src/lib.rs",
+      ".memories/2025-11-23/084315_5b5b.json",
+      ".memories/2025-11-23/101437_cee2.json",
+      ".memories/2025-11-23/110011_1c74.json",
+      ".memories/2025-11-23/110551_9fed.json",
+      "docs/PORT_PLAN.md",
+      "python/tests/test_explore_dependencies.py",
+      "python/tests/test_explore_similar.py"
+    ]
+  },
+  "id": "checkpoint_3339bd29_4924ab",
+  "tags": [
+    "millerignore",
+    "vendor-detection",
+    "staleness",
+    "indexing",
+    "ignore-patterns"
+  ],
+  "timestamp": 1763921527,
+  "type": "checkpoint"
+}

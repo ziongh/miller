@@ -1,0 +1,35 @@
+{
+  "description": "Implemented plan summary mode for token efficiency. List action now returns minimal data by default (id, title, status, timestamp, task_count, completed_count). Added include_content=True option for full content. Added _count_tasks() helper to parse markdown checkboxes. All 13 plan tests pass.",
+  "git": {
+    "branch": "main",
+    "commit": "c67d33a",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      "TODO.md",
+      "python/miller/tools/memory.py",
+      "python/tests/test_plan.py",
+      ".memories/2025-11-23/084315_5b5b.json",
+      ".memories/2025-11-23/101437_cee2.json",
+      ".memories/2025-11-23/110011_1c74.json",
+      ".memories/2025-11-23/110551_9fed.json",
+      ".memories/2025-11-23/121207_1e93.json",
+      ".memories/2025-11-23/122305_bce2.json",
+      ".memories/2025-11-23/123655_51fd.json",
+      ".memories/2025-11-23/124325_6d64.json",
+      ".memories/2025-11-23/132059_327d.json",
+      "docs/GEMINI_SUGGESTIONS.md",
+      "python/tests/test_explore_dependencies.py",
+      "python/tests/test_explore_similar.py"
+    ]
+  },
+  "id": "checkpoint_74d0e645_561acf",
+  "tags": [
+    "plan-tool",
+    "token-efficiency",
+    "tdd",
+    "summary-mode"
+  ],
+  "timestamp": 1763926351,
+  "type": "checkpoint"
+}

@@ -338,6 +338,25 @@ async def _recall_filesystem(
     return all_checkpoints[:limit]
 
 
+def _count_tasks(content: str) -> tuple[int, int]:
+    """Count total tasks and completed tasks in markdown content.
+
+    Looks for markdown checkbox patterns: - [ ] and - [x]
+
+    Returns:
+        Tuple of (total_count, completed_count)
+    """
+    import re
+    if not content:
+        return 0, 0
+
+    # Match markdown checkboxes: - [ ] or - [x] or - [X]
+    unchecked = len(re.findall(r'- \[ \]', content))
+    checked = len(re.findall(r'- \[[xX]\]', content))
+
+    return unchecked + checked, checked
+
+
 async def plan(
     _ctx: Context,
     action: str,
@@ -346,6 +365,7 @@ async def plan(
     id: Optional[str] = None,
     status: Optional[str] = None,
     activate: bool = True,
+    include_content: bool = False,
 ) -> Any:
     """
     Manage mutable development plans.
@@ -370,16 +390,28 @@ async def plan(
         title: Plan title (required for save) - converted to slug for ID
         content: Plan content in markdown (optional for save/update)
         id: Plan ID (required for get/update/activate/complete)
-        status: Plan status (optional for update) - "active"|"pending"|"completed"
+        status: Plan status (optional for update/list filter) - "active"|"pending"|"completed"
         activate: Auto-activate after save (default: True, enforces single-active)
+        include_content: Include full content in list (default: False for token efficiency)
 
     Returns:
         - save: Plan dict with generated ID
         - get: Plan dict with all fields
-        - list: List of plan dicts (filtered by status if provided)
+        - list: List of plan summaries (id, title, status, task_count, completed_count)
+                Use include_content=True for full content
         - activate: Success message dict
         - update: Updated plan dict
         - complete: Completed plan dict (with completed_at timestamp)
+
+    Task Counting:
+        The `task_count` and `completed_count` fields in list results are calculated
+        from markdown checkboxes in the plan content:
+        - Unchecked: `- [ ]` (counts toward task_count)
+        - Checked: `- [x]` or `- [X]` (counts toward both task_count and completed_count)
+
+        Use standard markdown task syntax for accurate counting. Other formats like
+        emoji checkmarks (✅) are not counted as they represent outcomes/criteria,
+        not actionable tasks.
 
     Workflow:
         1. plan(action="save", title="Feature X") → Start tracking
@@ -466,7 +498,26 @@ async def plan(
                 if status and plan_data.get("status") != status:
                     continue
 
-                all_plans.append(plan_data)
+                # Calculate task counts from content
+                plan_content = plan_data.get("content", "")
+                task_count, completed_count = _count_tasks(plan_content)
+
+                if include_content:
+                    # Full mode: include everything plus task counts
+                    plan_data["task_count"] = task_count
+                    plan_data["completed_count"] = completed_count
+                    all_plans.append(plan_data)
+                else:
+                    # Summary mode (default): exclude content and git for token efficiency
+                    summary = {
+                        "id": plan_data.get("id"),
+                        "title": plan_data.get("title"),
+                        "status": plan_data.get("status"),
+                        "timestamp": plan_data.get("timestamp"),
+                        "task_count": task_count,
+                        "completed_count": completed_count,
+                    }
+                    all_plans.append(summary)
 
             except (json.JSONDecodeError, KeyError):
                 continue

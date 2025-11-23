@@ -258,3 +258,102 @@ async def test_plan_get_retrieves_by_id(temp_memories_dir, mock_git_context, moc
         assert retrieved["id"] == plan2["id"]
         assert retrieved["title"] == "Plan 2"
         assert retrieved["content"] == "C2"
+
+
+# ============================================================================
+# Plan Summary Mode Tests (Token Efficiency)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_plan_list_excludes_content_by_default(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan list excludes content field by default for token efficiency."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create a plan with large content
+        large_content = "## Goal\n" + "x" * 5000  # 5KB of content
+        await plan(ctx, action="save", title="Big Plan", content=large_content)
+
+        # List plans (default - summary mode)
+        plans = await plan(ctx, action="list")
+
+        assert len(plans) == 1
+        # Content should NOT be included by default
+        assert "content" not in plans[0]
+        # But metadata should be present
+        assert "id" in plans[0]
+        assert "title" in plans[0]
+        assert "status" in plans[0]
+        assert "timestamp" in plans[0]
+
+
+@pytest.mark.asyncio
+async def test_plan_list_includes_content_when_requested(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan list includes content when include_content=True."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        await plan(ctx, action="save", title="Test Plan", content="Test content here")
+
+        # List with include_content=True
+        plans = await plan(ctx, action="list", include_content=True)
+
+        assert len(plans) == 1
+        # Content SHOULD be included when requested
+        assert "content" in plans[0]
+        assert plans[0]["content"] == "Test content here"
+
+
+@pytest.mark.asyncio
+async def test_plan_list_includes_task_counts(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan list includes task_count and completed_count."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create a plan with tasks in markdown format
+        content = """## Goal
+Implement feature X
+
+## Tasks
+- [ ] Task 1
+- [x] Task 2 (done)
+- [ ] Task 3
+- [x] Task 4 (done)
+- [ ] Task 5
+"""
+        await plan(ctx, action="save", title="Task Plan", content=content)
+
+        # List plans
+        plans = await plan(ctx, action="list")
+
+        assert len(plans) == 1
+        # Should have task counts
+        assert "task_count" in plans[0]
+        assert "completed_count" in plans[0]
+        assert plans[0]["task_count"] == 5
+        assert plans[0]["completed_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_plan_list_summary_excludes_git(temp_memories_dir, mock_git_context, mock_context):
+    """Verify plan list summary excludes git field to save tokens."""
+    from miller.tools.memory import plan
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        await plan(ctx, action="save", title="Git Plan", content="Content")
+
+        # List plans (summary mode - default)
+        plans = await plan(ctx, action="list")
+
+        assert len(plans) == 1
+        # Git should NOT be included in summary
+        assert "git" not in plans[0]
+
+        # But should be included with include_content=True
+        plans_full = await plan(ctx, action="list", include_content=True)
+        assert "git" in plans_full[0]

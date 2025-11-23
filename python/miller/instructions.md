@@ -63,6 +63,13 @@ The references are complete - you don't need to search again to verify.
 - `plan`: Track development tasks and progress
 - **Use proactively - your memory persists across sessions**
 
+**Plan tool best practices:**
+- Use `- [ ]` / `- [x]` markdown checkboxes for tasks you want counted
+- The `list` action returns summaries by default (token-efficient)
+- Use `include_content=True` only when you need full plan details
+- Task counts (`task_count`, `completed_count`) are derived from checkboxes
+- Only one plan can be active at a time (keeps you focused)
+
 ## Efficiency and Trust
 
 You operate in a **resource-efficient** manner. Miller's tools return exactly what you need.

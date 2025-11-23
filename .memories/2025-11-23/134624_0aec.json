@@ -1,0 +1,36 @@
+{
+  "description": "Added task counting documentation to plan tool. Docstring now explains that `- [ ]` / `- [x]` checkboxes are counted for task_count/completed_count, while emoji checkmarks are not. Updated server instructions.md with plan tool best practices. All 13 plan tests pass.",
+  "git": {
+    "branch": "main",
+    "commit": "c67d33a",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      "TODO.md",
+      "python/miller/instructions.md",
+      "python/miller/tools/memory.py",
+      "python/tests/test_plan.py",
+      ".memories/2025-11-23/084315_5b5b.json",
+      ".memories/2025-11-23/101437_cee2.json",
+      ".memories/2025-11-23/110011_1c74.json",
+      ".memories/2025-11-23/110551_9fed.json",
+      ".memories/2025-11-23/121207_1e93.json",
+      ".memories/2025-11-23/122305_bce2.json",
+      ".memories/2025-11-23/123655_51fd.json",
+      ".memories/2025-11-23/124325_6d64.json",
+      ".memories/2025-11-23/132059_327d.json",
+      ".memories/2025-11-23/133231_4a02.json",
+      "docs/GEMINI_SUGGESTIONS.md",
+      "python/tests/test_explore_dependencies.py",
+      "python/tests/test_explore_similar.py"
+    ]
+  },
+  "id": "checkpoint_9875b68d_c53d83",
+  "tags": [
+    "plan-tool",
+    "documentation",
+    "task-counting"
+  ],
+  "timestamp": 1763927184,
+  "type": "checkpoint"
+}
