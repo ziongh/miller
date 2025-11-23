@@ -173,13 +173,15 @@ class TestChangeDetection:
         """Test that unchanged files are skipped."""
         from miller.workspace import WorkspaceScanner
         from miller.embeddings import EmbeddingManager
+        from miller import miller_core
 
         embeddings = EmbeddingManager(device="cpu")
 
         # Index file
         file_path = test_workspace / "src" / "main.py"
         content = file_path.read_text()
-        file_hash = hashlib.sha256(content.encode()).hexdigest()
+        # Use blake3 hash (same as scanner uses)
+        file_hash = miller_core.hash_content(content)
 
         # Use relative path to match production behavior
         relative_path = str(file_path.relative_to(test_workspace)).replace("\\", "/")
@@ -210,7 +212,7 @@ class TestWorkspaceIndexing:
 
     @pytest.mark.asyncio
     async def test_check_if_indexing_needed_fresh_db(self, test_workspace, storage_manager, vector_store):
-        """Test that fresh database (all files indexed) skips indexing."""
+        """Test that fresh database (all files indexed WITH symbols) skips indexing."""
         from miller.workspace import WorkspaceScanner
         from miller.embeddings import EmbeddingManager
         from miller import miller_core
@@ -218,6 +220,7 @@ class TestWorkspaceIndexing:
         embeddings = EmbeddingManager(device="cpu")
 
         # Index all files manually first (using relative paths like production code)
+        # IMPORTANT: Must add BOTH files AND symbols to be truly "indexed"
         for py_file in test_workspace.rglob("*.py"):
             if "node_modules" in str(py_file):
                 continue
@@ -231,10 +234,68 @@ class TestWorkspaceIndexing:
                 relative_path = str(py_file.relative_to(test_workspace)).replace("\\", "/")
                 storage_manager.add_file(relative_path, language, content, file_hash, len(content))
 
+                # Also extract and add symbols (required for "fresh" state)
+                result = miller_core.extract_file(content, language, relative_path)
+                if result.symbols:
+                    storage_manager.add_symbols_batch(result.symbols)
+
         scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
 
-        # Fresh DB should NOT need indexing
+        # Fresh DB (with files AND symbols) should NOT need indexing
         assert await scanner.check_if_indexing_needed() is False
+
+    @pytest.mark.asyncio
+    async def test_check_indexing_needed_with_files_but_no_symbols(self, test_workspace, storage_manager, vector_store):
+        """
+        Regression test for Julie Bug #2: "Workspace already indexed: 0 symbols"
+
+        Bug: check_if_indexing_needed() only checked if files existed in DB,
+        but didn't verify symbols. This caused corrupted states (files but no
+        symbols) to report "already indexed: 0 symbols" - a nonsensical message.
+
+        Root cause: The check_if_indexing_needed() only queried files table,
+        not symbols table. If indexing was interrupted after adding files but
+        before adding symbols, the workspace would be in a broken state.
+
+        Fix: Added symbol count check - if files exist but symbols == 0,
+        return True (needs indexing) to recover from corrupted state.
+        """
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+        import hashlib
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(device="cpu")
+
+        # Simulate corrupted state: add files to DB but NO symbols
+        for py_file in test_workspace.rglob("*.py"):
+            content = py_file.read_text()
+            file_hash = hashlib.sha256(content.encode()).hexdigest()
+            language = miller_core.detect_language(str(py_file))
+
+            if language:
+                relative_path = str(py_file.relative_to(test_workspace)).replace("\\", "/")
+                # Add file record but DON'T add symbols (simulating interrupted indexing)
+                storage_manager.add_file(relative_path, language, content, file_hash, len(content))
+
+        # Verify we have files but no symbols
+        db_files = storage_manager.get_all_files()
+        assert len(db_files) > 0, "Setup failed: should have files in DB"
+
+        cursor = storage_manager.conn.execute("SELECT COUNT(*) FROM symbols")
+        symbol_count = cursor.fetchone()[0]
+        assert symbol_count == 0, "Setup failed: should have 0 symbols"
+
+        # The bug: check_if_indexing_needed would return False here
+        # (because files exist), causing "already indexed: 0 symbols"
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+        needs_indexing = await scanner.check_if_indexing_needed()
+
+        # FIX: Should return True because symbol_count == 0 despite files existing
+        assert needs_indexing is True, (
+            "Bug regression: check_if_indexing_needed() should return True when "
+            "files exist but symbols == 0 (corrupted state)"
+        )
 
     @pytest.mark.asyncio
     async def test_index_workspace_returns_stats(self, test_workspace, storage_manager, vector_store):
@@ -253,6 +314,36 @@ class TestWorkspaceIndexing:
         assert "skipped" in stats
         assert "deleted" in stats
         assert stats["indexed"] >= 3  # At least 3 .py files
+
+    @pytest.mark.asyncio
+    async def test_index_workspace_returns_total_symbols(self, test_workspace, storage_manager, vector_store):
+        """
+        Regression test: index_workspace must return total_symbols count.
+
+        Bug: IndexStats didn't track symbol count, causing manage_workspace to show
+        "0 symbols indexed" even after successful indexing.
+
+        Root cause: IndexStats class only tracked file counts (indexed, updated, skipped)
+        but not the total number of symbols extracted.
+
+        Fix: Added total_symbols field to IndexStats, incremented during indexing.
+        """
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+
+        embeddings = EmbeddingManager(device="cpu")
+
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+        stats = await scanner.index_workspace()
+
+        # total_symbols must be in stats
+        assert "total_symbols" in stats, "IndexStats must include total_symbols"
+
+        # Should have extracted symbols (test workspace has functions)
+        assert stats["total_symbols"] > 0, (
+            f"Bug regression: total_symbols is {stats['total_symbols']}, "
+            "should be > 0 after indexing workspace with code files"
+        )
 
     @pytest.mark.asyncio
     async def test_index_workspace_stores_symbols(self, test_workspace, storage_manager, vector_store):

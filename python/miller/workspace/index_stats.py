@@ -15,6 +15,7 @@ class IndexStats:
         self.skipped = 0  # Unchanged files skipped
         self.deleted = 0  # Files deleted from DB
         self.errors = 0  # Files that failed to index
+        self.total_symbols = 0  # Total symbols extracted across all files
 
     def to_dict(self) -> dict[str, int]:
         """Convert to dictionary for JSON serialization."""
@@ -24,4 +25,5 @@ class IndexStats:
             "skipped": self.skipped,
             "deleted": self.deleted,
             "errors": self.errors,
+            "total_symbols": self.total_symbols,
         }

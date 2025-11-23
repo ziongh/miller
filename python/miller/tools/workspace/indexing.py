@@ -40,7 +40,7 @@ async def handle_index(
     for ws in registry.list_workspaces():
         ws_path = Path(ws["path"]).resolve()
         if ws_path == workspace_path:
-            workspace_id = ws["id"]
+            workspace_id = ws["workspace_id"]
             break
 
     # Initialize components for indexing

@@ -68,9 +68,10 @@ class TestManageWorkspaceHealth:
 
                 result = await manage_workspace(operation="health")
 
-                # Should show workspace count
-                assert "2" in result
-                assert "workspace" in result.lower()
+                # Lean format: "1p+1r ws" shows workspace counts
+                assert "ws" in result.lower()
+                # Check we have both types indicated
+                assert "1p" in result and "1r" in result
 
             finally:
                 os.chdir(original_dir)
@@ -104,9 +105,9 @@ class TestManageWorkspaceHealth:
 
                 result = await manage_workspace(operation="health")
 
-                # Should show both types
-                assert "primary" in result.lower()
-                assert "reference" in result.lower()
+                # Lean format uses "p" for primary, "r" for reference
+                assert "1p" in result  # 1 primary
+                assert "1r" in result  # 1 reference
 
             finally:
                 os.chdir(original_dir)
@@ -137,9 +138,9 @@ class TestManageWorkspaceHealth:
 
                 result = await manage_workspace(operation="health")
 
-                # Should show totals
-                assert "symbols" in result.lower() or "symbol" in result.lower()
-                assert "files" in result.lower() or "file" in result.lower()
+                # Lean format: "Health: ✅ OK | 1p ws | X sym | Y files | Z MB"
+                assert "sym" in result.lower()  # Lean uses "sym" not "symbols"
+                assert "files" in result.lower()
 
             finally:
                 os.chdir(original_dir)
@@ -173,8 +174,9 @@ class TestManageWorkspaceHealth:
                 # Detailed mode should show individual workspace info
                 assert "Test Project" in result
 
-                # Should show database or storage info
-                assert "database" in result.lower() or "storage" in result.lower() or "db" in result.lower()
+                # Detailed mode shows per-workspace breakdown with symbols
+                # Format: "  ✓ Test Project [p] N sym, N files"
+                assert "sym" in result.lower()
 
             finally:
                 os.chdir(original_dir)
@@ -238,6 +240,67 @@ class TestManageWorkspaceHealth:
 
                 # Should identify the issue
                 assert "orphaned" in result.lower() or "missing" in result.lower() or "issue" in result.lower() or "warning" in result.lower()
+
+            finally:
+                os.chdir(original_dir)
+
+
+class TestManageWorkspaceLeanOutput:
+    """Test lean output format for manage_workspace operations."""
+
+    @pytest.mark.asyncio
+    async def test_health_lean_output_is_single_line(self):
+        """
+        Health lean output should be compact single-line summary.
+
+        Format: Health: ✅ OK | N workspaces | X sym | Y files | Z MB
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import os
+
+            original_dir = os.getcwd()
+            os.chdir(tmpdir)
+
+            try:
+                # Create and register workspace
+                registry = WorkspaceRegistry()
+                registry.add_workspace(
+                    path=tmpdir, name="Test", workspace_type="primary"
+                )
+
+                result = await manage_workspace(operation="health", output_format="lean")
+
+                # Lean output should be much shorter (single line or few lines)
+                lines = [l for l in result.strip().split("\n") if l.strip()]
+                assert len(lines) <= 3, f"Lean output should be compact, got {len(lines)} lines"
+
+                # Should contain key metrics in compact form
+                assert "health" in result.lower() or "✅" in result or "ok" in result.lower()
+
+            finally:
+                os.chdir(original_dir)
+
+    @pytest.mark.asyncio
+    async def test_list_lean_output_is_compact(self):
+        """List lean output should show one line per workspace."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import os
+
+            original_dir = os.getcwd()
+            os.chdir(tmpdir)
+
+            try:
+                registry = WorkspaceRegistry()
+                registry.add_workspace(path=tmpdir, name="TestProject", workspace_type="primary")
+
+                result = await manage_workspace(operation="list", output_format="lean")
+
+                # Should have workspace name
+                assert "TestProject" in result or "test" in result.lower()
+
+                # Should NOT have verbose labels like "ID:" or "Path:"
+                assert "ID:" not in result
+                assert "Symbols:" not in result
 
             finally:
                 os.chdir(original_dir)

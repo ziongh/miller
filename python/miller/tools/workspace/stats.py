@@ -1,19 +1,59 @@
 """Workspace statistics and reporting operations."""
 
+import json
+import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
 from miller.workspace_registry import WorkspaceRegistry
 
 
-def handle_list(registry: WorkspaceRegistry) -> str:
+def get_live_workspace_counts(workspace_id: str) -> tuple[int, int]:
+    """
+    Query actual symbol/file counts from workspace database.
+
+    This queries the database directly rather than relying on potentially
+    stale registry data. Mirrors Julie's get_workspace_usage_stats() approach.
+
+    Args:
+        workspace_id: Workspace ID to query
+
+    Returns:
+        Tuple of (symbol_count, file_count)
+    """
+    db_path = get_workspace_db_path(workspace_id)
+    if not db_path.exists():
+        return 0, 0
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        # Get symbol count
+        cursor.execute("SELECT COUNT(*) FROM symbols")
+        symbol_count = cursor.fetchone()[0]
+
+        # Get file count (distinct file paths)
+        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM symbols")
+        file_count = cursor.fetchone()[0]
+
+        conn.close()
+        return symbol_count, file_count
+    except Exception:
+        return 0, 0
+
+
+def handle_list(
+    registry: WorkspaceRegistry, output_format: Literal["text", "json"] = "text"
+) -> str:
     """
     Handle list operation.
 
     Args:
         registry: WorkspaceRegistry instance
+        output_format: "text" (lean default) or "json"
 
     Returns:
         Formatted list of workspaces
@@ -21,40 +61,45 @@ def handle_list(registry: WorkspaceRegistry) -> str:
     workspaces = registry.list_workspaces()
 
     if not workspaces:
-        return "No workspaces registered yet. Use 'index' to index current workspace."
+        return "No workspaces registered."
 
-    output = ["📁 Registered Workspaces:\n"]
+    if output_format == "json":
+        return json.dumps(workspaces, indent=2)
+
+    # Lean text format
+    output = [f"Workspaces ({len(workspaces)}):"]
 
     for ws in workspaces:
-        # Workspace type indicator
-        if ws["workspace_type"] == "primary":
-            status = "🏠 PRIMARY"
-        else:
-            status = "📚 REFERENCE"
+        ws_type = "primary" if ws["workspace_type"] == "primary" else "ref"
+        # Query live counts from database (works for primary and reference workspaces)
+        sym, files = get_live_workspace_counts(ws["workspace_id"])
 
-        output.append(f"{status} {ws['name']}")
-        output.append(f"  ID: {ws['workspace_id']}")
-        output.append(f"  Path: {ws['path']}")
-        output.append(f"  Symbols: {ws['symbol_count']:,}")
-        output.append(f"  Files: {ws['file_count']:,}")
+        # Main line: name [type] path
+        output.append(f"  {ws['name']} [{ws_type}] {ws['path']}")
 
+        # Stats line
+        indexed_str = ""
         if ws.get("last_indexed"):
             indexed_dt = datetime.fromtimestamp(ws["last_indexed"])
-            indexed_str = indexed_dt.strftime("%Y-%m-%d %H:%M")
-            output.append(f"  Last indexed: {indexed_str}")
+            indexed_str = f" | {indexed_dt.strftime('%Y-%m-%d %H:%M')}"
 
-        output.append("")  # Blank line between workspaces
+        output.append(f"    {sym:,} sym | {files:,} files{indexed_str}")
 
     return "\n".join(output)
 
 
-def handle_stats(registry: WorkspaceRegistry, workspace_id: Optional[str]) -> str:
+def handle_stats(
+    registry: WorkspaceRegistry,
+    workspace_id: Optional[str],
+    output_format: Literal["text", "json"] = "text",
+) -> str:
     """
     Handle stats operation.
 
     Args:
         registry: WorkspaceRegistry instance
         workspace_id: Workspace ID to show stats for
+        output_format: "text" (lean default) or "json"
 
     Returns:
         Formatted statistics
@@ -80,153 +125,121 @@ def handle_stats(registry: WorkspaceRegistry, workspace_id: Optional[str]) -> st
             if file.is_file():
                 vector_size += file.stat().st_size
 
-    # Format output
-    output = [
-        f"📊 Workspace Statistics: {workspace.name}",
-        f"  Type: {workspace.workspace_type}",
-        f"  Path: {workspace.path}",
-        f"  Symbols: {workspace.symbol_count:,}",
-        f"  Files: {workspace.file_count:,}",
-        f"  Database size: {db_size / 1024 / 1024:.2f} MB",
-        f"  Vector index size: {vector_size / 1024 / 1024:.2f} MB",
-    ]
+    total_size = db_size + vector_size
 
+    # Query live counts from database
+    symbol_count, file_count = get_live_workspace_counts(workspace_id)
+
+    if output_format == "json":
+        data = {
+            "name": workspace.name,
+            "type": workspace.workspace_type,
+            "path": workspace.path,
+            "symbols": symbol_count,
+            "files": file_count,
+            "db_size_mb": round(db_size / 1024 / 1024, 2),
+            "vector_size_mb": round(vector_size / 1024 / 1024, 2),
+            "last_indexed": workspace.last_indexed,
+        }
+        return json.dumps(data, indent=2)
+
+    # Lean text format
+    indexed_str = ""
     if workspace.last_indexed:
         indexed_dt = datetime.fromtimestamp(workspace.last_indexed)
-        indexed_str = indexed_dt.strftime("%Y-%m-%d %H:%M")
-        output.append(f"  Last indexed: {indexed_str}")
+        indexed_str = f" | {indexed_dt.strftime('%Y-%m-%d %H:%M')}"
 
-    return "\n".join(output)
+    return (
+        f"{workspace.name} [{workspace.workspace_type}]\n"
+        f"  {symbol_count:,} sym | {file_count:,} files | "
+        f"{total_size / 1024 / 1024:.2f} MB{indexed_str}"
+    )
 
 
-def handle_health(registry: WorkspaceRegistry, detailed: bool = False) -> str:
+def handle_health(
+    registry: WorkspaceRegistry,
+    detailed: bool = False,
+    output_format: Literal["text", "json"] = "text",
+) -> str:
     """
     Handle health operation - show system health status.
 
     Args:
         registry: WorkspaceRegistry instance
         detailed: Include detailed per-workspace information
+        output_format: "text" (lean default) or "json"
 
     Returns:
         Health status report
     """
     workspaces = registry.list_workspaces()
 
-    # Basic health header
-    output = ["🏥 Miller Workspace Health Check", "=" * 50, ""]
-
-    # No workspaces case
-    if not workspaces:
-        output.append("📊 Registry: No workspaces registered")
-        output.append("")
-        output.append("💡 Tip: Use 'index' to index current workspace or 'add' for reference workspaces")
-        return "\n".join(output)
-
-    # Workspace counts
+    # Gather stats (query live counts from each workspace database)
     total_count = len(workspaces)
     primary_count = sum(1 for ws in workspaces if ws["workspace_type"] == "primary")
-    reference_count = sum(1 for ws in workspaces if ws["workspace_type"] == "reference")
+    reference_count = total_count - primary_count
 
-    output.append(f"📊 Registry Status:")
-    output.append(f"  Total workspaces: {total_count}")
-    output.append(f"  • Primary: {primary_count}")
-    output.append(f"  • Reference: {reference_count}")
-    output.append("")
-
-    # Aggregate statistics
-    total_symbols = sum(ws.get("symbol_count", 0) for ws in workspaces)
-    total_files = sum(ws.get("file_count", 0) for ws in workspaces)
-
-    output.append(f"📈 Aggregate Statistics:")
-    output.append(f"  Total symbols: {total_symbols:,}")
-    output.append(f"  Total files: {total_files:,}")
-    output.append("")
+    # Query live counts from databases (not stale registry values)
+    total_symbols = 0
+    total_files = 0
+    workspace_counts = {}  # Cache for detailed view
+    for ws in workspaces:
+        sym, files = get_live_workspace_counts(ws["workspace_id"])
+        total_symbols += sym
+        total_files += files
+        workspace_counts[ws["workspace_id"]] = (sym, files)
 
     # Check for orphaned workspaces
-    orphaned = []
-    for ws in workspaces:
-        workspace_path = Path(ws["path"])
-        if not workspace_path.exists():
-            orphaned.append(ws["name"])
+    orphaned = [ws["name"] for ws in workspaces if not Path(ws["path"]).exists()]
 
-    if orphaned:
-        output.append(f"⚠️  Issues Found:")
-        output.append(f"  Orphaned workspaces: {len(orphaned)}")
-        for name in orphaned:
-            output.append(f"    • {name} (path no longer exists)")
-        output.append("")
-        output.append("💡 Tip: Run 'clean' operation to remove orphaned workspaces")
-        output.append("")
-
-    # Calculate total storage usage
-    total_db_size = 0
-    total_vector_size = 0
-
+    # Calculate total storage
+    total_size = 0
     for ws in workspaces:
         workspace_id = ws["workspace_id"]
         db_path = get_workspace_db_path(workspace_id)
         vector_path = get_workspace_vector_path(workspace_id)
-
-        # DB size
         if db_path.exists():
-            total_db_size += db_path.stat().st_size
-
-        # Vector size
+            total_size += db_path.stat().st_size
         if vector_path.parent.exists():
             for file in vector_path.parent.rglob("*"):
                 if file.is_file():
-                    total_vector_size += file.stat().st_size
+                    total_size += file.stat().st_size
 
-    output.append(f"💾 Storage Usage:")
-    output.append(f"  Database: {total_db_size / 1024 / 1024:.2f} MB")
-    output.append(f"  Vector indexes: {total_vector_size / 1024 / 1024:.2f} MB")
-    output.append(f"  Total: {(total_db_size + total_vector_size) / 1024 / 1024:.2f} MB")
-    output.append("")
+    total_mb = total_size / 1024 / 1024
 
-    # Detailed mode: per-workspace breakdown
-    if detailed:
-        output.append("📋 Workspace Details:")
-        output.append("")
+    if output_format == "json":
+        data = {
+            "healthy": len(orphaned) == 0,
+            "workspaces": total_count,
+            "primary": primary_count,
+            "reference": reference_count,
+            "symbols": total_symbols,
+            "files": total_files,
+            "storage_mb": round(total_mb, 2),
+            "orphaned": orphaned,
+        }
+        return json.dumps(data, indent=2)
 
-        for ws in workspaces:
-            workspace_id = ws["workspace_id"]
-            workspace_name = ws["name"]
-            workspace_type = ws["workspace_type"]
-            workspace_path = Path(ws["path"])
+    # Lean text format
+    if not workspaces:
+        return "Health: ✅ OK | No workspaces"
 
-            # Check if path exists
-            status = "✅" if workspace_path.exists() else "❌"
+    status = "✅ OK" if not orphaned else f"⚠️ {len(orphaned)} orphaned"
+    ws_str = f"{primary_count}p" + (f"+{reference_count}r" if reference_count else "")
 
-            output.append(f"{status} {workspace_name} ({workspace_type})")
-            output.append(f"  Path: {ws['path']}")
-            output.append(f"  Symbols: {ws.get('symbol_count', 0):,}")
-            output.append(f"  Files: {ws.get('file_count', 0):,}")
+    summary = f"Health: {status} | {ws_str} ws | {total_symbols:,} sym | {total_files:,} files | {total_mb:.1f} MB"
 
-            # Calculate workspace storage
-            db_path = get_workspace_db_path(workspace_id)
-            vector_path = get_workspace_vector_path(workspace_id)
+    if not detailed:
+        return summary
 
-            ws_db_size = db_path.stat().st_size if db_path.exists() else 0
-            ws_vector_size = 0
-            if vector_path.parent.exists():
-                for file in vector_path.parent.rglob("*"):
-                    if file.is_file():
-                        ws_vector_size += file.stat().st_size
+    # Detailed mode adds workspace breakdown
+    lines = [summary, ""]
+    for ws in workspaces:
+        exists = Path(ws["path"]).exists()
+        icon = "✓" if exists else "✗"
+        ws_type = "p" if ws["workspace_type"] == "primary" else "r"
+        # Use cached live counts from earlier query
+        sym, files = workspace_counts.get(ws["workspace_id"], (0, 0))
+        lines.append(f"  {icon} {ws['name']} [{ws_type}] {sym:,} sym, {files:,} files")
 
-            output.append(f"  Storage: {(ws_db_size + ws_vector_size) / 1024 / 1024:.2f} MB")
-
-            if ws.get("last_indexed"):
-                indexed_dt = datetime.fromtimestamp(ws["last_indexed"])
-                indexed_str = indexed_dt.strftime("%Y-%m-%d %H:%M")
-                output.append(f"  Last indexed: {indexed_str}")
-
-            output.append("")
-
-    # Overall health status
-    if orphaned:
-        output.append("🔴 Health Status: Issues detected")
-        output.append(f"   {len(orphaned)} orphaned workspace(s) found")
-    else:
-        output.append("✅ Health Status: All systems healthy")
-
-    return "\n".join(output)
+    return "\n".join(lines)

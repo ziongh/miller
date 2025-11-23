@@ -93,6 +93,48 @@ pub fn supported_languages() -> PyResult<Vec<String>> {
     Ok(langs.iter().map(|&s| s.to_string()).collect())
 }
 
+/// Compute blake3 hash of content string
+///
+/// Blake3 is ~3x faster than SHA-256 while providing equivalent security.
+/// Used for incremental indexing change detection.
+///
+/// Args:
+///     content (str): Content to hash
+///
+/// Returns:
+///     str: 64-character hex digest of blake3 hash
+#[pyfunction]
+pub fn hash_content(content: &str) -> String {
+    let hash = blake3::hash(content.as_bytes());
+    hash.to_hex().to_string()
+}
+
+/// Compute blake3 hashes for multiple content strings in parallel
+///
+/// Efficiently computes hashes for many files using Rayon's parallel iterators.
+/// Releases the GIL to allow true multi-threaded execution.
+///
+/// Args:
+///     contents (list[str]): List of content strings to hash
+///
+/// Returns:
+///     list[str]: List of 64-character hex digests in same order as input
+#[pyfunction]
+pub fn hash_contents_batch(py: Python<'_>, contents: Vec<String>) -> Vec<String> {
+    use rayon::prelude::*;
+
+    // Release GIL for parallel processing
+    py.detach(move || {
+        contents
+            .par_iter()
+            .map(|content| {
+                let hash = blake3::hash(content.as_bytes());
+                hash.to_hex().to_string()
+            })
+            .collect()
+    })
+}
+
 /// Extract symbols from multiple files in parallel
 ///
 /// This function processes multiple files concurrently using Rayon's parallel

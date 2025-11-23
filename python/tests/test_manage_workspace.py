@@ -28,7 +28,6 @@ class TestManageWorkspaceList:
             try:
                 result = await manage_workspace(operation="list")
                 assert "No workspaces registered" in result
-                assert "index" in result.lower()  # Suggests using index command
 
             finally:
                 os.chdir(original_dir)
@@ -58,25 +57,26 @@ class TestManageWorkspaceList:
                 assert "Test Project" in result
                 assert "My Library" in result
 
-                # Should show workspace types
-                assert "PRIMARY" in result
-                assert "REFERENCE" in result
+                # Lean format: shows [primary] or [ref] type indicators
+                assert "[primary]" in result
+                assert "[ref]" in result
 
                 # Should show paths
                 assert "/test/project" in result
                 assert "/reference/lib" in result
 
-                # Should show stats (even if zero)
-                assert "Symbols:" in result or "symbols" in result.lower()
-                assert "Files:" in result or "files" in result.lower()
+                # Lean format uses "sym" and "files"
+                assert "sym" in result.lower()
+                assert "files" in result.lower()
 
             finally:
                 os.chdir(original_dir)
 
     @pytest.mark.asyncio
-    async def test_list_shows_workspace_ids(self):
-        """List includes workspace IDs for reference."""
+    async def test_list_json_format_shows_workspace_ids(self):
+        """List in JSON format includes workspace IDs for reference."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            import json
             import os
 
             original_dir = os.getcwd()
@@ -87,11 +87,14 @@ class TestManageWorkspaceList:
                 registry = WorkspaceRegistry()
                 workspace_id = registry.add_workspace(path="/test", name="Test")
 
-                result = await manage_workspace(operation="list")
+                # JSON format includes all metadata including IDs
+                result = await manage_workspace(operation="list", output_format="json")
+                data = json.loads(result)
 
-                # Should include workspace ID
-                assert workspace_id in result
-                assert "ID:" in result or "id:" in result.lower()
+                # Should have workspace with ID
+                assert len(data) == 1
+                assert data[0]["workspace_id"] == workspace_id
+                assert data[0]["name"] == "Test"
 
             finally:
                 os.chdir(original_dir)
@@ -164,17 +167,16 @@ class TestManageWorkspaceStats:
                     operation="stats", workspace_id=workspace_id
                 )
 
-                # Should show workspace details
+                # Lean format: "Test Project [primary]\n  0 sym | 0 files | 0.00 MB"
                 assert "Test Project" in result
                 assert "primary" in result.lower()
-                assert "/test/project" in result
 
-                # Should show statistics
-                assert "Symbol" in result or "symbol" in result.lower()
-                assert "File" in result or "file" in result.lower()
+                # Lean format uses "sym" and "files"
+                assert "sym" in result.lower()
+                assert "files" in result.lower()
 
                 # Should show sizes
-                assert "MB" in result or "size" in result.lower()
+                assert "MB" in result
 
             finally:
                 os.chdir(original_dir)
@@ -208,10 +210,18 @@ class TestManageWorkspaceStats:
                     operation="stats", workspace_id=workspace_id
                 )
 
-                # Should show size information
-                assert "Database size:" in result or "database" in result.lower()
-                assert "Vector" in result or "vector" in result.lower()
+                # Lean format shows total size as "X.XX MB"
+                # (combines DB + vector into single total)
                 assert "MB" in result
+
+                # JSON format provides detailed breakdown
+                result_json = await manage_workspace(
+                    operation="stats", workspace_id=workspace_id, output_format="json"
+                )
+                import json
+                data = json.loads(result_json)
+                assert "db_size_mb" in data
+                assert "vector_size_mb" in data
 
             finally:
                 os.chdir(original_dir)

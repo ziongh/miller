@@ -116,15 +116,30 @@ async def lifespan(_app):
             from miller.embeddings import EmbeddingManager, VectorStore
             from miller.storage import StorageManager
             from miller.workspace import WorkspaceScanner
-
-            embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
-            storage = StorageManager(db_path=".miller/indexes/symbols.db")
-            vector_store = VectorStore(
-                db_path=".miller/indexes/vectors.lance", embeddings=embeddings
-            )
+            from miller.workspace_registry import WorkspaceRegistry
+            from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
 
             workspace_root = Path.cwd()
             logger.info(f"📁 Workspace root: {workspace_root}")
+
+            # Register primary workspace first to get workspace_id
+            registry = WorkspaceRegistry()
+            workspace_id = registry.add_workspace(
+                path=str(workspace_root),
+                name=workspace_root.name,
+                workspace_type="primary",
+            )
+            logger.info(f"📋 Workspace ID: {workspace_id}")
+
+            # Use workspace-specific paths for database and vectors
+            db_path = get_workspace_db_path(workspace_id)
+            vector_path = get_workspace_vector_path(workspace_id)
+
+            embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+            storage = StorageManager(db_path=str(db_path))
+            vector_store = VectorStore(
+                db_path=str(vector_path), embeddings=embeddings
+            )
 
             scanner = WorkspaceScanner(
                 workspace_root=workspace_root, storage=storage, embeddings=embeddings, vector_store=vector_store
@@ -146,9 +161,9 @@ async def lifespan(_app):
 
             # PHASE 3: Start file watcher for real-time updates
             logger.info("👁️  Starting file watcher for real-time indexing...")
-            from miller.ignore_patterns import load_gitignore
+            from miller.ignore_patterns import load_all_ignores
 
-            ignore_spec = load_gitignore(workspace_root)
+            ignore_spec = load_all_ignores(workspace_root)
             pattern_strings = {p.pattern for p in ignore_spec.patterns}
             file_watcher = FileWatcher(
                 workspace_path=workspace_root,
@@ -528,55 +543,52 @@ async def trace_call_path(
 
 
 async def fast_explore(
-    mode: Literal["types"] = "types",
+    mode: Literal["types", "similar", "dependencies"] = "types",
     type_name: Optional[str] = None,
+    symbol: Optional[str] = None,
+    threshold: float = 0.7,
+    depth: int = 3,
     limit: int = 10,
     workspace: str = "primary",
     output_format: Literal["text", "json"] = "text",
 ) -> Union[dict[str, Any], str]:
     """
-    Explore codebases with different modes - currently supports type intelligence.
+    Explore codebases with different modes.
 
-    Use this to understand type relationships in OOP codebases:
-    - What classes implement an interface?
-    - What's the inheritance hierarchy?
-    - What functions return or take a specific type?
+    Modes:
+    - types: Type intelligence (implementations, hierarchy, return/parameter types)
+    - similar: Find semantically similar code (for duplicate detection)
+    - dependencies: Trace transitive dependencies (for impact analysis)
 
     Args:
-        mode: Exploration mode - currently only "types" is supported
+        mode: Exploration mode
         type_name: Name of type to explore (required for types mode)
-              Examples: "IUser", "PaymentProcessor", "BaseService"
-        limit: Maximum results per category (default: 10)
+        symbol: Symbol name to explore (required for similar/dependencies modes)
+        threshold: Minimum similarity score for similar mode (0.0-1.0, default 0.7)
+        depth: Maximum traversal depth for dependencies mode (1-10, default 3)
+        limit: Maximum results (default: 10)
         workspace: Workspace to query ("primary" or workspace_id)
         output_format: Output format - "text" (default) or "json"
-                      - "text": Lean formatted string - DEFAULT
-                      - "json": Dict with full metadata
 
     Returns:
-        - Text mode: Formatted string with type relationships
-        - JSON mode: Dict with exploration results:
-          - type_name: The queried type
-          - implementations: Classes implementing this interface
-          - hierarchy: {parents: [...], children: [...]} - inheritance tree
-          - returns: Functions that return this type
-          - parameters: Functions taking this type as parameter
-          - total_found: Total matches across all categories
+        Dict or formatted string based on output_format
 
     Examples:
-        # Find what implements an interface
+        # Type intelligence
         await fast_explore(mode="types", type_name="IUserService")
 
-        # Explore a base class hierarchy
-        await fast_explore(mode="types", type_name="BaseController")
+        # Find similar code
+        await fast_explore(mode="similar", symbol="getUserData", threshold=0.8)
 
-    Type Intelligence Workflow:
-        1. fast_explore(type_name="IService") → See all implementations
-        2. get_symbols on implementing class → Understand the implementation
-        3. trace_call_path on implementation → See how it's used
+        # Trace dependencies
+        await fast_explore(mode="dependencies", symbol="PaymentService", depth=3)
     """
     return await fast_explore_impl(
         mode=mode,
         type_name=type_name,
+        symbol=symbol,
+        threshold=threshold,
+        depth=depth,
         limit=limit,
         workspace=workspace,
         output_format=output_format,
@@ -602,7 +614,7 @@ mcp.tool()(plan)
 # Register workspace management tool
 from miller.tools.workspace import manage_workspace
 
-mcp.tool()(manage_workspace)
+mcp.tool(output_schema=None)(manage_workspace)  # Returns text string (default: text)
 
 
 # Export functions for direct use (testing)

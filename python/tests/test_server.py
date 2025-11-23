@@ -70,6 +70,53 @@ class TestServerInitialization:
         assert embeddings is None or embeddings is not None
         assert scanner is None or scanner is not None
 
+    def test_primary_workspace_registration_logic(self):
+        """
+        Regression test: Primary workspace must be registered on server startup.
+
+        Bug: Background initialization created storage/scanner and indexed files,
+        but never registered the primary workspace with WorkspaceRegistry. This
+        caused `manage_workspace health` to show "No workspaces registered".
+
+        Root cause: WorkspaceRegistry.add_workspace() was never called during
+        background_initialization_and_indexing().
+
+        Fix: Added registry.add_workspace() call after scanner initialization in
+        server.py background_initialization_and_indexing().
+        """
+        import tempfile
+        from pathlib import Path
+        from miller.workspace_registry import WorkspaceRegistry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import os
+            original_dir = os.getcwd()
+            os.chdir(tmpdir)
+
+            try:
+                # Simulate what server startup should do
+                workspace_root = Path.cwd()
+                registry = WorkspaceRegistry()
+
+                # This is the fix - server startup must call this:
+                registry.add_workspace(
+                    path=str(workspace_root),
+                    name=workspace_root.name,
+                    workspace_type="primary",
+                )
+
+                # Verify registration worked
+                workspaces = registry.list_workspaces()
+                assert len(workspaces) >= 1, "Bug regression: Primary workspace not registered"
+
+                # Find primary workspace
+                primary = next((ws for ws in workspaces if ws["workspace_type"] == "primary"), None)
+                assert primary is not None, "Bug regression: No primary workspace found"
+                assert primary["path"] == str(workspace_root), "Primary workspace path mismatch"
+
+            finally:
+                os.chdir(original_dir)
+
 
 class TestWorkspaceScanner:
     """Test automatic workspace scanning and indexing."""

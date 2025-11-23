@@ -8,7 +8,6 @@ Provides:
 """
 
 import asyncio
-import hashlib
 import logging
 import time
 from pathlib import Path
@@ -62,8 +61,8 @@ async def index_file(file_path: Path, workspace_root: Path, storage: StorageMana
         # Extract symbols (pass relative path so symbols have correct file_path)
         result = miller_core.extract_file(content, language, relative_path)
 
-        # Compute hash
-        file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        # Compute hash using Rust blake3 (3x faster than SHA-256)
+        file_hash = miller_core.hash_content(content)
 
         # Store file metadata (using relative path)
         storage.add_file(
@@ -138,8 +137,8 @@ async def index_file_timed(file_path: Path, workspace_root: Path, storage: Stora
         )
         extraction_time = time.time() - extraction_start
 
-        # Compute file hash
-        file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        # Compute file hash using Rust blake3 (3x faster than SHA-256)
+        file_hash = miller_core.hash_content(content)
 
         # Phase 2: Database writes (symbols, identifiers, relationships)
         db_start = time.time()

@@ -1,62 +1,47 @@
 """
-Fast explore tool - Type intelligence and relationship exploration.
+Fast explore tool - Multi-mode code exploration.
 
-Provides fast_explore for understanding type hierarchies and implementations.
+Provides fast_explore for type intelligence, similar code detection, and dependency analysis.
 """
 
 from typing import Any, Literal, Union, Optional
 
 
 async def fast_explore(
-    mode: Literal["types"] = "types",
+    mode: Literal["types", "similar", "dependencies"] = "types",
     type_name: Optional[str] = None,
+    symbol: Optional[str] = None,
+    threshold: float = 0.7,
+    depth: int = 3,
     limit: int = 10,
     workspace: str = "primary",
     output_format: Literal["text", "json"] = "text",
     storage=None,
 ) -> Union[dict[str, Any], str]:
     """
-    Explore codebases with different modes - currently supports type intelligence.
+    Explore codebases with different modes.
 
-    Use this to understand type relationships in OOP codebases:
-    - What classes implement an interface?
-    - What's the inheritance hierarchy?
-    - What functions return or take a specific type?
+    Modes:
+    - types: Type intelligence (implementations, hierarchy, return/parameter types)
+    - similar: Find semantically similar code (for duplicate detection)
+    - dependencies: Trace transitive dependencies (for impact analysis)
 
     Args:
-        mode: Exploration mode - currently only "types" is supported
+        mode: Exploration mode
         type_name: Name of type to explore (required for types mode)
-              Examples: "IUser", "PaymentProcessor", "BaseService"
-        limit: Maximum results per category (default: 10)
+        symbol: Symbol name to explore (required for similar/dependencies modes)
+        threshold: Minimum similarity score for similar mode (0.0-1.0, default 0.7)
+        depth: Maximum traversal depth for dependencies mode (1-10, default 3)
+        limit: Maximum results (default: 10)
         workspace: Workspace to query ("primary" or workspace_id)
         output_format: Output format - "text" (default) or "json"
-                      - "text": Lean formatted string - DEFAULT
-                      - "json": Dict with full metadata
         storage: StorageManager instance (injected by server)
 
     Returns:
-        - Text mode: Formatted string with type relationships
-        - JSON mode: Dict with exploration results:
-          - type_name: The queried type
-          - implementations: Classes implementing this interface
-          - hierarchy: {parents: [...], children: [...]} - inheritance tree
-          - returns: Functions that return this type
-          - parameters: Functions taking this type as parameter
-          - total_found: Total matches across all categories
-
-    Examples:
-        # Find what implements an interface
-        await fast_explore(mode="types", type_name="IUserService")
-
-        # Explore a base class hierarchy
-        await fast_explore(mode="types", type_name="BaseController")
-
-    Type Intelligence Workflow:
-        1. fast_explore(type_name="IService") → See all implementations
-        2. get_symbols on implementing class → Understand the implementation
-        3. trace_call_path on implementation → See how it's used
+        Dict or formatted string based on output_format
     """
-    from miller.tools.explore import fast_explore_with_format
+    from miller.tools.explore import fast_explore as _fast_explore
+    from miller.tools.explore import _format_similar_as_text, _format_dependencies_as_text, _format_explore_as_text
     from miller.storage import StorageManager
     from miller.workspace_paths import get_workspace_db_path
     from miller.workspace_registry import WorkspaceRegistry
@@ -66,23 +51,31 @@ async def fast_explore(
         registry = WorkspaceRegistry()
         workspace_entry = registry.get_workspace(workspace)
         if not workspace_entry:
-            return {
-                "type_name": type_name,
-                "error": f"Workspace '{workspace}' not found"
-            }
+            return {"error": f"Workspace '{workspace}' not found"}
         db_path = get_workspace_db_path(workspace)
         workspace_storage = StorageManager(db_path=str(db_path))
     else:
         workspace_storage = storage
 
     try:
-        return await fast_explore_with_format(
+        result = await _fast_explore(
             mode=mode,
             type_name=type_name,
+            symbol=symbol,
+            threshold=threshold,
+            depth=depth,
             storage=workspace_storage,
             limit=limit,
-            output_format=output_format,
         )
+
+        if output_format == "text":
+            if mode == "similar":
+                return _format_similar_as_text(result)
+            elif mode == "dependencies":
+                return _format_dependencies_as_text(result)
+            else:
+                return _format_explore_as_text(result)
+        return result
     finally:
         if workspace != "primary" and workspace_storage:
             workspace_storage.close()

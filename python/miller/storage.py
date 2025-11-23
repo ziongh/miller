@@ -420,6 +420,28 @@ class StorageManager:
         cursor = self.conn.execute("SELECT * FROM relationships WHERE file_path = ?", (file_path,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_relationships_from_symbol(self, symbol_id: str) -> list[dict]:
+        """
+        Get all relationships where the given symbol is the source (from_symbol_id).
+
+        Used for dependency tracing - finds what a symbol depends on.
+
+        Args:
+            symbol_id: ID of the source symbol
+
+        Returns:
+            List of dicts with keys including 'target_id' (the to_symbol_id) and 'kind'
+        """
+        cursor = self.conn.execute(
+            """
+            SELECT id, from_symbol_id, to_symbol_id as target_id, kind, file_path, line_number
+            FROM relationships
+            WHERE from_symbol_id = ?
+            """,
+            (symbol_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     # Workspace scanning operations
 
     def get_all_files(self) -> list[dict]:
@@ -535,6 +557,155 @@ class StorageManager:
             WHERE r.kind = 'parameter' AND target.name = ?
         """, (type_name,))
         return [dict(row) for row in cursor.fetchall()]
+
+    def incremental_update_atomic(
+        self,
+        files_to_clean: list[str],
+        file_data: list[tuple],
+        symbols: list,
+        identifiers: list,
+        relationships: list,
+    ) -> dict:
+        """
+        Perform atomic incremental update - delete old data and insert new in single transaction.
+
+        This mirrors Julie's incremental_update_atomic() pattern which prevents data corruption
+        during incremental updates. If any step fails, the entire operation is rolled back.
+
+        Args:
+            files_to_clean: List of file paths to delete (for re-indexing)
+            file_data: List of (path, language, content, hash, size) tuples
+            symbols: List of PySymbol objects to insert
+            identifiers: List of PyIdentifier objects to insert
+            relationships: List of PyRelationship objects to insert
+
+        Returns:
+            Dict with counts: {files_cleaned, files_added, symbols_added, identifiers_added, relationships_added}
+
+        Raises:
+            StorageError: If atomic update fails (transaction is rolled back)
+        """
+        import time
+
+        timestamp = int(time.time())
+        counts = {
+            "files_cleaned": 0,
+            "files_added": 0,
+            "symbols_added": 0,
+            "identifiers_added": 0,
+            "relationships_added": 0,
+        }
+
+        try:
+            # Start transaction
+            cursor = self.conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+
+            # Step 1: Delete old data for files being re-indexed
+            # CASCADE will handle symbols, identifiers, relationships
+            for file_path in files_to_clean:
+                cursor.execute("DELETE FROM files WHERE path = ?", (file_path,))
+                counts["files_cleaned"] += cursor.rowcount
+
+            # Step 2: Insert new file records
+            for path, language, content, file_hash, size in file_data:
+                normalized_path = _normalize_path(path)
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO files
+                    (path, language, content, hash, size, last_modified, last_indexed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (normalized_path, language, content, file_hash, size, timestamp, timestamp),
+                )
+                counts["files_added"] += 1
+
+            # Step 3: Insert symbols (OR REPLACE for safety if cleanup missed any)
+            for sym in symbols:
+                file_path = _normalize_path(sym.file_path)
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO symbols
+                    (id, name, kind, signature, file_path, start_line, end_line, parent_id, language, doc_comment)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        sym.id,
+                        sym.name,
+                        sym.kind,
+                        sym.signature,
+                        file_path,
+                        sym.start_line,
+                        sym.end_line,
+                        sym.parent_id,
+                        sym.language,
+                        sym.doc_comment,
+                    ),
+                )
+                counts["symbols_added"] += 1
+
+            # Step 4: Insert identifiers (OR REPLACE for safety if cleanup missed any)
+            for ident in identifiers:
+                file_path = _normalize_path(ident.file_path)
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO identifiers (
+                        id, name, kind, language, file_path,
+                        start_line, start_col, end_line, end_col,
+                        start_byte, end_byte, containing_symbol_id, target_symbol_id,
+                        confidence, code_context, last_indexed
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ident.id,
+                        ident.name,
+                        ident.kind,
+                        ident.language,
+                        file_path,
+                        ident.start_line,
+                        ident.start_column,  # PyIdentifier uses start_column → DB start_col
+                        ident.end_line,
+                        ident.end_column,  # PyIdentifier uses end_column → DB end_col
+                        ident.start_byte,
+                        ident.end_byte,
+                        ident.containing_symbol_id,
+                        ident.target_symbol_id,
+                        ident.confidence,
+                        ident.code_context,
+                        timestamp,  # last_indexed
+                    ),
+                )
+                counts["identifiers_added"] += 1
+
+            # Step 5: Insert relationships (OR REPLACE for safety if cleanup missed any)
+            for rel in relationships:
+                file_path = _normalize_path(rel.file_path) if rel.file_path else None
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO relationships
+                    (id, from_symbol_id, to_symbol_id, kind, file_path, line_number)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rel.id,
+                        rel.from_symbol_id,
+                        rel.to_symbol_id,
+                        rel.kind,
+                        file_path,
+                        rel.line_number,
+                    ),
+                )
+                counts["relationships_added"] += 1
+
+            # Step 6: Commit entire transaction atomically
+            self.conn.commit()
+
+            return counts
+
+        except Exception as e:
+            # Rollback on any failure
+            self.conn.rollback()
+            raise StorageError(f"Atomic incremental update failed: {e}") from e
 
     def close(self):
         """Close database connection."""

@@ -20,6 +20,7 @@ async def manage_workspace(
     workspace_id: Optional[str] = None,
     force: bool = False,
     detailed: bool = False,
+    output_format: Literal["text", "json"] = "text",
 ) -> str:
     """
     Manage workspaces: index, list, add, remove, stats, clean, refresh, health.
@@ -46,6 +47,7 @@ async def manage_workspace(
         workspace_id: Workspace ID (for stats, remove, refresh)
         force: Force re-indexing even if up-to-date (for index, refresh)
         detailed: Include detailed per-workspace info (for health)
+        output_format: Output format - "text" (default, lean) or "json"
 
     Returns:
         Operation result message
@@ -69,10 +71,10 @@ async def manage_workspace(
     registry = WorkspaceRegistry()
 
     if operation == "list":
-        return handle_list(registry)
+        return handle_list(registry, output_format)
 
     elif operation == "stats":
-        return handle_stats(registry, workspace_id)
+        return handle_stats(registry, workspace_id, output_format)
 
     elif operation == "index":
         return await handle_index(registry, path, force)
@@ -90,7 +92,7 @@ async def manage_workspace(
         return await handle_clean(registry)
 
     elif operation == "health":
-        return handle_health(registry, detailed)
+        return handle_health(registry, detailed, output_format)
 
     else:
         return f"Error: Operation '{operation}' not implemented yet"

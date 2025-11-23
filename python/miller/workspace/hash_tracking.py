@@ -2,12 +2,11 @@
 Hash-based file change detection for incremental indexing.
 
 Provides:
-- SHA-256 hash computation for files
+- Blake3 hash computation for files (via Rust, 3x faster than SHA-256)
 - Change detection via hash comparison
 - Database staleness checks
 """
 
-import hashlib
 import logging
 import time
 from pathlib import Path
@@ -15,20 +14,37 @@ from pathlib import Path
 # Get logger instance
 logger = logging.getLogger("miller.workspace")
 
+# Import Rust blake3 implementation
+try:
+    from .. import miller_core
+
+    _HAS_RUST_HASH = True
+except ImportError:
+    _HAS_RUST_HASH = False
+    logger.warning("miller_core not available, falling back to Python hashlib")
+
 
 def compute_file_hash(file_path: Path) -> str:
     """
-    Compute SHA-256 hash of file content.
+    Compute blake3 hash of file content using Rust (3x faster than SHA-256).
+
+    Falls back to Python hashlib SHA-256 if Rust extension unavailable.
 
     Args:
         file_path: Path to file
 
     Returns:
-        Hex digest of SHA-256 hash (empty string if file can't be read)
+        Hex digest of hash (empty string if file can't be read)
     """
     try:
         content = file_path.read_text(encoding="utf-8")
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if _HAS_RUST_HASH:
+            return miller_core.hash_content(content)
+        else:
+            # Fallback to Python SHA-256
+            import hashlib
+
+            return hashlib.sha256(content.encode("utf-8")).hexdigest()
     except Exception:
         # If file can't be read, return empty hash
         return ""

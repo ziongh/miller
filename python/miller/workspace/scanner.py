@@ -9,13 +9,17 @@ Handles:
 """
 
 import asyncio
-import hashlib
 import logging
 import time
 from pathlib import Path
 
 from ..embeddings import EmbeddingManager, VectorStore
-from ..ignore_patterns import load_gitignore
+from ..ignore_patterns import (
+    load_all_ignores,
+    load_millerignore,
+    analyze_vendor_patterns,
+    generate_millerignore,
+)
 from ..storage import StorageManager
 from . import hash_tracking
 from .index_stats import IndexStats
@@ -63,20 +67,36 @@ class WorkspaceScanner:
         self.embeddings = embeddings
         self.vector_store = vector_store
 
-        # Load .gitignore patterns
-        self.ignore_spec = load_gitignore(self.workspace_root)
+        # Load all ignore patterns (.gitignore + .millerignore)
+        # Smart vendor detection happens on first index if no .millerignore exists
+        self.ignore_spec = load_all_ignores(self.workspace_root)
+        self._millerignore_checked = False  # Track if we've done vendor detection
 
     def _walk_directory(self) -> list[Path]:
         """
         Walk workspace directory and find indexable files.
 
+        On first run (no .millerignore exists), performs smart vendor detection
+        to auto-generate exclusion patterns for vendor/third-party directories.
+
         Returns:
-            List of file paths to index (filtered by .gitignore and language support)
+            List of file paths to index (filtered by .gitignore, .millerignore, and language support)
         """
         if miller_core is None:
             return []  # Can't detect languages without Rust core
 
+        # Check if we need to do smart vendor detection
+        millerignore_path = self.workspace_root / ".millerignore"
+        needs_vendor_detection = (
+            not self._millerignore_checked
+            and not millerignore_path.exists()
+        )
+
+        if needs_vendor_detection:
+            logger.info("🤖 No .millerignore found - scanning for vendor patterns...")
+
         indexable_files = []
+        all_files_for_analysis = []  # For vendor detection
 
         for file_path in self.workspace_root.rglob("*"):
             # Skip directories and symlinks
@@ -90,12 +110,41 @@ class WorkspaceScanner:
                 continue  # Not in workspace
 
             if self.ignore_spec.match_file(str(relative_path)):
-                continue  # Ignored by .gitignore
+                continue  # Ignored by .gitignore or .millerignore
 
             # Check if language is supported
             language = miller_core.detect_language(str(file_path))
             if language:
                 indexable_files.append(file_path)
+                if needs_vendor_detection:
+                    all_files_for_analysis.append(file_path)
+
+        # Smart vendor detection on first run
+        if needs_vendor_detection:
+            self._millerignore_checked = True
+            detected_patterns = analyze_vendor_patterns(
+                all_files_for_analysis, self.workspace_root
+            )
+
+            if detected_patterns:
+                generate_millerignore(self.workspace_root, detected_patterns)
+                logger.info(
+                    f"✅ Generated .millerignore with {len(detected_patterns)} patterns"
+                )
+
+                # Reload ignore spec and re-filter files
+                self.ignore_spec = load_all_ignores(self.workspace_root)
+                indexable_files = [
+                    f for f in indexable_files
+                    if not self.ignore_spec.match_file(
+                        str(f.relative_to(self.workspace_root))
+                    )
+                ]
+                logger.info(
+                    f"📊 After vendor filtering: {len(indexable_files)} files to index"
+                )
+            else:
+                logger.info("✨ No vendor patterns detected - project looks clean!")
 
         return indexable_files
 
@@ -114,30 +163,125 @@ class WorkspaceScanner:
 
     async def check_if_indexing_needed(self) -> bool:
         """
-        Check if workspace needs indexing (O(1) fast check).
+        Check if workspace needs indexing.
 
-        Julie's ACTUAL pattern (not what we thought):
-        1. Check if DB is empty (O(1)) → needs indexing
-        2. Otherwise assume file watcher keeps it current → skip expensive walk
-
-        The expensive directory walk (O(n)) only happens during actual indexing,
-        not during the startup check. This makes startup instant.
-
-        For explicit re-indexing: use manage_workspace(operation="index", force=True)
+        Performs these checks (in order of cost):
+        1. DB empty? (O(1)) → needs full indexing
+        2. DB corrupted? (O(1)) → needs re-indexing
+        3. DB stale? (O(n) but fast) → compare file mtimes to DB timestamp
+        4. New files? (O(n)) → files on disk not in DB
 
         Returns:
-            True if indexing needed (DB empty only), False otherwise
+            True if indexing needed, False if index is up-to-date
         """
-        # ONLY check if DB is empty - this is O(1) and fast
+        # Check 1: DB empty (O(1))
         db_files = self.storage.get_all_files()
 
         if not db_files:
             logger.info("📊 Database is empty - initial indexing needed")
             return True
 
-        # DB has files - assume index is current
-        # File watcher will handle incremental updates after startup
-        logger.info("✅ Index exists - assuming current (file watcher will track changes)")
+        # Check 2: Corrupted state - files but no symbols (O(1))
+        cursor = self.storage.conn.execute("SELECT COUNT(*) FROM symbols")
+        symbol_count = cursor.fetchone()[0]
+
+        if symbol_count == 0:
+            logger.warning("⚠️ Database has files but 0 symbols - re-indexing needed")
+            return True
+
+        # Check 3: Staleness - compare file mtimes to last index time
+        # Get max last_indexed timestamp from DB
+        cursor = self.storage.conn.execute("SELECT MAX(last_indexed) FROM files")
+        row = cursor.fetchone()
+        db_timestamp = row[0] if row and row[0] else 0
+
+        # Find max file mtime in workspace (fast scan)
+        max_file_mtime = self._get_max_file_mtime()
+
+        if max_file_mtime > db_timestamp:
+            logger.info(
+                f"📊 Database is stale (files modified after last index) - indexing needed"
+            )
+            logger.debug(f"   max_file_mtime={max_file_mtime}, db_timestamp={db_timestamp}")
+            return True
+
+        # Check 4: New files not in database
+        db_paths = {f["path"] for f in db_files}
+        new_files_found = self._has_new_files(db_paths)
+
+        if new_files_found:
+            logger.info("📊 Found new files not in database - indexing needed")
+            return True
+
+        # Index is up-to-date
+        logger.info("✅ Index is up-to-date - no indexing needed")
+        return False
+
+    def _get_max_file_mtime(self) -> int:
+        """
+        Get the maximum (newest) file modification time in the workspace.
+
+        Returns:
+            Unix timestamp of the most recently modified file
+        """
+        max_mtime = 0
+
+        # Quick scan of just supported code files
+        for file_path in self.workspace_root.rglob("*"):
+            if file_path.is_dir() or file_path.is_symlink():
+                continue
+
+            # Check if ignored
+            try:
+                relative_path = file_path.relative_to(self.workspace_root)
+            except ValueError:
+                continue
+
+            if self.ignore_spec.match_file(str(relative_path)):
+                continue
+
+            # Check if language is supported (only check code files)
+            if miller_core and miller_core.detect_language(str(file_path)):
+                try:
+                    mtime = int(file_path.stat().st_mtime)
+                    if mtime > max_mtime:
+                        max_mtime = mtime
+                except OSError:
+                    continue
+
+        return max_mtime
+
+    def _has_new_files(self, db_paths: set[str]) -> bool:
+        """
+        Check if there are any new files on disk not in the database.
+
+        Args:
+            db_paths: Set of file paths currently in the database
+
+        Returns:
+            True if new files found, False otherwise
+        """
+        for file_path in self.workspace_root.rglob("*"):
+            if file_path.is_dir() or file_path.is_symlink():
+                continue
+
+            try:
+                relative_path = file_path.relative_to(self.workspace_root)
+            except ValueError:
+                continue
+
+            # Convert to Unix-style path for comparison
+            rel_str = str(relative_path).replace("\\", "/")
+
+            if self.ignore_spec.match_file(rel_str):
+                continue
+
+            # Check if supported language and not in DB
+            if miller_core and miller_core.detect_language(str(file_path)):
+                if rel_str not in db_paths:
+                    logger.debug(f"   New file detected: {rel_str}")
+                    return True
+
         return False
 
     async def index_workspace(self) -> dict[str, int]:
@@ -258,28 +402,19 @@ class WorkspaceScanner:
                 # O(1) action lookup using pre-built map
                 action = action_map.get(relative_path, "indexed")
 
-                file_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                # Use Rust blake3 for 3x faster hashing
+                file_hash = miller_core.hash_content(content)
                 batch_data.append(
                     (file_path, action, result, relative_path, content, language, file_hash)
                 )
 
-            # Phase 2d: Batch embed ALL symbols from this batch of files at once
+            # Phase 2d: Collect all data for atomic batch update
             all_symbols = []
-            symbol_file_map = []  # Track which file each symbol belongs to
-            for _, _, result, relative_path, _, _, _ in batch_data:
-                if result.symbols:
-                    for sym in result.symbols:
-                        all_symbols.append(sym)
-                        symbol_file_map.append(relative_path)
+            all_identifiers = []
+            all_relationships = []
+            files_to_clean = []  # Files being updated (need old data deleted)
+            file_data_list = []  # (path, language, content, hash, size)
 
-            # Single embedding call for entire batch of files
-            all_vectors = None
-            if all_symbols:
-                embedding_start = time.time()
-                all_vectors = self.embeddings.embed_batch(all_symbols)
-                total_embedding_time += time.time() - embedding_start
-
-            # Phase 2c: Write to SQLite database (per-file metadata)
             for (
                 file_path,
                 action,
@@ -289,39 +424,51 @@ class WorkspaceScanner:
                 language,
                 file_hash,
             ) in batch_data:
-                try:
-                    db_start = time.time()
+                # Track files being updated for cleanup
+                if action == "updated":
+                    files_to_clean.append(relative_path)
+                    stats.updated += 1
+                else:
+                    stats.indexed += 1
 
-                    # Add file metadata
-                    self.storage.add_file(
-                        file_path=relative_path,
-                        language=language,
-                        content=content,
-                        hash=file_hash,
-                        size=len(content),
-                    )
+                # Collect file data
+                file_data_list.append((relative_path, language, content, file_hash, len(content)))
 
-                    # Add symbols, identifiers, relationships
-                    if result.symbols:
-                        self.storage.add_symbols_batch(result.symbols)
-                    if result.identifiers:
-                        self.storage.add_identifiers_batch(result.identifiers)
-                    if result.relationships:
-                        self.storage.add_relationships_batch(result.relationships)
+                # Collect symbols, identifiers, relationships
+                if result.symbols:
+                    all_symbols.extend(result.symbols)
+                    stats.total_symbols += len(result.symbols)
+                if result.identifiers:
+                    all_identifiers.extend(result.identifiers)
+                if result.relationships:
+                    all_relationships.extend(result.relationships)
 
-                    total_db_time += time.time() - db_start
+            # Single embedding call for entire batch of files
+            all_vectors = None
+            if all_symbols:
+                embedding_start = time.time()
+                all_vectors = self.embeddings.embed_batch(all_symbols)
+                total_embedding_time += time.time() - embedding_start
 
-                    # Update stats
-                    if action == "updated":
-                        stats.updated += 1
-                    else:
-                        stats.indexed += 1
+            # Phase 2e: ATOMIC database write for entire batch
+            # All-or-nothing: if any step fails, entire batch is rolled back
+            try:
+                db_start = time.time()
+                self.storage.incremental_update_atomic(
+                    files_to_clean=files_to_clean,
+                    file_data=file_data_list,
+                    symbols=all_symbols,
+                    identifiers=all_identifiers,
+                    relationships=all_relationships,
+                )
+                total_db_time += time.time() - db_start
+            except Exception as e:
+                logger.error(f"❌ Atomic batch update failed: {e}")
+                stats.errors += len(batch_data)
+                # Continue to next batch rather than failing completely
+                continue
 
-                except Exception as e:
-                    logger.warning(f"Failed to index {file_path}: {e}")
-                    stats.errors += 1
-
-            # Phase 2d: Single bulk write to LanceDB for entire batch (50 files at once!)
+            # Phase 2f: Single bulk write to LanceDB for entire batch (50 files at once!)
             # This is MUCH faster than 50 individual writes (was 73% of time, now <10%)
             if all_symbols and all_vectors is not None:
                 vector_start = time.time()
