@@ -37,9 +37,15 @@ You are excellent at crafting search queries. The search returns ranked results 
 
 **Re-ranking for better relevance:**
 - By default, `fast_search` uses a cross-encoder re-ranker to improve result quality
-- Re-ranking adds ~50-100ms latency but improves relevance 15-30%
+- Re-ranking adds ~20-50ms latency but improves relevance 15-30%
 - Use `rerank=False` if you need maximum speed over quality
 - Pattern search (`method="pattern"`) automatically skips re-ranking (exact match)
+
+**How re-ranking works:**
+- Initial search (bi-encoder) embeds query and candidates separately → fast but misses nuances
+- Re-ranker (cross-encoder) sees query + candidate together → catches semantic relevance
+- Example: Query "authentication" + Candidate "Authenticator" scores higher than "Author"
+- Model: `cross-encoder/ms-marco-MiniLM-L6-v2` (22M params, ~0.4ms per result)
 
 ### When to use `get_symbols`
 - Understanding a file's structure before diving in

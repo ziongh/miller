@@ -69,7 +69,7 @@ async def fast_search(
                      Get workspace IDs from manage_workspace(operation="list")
         output_format: Output format - "text" (default), "json", or "toon"
         rerank: Enable cross-encoder re-ranking for improved relevance (default: True).
-                Adds ~50-100ms latency but improves result quality 15-30%.
+                Adds ~20-50ms latency but improves result quality 15-30%.
                 Automatically disabled for pattern search.
         vector_store: VectorStore instance (injected by server)
         storage: StorageManager instance (injected by server)

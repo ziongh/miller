@@ -28,13 +28,15 @@
 
 3. We need to check the issues on github in Julie, a user posted a comment there about RAG and embeddings that I want us to discuss.
 
-4. ~~Plan tool token efficiency and task management~~ **DONE (2025-11-23)**
+4. Plan tool token efficiency and task management
    - Added summary mode to `list` action (excludes content/git by default)
    - Added `include_content=True` option for full plan retrieval
    - Added `task_count` and `completed_count` fields (parses `- [ ]` / `- [x]` checkboxes)
    - Updated docstring with Task Counting section
    - Updated server instructions.md with plan tool best practices
    - All 13 plan tests pass
+   - we made some good progress but the plan tool is still very inefficient with token usage
+   - we need to reduce the tokens needed and returned for each operation too
 
 5. In Julie we created a set of rules to follow when auditing each tool and then went one by one validating each tool (/Users/murphy/source/julie/docs/archive/TOOL_AUDIT_2025-11-11_COMPLETE.md) we should do something similar in Miller to make sure that every tool is leveraging our unique functionality to highest level it can. Also part of this audit should be the specialized output formats. Another point: as we audit the tools we should explore how Julie implemented the same tool, not to copy it but make sure that Julie hasn't already solved some issue we haven't encountered yet or maybe Julie has some genuinely clever implementation we can build on.
 
