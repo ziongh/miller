@@ -1,0 +1,24 @@
+{
+  "description": "Fixed GitHub CI workflow for Miller hybrid Python/Rust project. Key issues: maturin develop needs venv, pytest plugins need sys.path fix, Windows needs PowerShell activation, Rust tests can't link Python symbols outside venv. All platforms now passing.",
+  "git": {
+    "branch": "main",
+    "commit": "2d7ce99",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      "TODO.md",
+      "docs/PORT_PLAN.md"
+    ]
+  },
+  "id": "checkpoint_62670e8c_4a001e",
+  "tags": [
+    "ci",
+    "github-actions",
+    "maturin",
+    "pyo3",
+    "windows",
+    "cross-platform"
+  ],
+  "timestamp": 1763857568,
+  "type": "checkpoint"
+}
