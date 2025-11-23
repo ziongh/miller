@@ -165,6 +165,16 @@ class StorageManager:
             )
         """)
 
+        # Reachability table (transitive closure for fast impact analysis)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS reachability (
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                min_distance INTEGER NOT NULL,
+                PRIMARY KEY (source_id, target_id)
+            )
+        """)
+
         # Create indexes
         self._create_indexes()
 
@@ -189,6 +199,9 @@ class StorageManager:
             "CREATE INDEX IF NOT EXISTS idx_rel_from ON relationships(from_symbol_id)",
             "CREATE INDEX IF NOT EXISTS idx_rel_to ON relationships(to_symbol_id)",
             "CREATE INDEX IF NOT EXISTS idx_rel_kind ON relationships(kind)",
+            # Reachability indexes (transitive closure)
+            "CREATE INDEX IF NOT EXISTS idx_reach_source ON reachability(source_id)",
+            "CREATE INDEX IF NOT EXISTS idx_reach_target ON reachability(target_id)",
         ]
 
         for index_sql in indexes:
@@ -441,6 +454,100 @@ class StorageManager:
             (symbol_id,),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+    # Reachability operations (transitive closure)
+
+    def add_reachability_batch(self, entries: list[tuple[str, str, int]]) -> int:
+        """
+        Bulk insert reachability entries.
+
+        Args:
+            entries: List of (source_id, target_id, min_distance) tuples
+
+        Returns:
+            Number of entries inserted
+        """
+        if not entries:
+            return 0
+
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO reachability (source_id, target_id, min_distance) VALUES (?, ?, ?)",
+            entries,
+        )
+        self.conn.commit()
+        return len(entries)
+
+    def clear_reachability(self) -> None:
+        """Clear all reachability data."""
+        self.conn.execute("DELETE FROM reachability")
+        self.conn.commit()
+
+    def get_reachability_for_target(self, target_id: str) -> list[dict]:
+        """
+        Get all symbols that can reach the target (upstream/callers).
+
+        Args:
+            target_id: ID of the target symbol
+
+        Returns:
+            List of dicts with source_id and min_distance
+        """
+        cursor = self.conn.execute(
+            "SELECT source_id, target_id, min_distance FROM reachability WHERE target_id = ?",
+            (target_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_reachability_from_source(self, source_id: str) -> list[dict]:
+        """
+        Get all symbols reachable from source (downstream/callees).
+
+        Args:
+            source_id: ID of the source symbol
+
+        Returns:
+            List of dicts with target_id and min_distance
+        """
+        cursor = self.conn.execute(
+            "SELECT source_id, target_id, min_distance FROM reachability WHERE source_id = ?",
+            (source_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def can_reach(self, source_id: str, target_id: str) -> bool:
+        """
+        Check if source can reach target (O(1) lookup).
+
+        Args:
+            source_id: ID of the source symbol
+            target_id: ID of the target symbol
+
+        Returns:
+            True if path exists, False otherwise
+        """
+        cursor = self.conn.execute(
+            "SELECT 1 FROM reachability WHERE source_id = ? AND target_id = ? LIMIT 1",
+            (source_id, target_id),
+        )
+        return cursor.fetchone() is not None
+
+    def get_distance(self, source_id: str, target_id: str) -> int | None:
+        """
+        Get shortest path distance between source and target.
+
+        Args:
+            source_id: ID of the source symbol
+            target_id: ID of the target symbol
+
+        Returns:
+            Shortest path length, or None if no path exists
+        """
+        cursor = self.conn.execute(
+            "SELECT min_distance FROM reachability WHERE source_id = ? AND target_id = ?",
+            (source_id, target_id),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
 
     # Workspace scanning operations
 

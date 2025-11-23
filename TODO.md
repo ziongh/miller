@@ -51,6 +51,8 @@
 
 We could also create a small script for Finetunning an Embedding model like "jinaai/jina-code-embeddings-0.5b" using LoRa. It has a context window of 32K tokens, which would allow larger methods/classes/ etc to be better indexed (I know that in a good code base this shouldn't exsit). And by using something like LoRa (Fine-tuning) it would allow companies to embed some of their specific framework knowledge. For instance, on a company there may exist a specific way to access DB in C# that is not simple Dapper or simple EfCore, but a in-house framework. And with fine-tuning the embeddings, we could improve the understanding and parsing of existing code.
 
+9. manage_workspace tool should always default to the primary workspace and the workspace parameter should be optional. All tools should have smart defaults and optional parameters where possible so that the agent only needs the minimum to call a tool
+
 ---
 
 ## Future Enhancements (Ranked by Impact)
@@ -62,7 +64,7 @@ We could also create a small script for Finetunning an Embedding model like "jin
 | Rank | Feature | Impact |
 |------|---------|--------|
 | **#1** | ~~**Re-ranker (cross-encoder)**~~ ✅ **DONE** | Implemented! `rerank=True` by default in `fast_search`. Uses `ms-marco-MiniLM-L6-v2` (~33ms for 50 results). See `python/miller/reranker.py`. |
-| **#2** | **Transitive closure table** | Pre-computed call reachability. "If I change X, what breaks?" becomes O(1) lookup instead of BFS traversal. Transforms impact analysis. |
+| **#2** | ~~**Transitive closure table**~~ ✅ **DONE** | Implemented! `reachability` table with BFS closure computation. `can_reach()`, `get_distance()` for O(1) lookups. Computed after indexing. See `python/miller/closure.py`. |
 | **#3** | **Graph expansion on search** | When finding a symbol, auto-include callers, callees, parent class, related tests. Return *understanding*, not just locations. |
 
 ### Tier 2: Significant Improvements 🎯

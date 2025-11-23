@@ -156,6 +156,16 @@ async def lifespan(_app):
                     f"{stats['updated']} updated, {stats['skipped']} skipped, "
                     f"{stats['deleted']} deleted, {stats['errors']} errors"
                 )
+
+                # Compute transitive closure for fast impact analysis
+                import time
+                from miller.closure import compute_transitive_closure
+
+                logger.info("🔗 Computing transitive closure for impact analysis...")
+                closure_start = time.time()
+                closure_count = compute_transitive_closure(storage, max_depth=10)
+                closure_time = (time.time() - closure_start) * 1000
+                logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
             else:
                 logger.info("✅ Workspace already indexed - ready for search")
 
