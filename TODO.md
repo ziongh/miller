@@ -43,6 +43,9 @@
 7. We have some custom commands we've created at .claude/commands, we should discuss if there are others we should add. We should also discuss if there are any hooks we should create https://code.claude.com/docs/en/hooks-guide
 
 8. Here's a comment I got on the Julie repo that might have some info in it we should discuss: What if we instead of using SQLlite + ONXX cutom embedding storage, we used something like LanceDB and we could also add some improvements, like a ReRanker step at the end of extraction. And LanceDB can do both FTS5 search plus embeddings.
+   - ✅ **Re-ranker: DONE** (2025-11-23) - Implemented cross-encoder re-ranking in `fast_search`
+   - ✅ **LanceDB: Already using it** - Miller uses LanceDB with Tantivy FTS
+   - ⏳ **LoRA finetuning**: Still an interesting idea for future
 
 We could also create a small script for Finetunning an Embedding model like "jinaai/jina-code-embeddings-0.5b" using LoRa. It has a context window of 32K tokens, which would allow larger methods/classes/ etc to be better indexed (I know that in a good code base this shouldn't exsit). And by using something like LoRa (Fine-tuning) it would allow companies to embed some of their specific framework knowledge. For instance, on a company there may exist a specific way to access DB in C# that is not simple Dapper or simple EfCore, but a in-house framework. And with fine-tuning the embeddings, we could improve the understanding and parsing of existing code.
 
@@ -56,7 +59,7 @@ We could also create a small script for Finetunning an Embedding model like "jin
 
 | Rank | Feature | Impact |
 |------|---------|--------|
-| **#1** | **Re-ranker (cross-encoder)** | Cross-encoder sees query + candidate together for semantic fit. 15-30% relevance improvement. Single biggest search quality win. |
+| **#1** | ~~**Re-ranker (cross-encoder)**~~ ✅ **DONE** | Implemented! `rerank=True` by default in `fast_search`. Uses `ms-marco-MiniLM-L6-v2` (~33ms for 50 results). See `python/miller/reranker.py`. |
 | **#2** | **Transitive closure table** | Pre-computed call reachability. "If I change X, what breaks?" becomes O(1) lookup instead of BFS traversal. Transforms impact analysis. |
 | **#3** | **Graph expansion on search** | When finding a symbol, auto-include callers, callees, parent class, related tests. Return *understanding*, not just locations. |
 

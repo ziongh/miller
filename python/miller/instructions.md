@@ -35,6 +35,12 @@ THE PURPOSE OF MILLER'S TOOLS IS TO READ LESS CODE, NOT THE SAME CODE MULTIPLE T
 
 You are excellent at crafting search queries. The search returns ranked results by relevance - take the top results as your answer. You don't need to verify by reading files!
 
+**Re-ranking for better relevance:**
+- By default, `fast_search` uses a cross-encoder re-ranker to improve result quality
+- Re-ranking adds ~50-100ms latency but improves relevance 15-30%
+- Use `rerank=False` if you need maximum speed over quality
+- Pattern search (`method="pattern"`) automatically skips re-ranking (exact match)
+
 ### When to use `get_symbols`
 - Understanding a file's structure before diving in
 - Seeing what classes, functions, and methods exist

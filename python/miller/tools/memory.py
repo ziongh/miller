@@ -400,8 +400,8 @@ async def plan(
         - list: List of plan summaries (id, title, status, task_count, completed_count)
                 Use include_content=True for full content
         - activate: Success message dict
-        - update: Updated plan dict
-        - complete: Completed plan dict (with completed_at timestamp)
+        - update: Summary dict (id, title, status, task_count, completed_count, message)
+        - complete: Summary dict with completed_at timestamp and celebration message
 
     Task Counting:
         The `task_count` and `completed_count` fields in list results are calculated
@@ -563,7 +563,16 @@ async def plan(
 
         write_json_file(plan_file, plan_data)
 
-        return plan_data
+        # Return summary (not full content) for token efficiency
+        task_count, completed_count = _count_tasks(plan_data.get("content", ""))
+        return {
+            "id": plan_data.get("id"),
+            "title": plan_data.get("title"),
+            "status": plan_data.get("status"),
+            "task_count": task_count,
+            "completed_count": completed_count,
+            "message": "Plan updated successfully",
+        }
 
     elif action == "complete":
         if not id:
@@ -578,7 +587,17 @@ async def plan(
         plan_data["completed_at"] = int(time.time())
         write_json_file(plan_file, plan_data)
 
-        return plan_data
+        # Return summary (not full content) for token efficiency
+        task_count, completed_count = _count_tasks(plan_data.get("content", ""))
+        return {
+            "id": plan_data.get("id"),
+            "title": plan_data.get("title"),
+            "status": "completed",
+            "completed_at": plan_data["completed_at"],
+            "task_count": task_count,
+            "completed_count": completed_count,
+            "message": "Plan completed! 🎉",
+        }
 
     else:
         raise ValueError(f"Unknown action: {action}")

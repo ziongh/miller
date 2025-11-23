@@ -227,6 +227,7 @@ async def fast_search(
     limit: int = 20,
     workspace_id: Optional[str] = None,
     output_format: Literal["text", "json", "toon"] = "text",
+    rerank: bool = True,
 ) -> Union[list[dict[str, Any]], str]:
     """
     Search indexed code using text, semantic, or hybrid methods.
@@ -277,6 +278,9 @@ async def fast_search(
         workspace_id: Optional workspace ID to search (defaults to primary workspace)
                      Get workspace IDs from manage_workspace(operation="list")
         output_format: Output format - "text" (default), "json", or "toon"
+        rerank: Enable cross-encoder re-ranking for improved relevance (default: True).
+                Adds ~50-100ms latency but improves result quality 15-30%.
+                Automatically disabled for pattern search.
 
     Returns:
         - text mode: Clean scannable format (name, kind, location, signature)
@@ -291,6 +295,7 @@ async def fast_search(
         limit=limit,
         workspace_id=workspace_id,
         output_format=output_format,
+        rerank=rerank,
         vector_store=vector_store,
         storage=storage,
         embeddings=embeddings,
