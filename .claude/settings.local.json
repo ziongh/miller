@@ -1,3 +1,10 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(cargo test:*)",
+      "Bash(python -m pytest:*)",
+      "WebSearch"
+    ]
+  },
   "outputStyle": "Explanatory"
 }

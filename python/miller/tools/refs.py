@@ -114,15 +114,74 @@ def find_references(
         params.extend(kind_filter)
 
     cursor.execute(query, params)
-    rows = cursor.fetchall()
+    relationship_rows = cursor.fetchall()
 
-    # Group references by file
+    # Also query identifiers table for usages (class instantiations, imports, etc.)
+    # that aren't captured as explicit relationships
+    ident_query = """
+        SELECT
+            i.id,
+            i.name,
+            i.kind,
+            i.file_path,
+            i.start_line,
+            i.containing_symbol_id
+        FROM identifiers i
+        WHERE i.name = ?
+    """
+    ident_params: List[Any] = [symbol_name]
+
+    # Apply kind filter to identifiers if specified
+    if kind_filter:
+        kind_placeholders = ",".join("?" * len(kind_filter))
+        ident_query += f" AND i.kind IN ({kind_placeholders})"
+        ident_params.extend(kind_filter)
+
+    cursor.execute(ident_query, ident_params)
+    identifier_rows = cursor.fetchall()
+
+    # Group references by file, combining both sources
     files_dict: Dict[str, Dict[str, Any]] = {}
 
-    for row in rows:
+    # Track seen (file, line, kind) to avoid duplicates
+    seen_refs: set[tuple[str, int, str]] = set()
+
+    # Process relationship rows first
+    for row in relationship_rows:
         file_path = row[3]
         line_number = row[4]
         kind = row[2]
+
+        ref_key = (file_path, line_number, kind)
+        if ref_key in seen_refs:
+            continue
+        seen_refs.add(ref_key)
+
+        if file_path not in files_dict:
+            files_dict[file_path] = {
+                "path": file_path,
+                "references_count": 0,
+                "references": [],
+            }
+
+        files_dict[file_path]["references"].append(
+            {
+                "line": line_number,
+                "kind": kind,
+            }
+        )
+        files_dict[file_path]["references_count"] += 1
+
+    # Process identifier rows (usages not in relationships)
+    for row in identifier_rows:
+        file_path = row[3]
+        line_number = row[4]
+        kind = row[2]
+
+        ref_key = (file_path, line_number, kind)
+        if ref_key in seen_refs:
+            continue
+        seen_refs.add(ref_key)
 
         if file_path not in files_dict:
             files_dict[file_path] = {

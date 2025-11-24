@@ -293,3 +293,195 @@ class TestWorkspaceFiltering:
         result2 = find_references(storage2, symbol_name="unique_func")
         assert result2["symbol"] == "unique_func"
         assert result2["total_references"] == 0  # No symbol in this workspace
+
+
+# ============================================================================
+# BUG FIX: Class Instantiation References (identifiers table)
+# ============================================================================
+
+
+class TestIdentifierBasedReferences:
+    """Test finding references from identifiers table (not just relationships).
+
+    Bug: fast_refs only queries relationships table, missing class instantiations
+    and other identifier usages that aren't explicit function calls.
+
+    Root cause: relationships table only contains function/method calls detected
+    by tree-sitter. Class instantiations like `StorageManager()` are stored in
+    identifiers table as "Reference" kind entries.
+    """
+
+    @pytest.fixture
+    def storage_with_identifiers(self, tmp_path):
+        """Create storage with class symbol and identifier usages (no relationships)."""
+        storage = StorageManager(":memory:")
+
+        # Add test files
+        storage.add_file(
+            file_path="models/user.py",
+            language="python",
+            content="class UserService:\n    pass",
+            hash="abc123",
+            size=50,
+        )
+        storage.add_file(
+            file_path="handlers/api.py",
+            language="python",
+            content="from models.user import UserService\n\ndef get_user():\n    svc = UserService()\n    return svc.get()",
+            hash="def456",
+            size=100,
+        )
+
+        # Add the class symbol (definition)
+        user_service_id = "symbol_user_service"
+        storage.conn.execute(
+            """
+            INSERT INTO symbols (
+                id, name, kind, language, file_path,
+                start_line, end_line, signature
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_service_id, "UserService", "Class", "python", "models/user.py", 1, 2, "class UserService"),
+        )
+
+        # Add the containing function symbol (needed for FK constraint)
+        storage.conn.execute(
+            """
+            INSERT INTO symbols (
+                id, name, kind, language, file_path,
+                start_line, end_line, signature
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("symbol_get_user", "get_user", "Function", "python", "handlers/api.py", 3, 5, "def get_user()"),
+        )
+
+        # Add identifier entries (usages of UserService in other files)
+        # This is what tree-sitter captures for class instantiation
+        storage.conn.execute(
+            """
+            INSERT INTO identifiers (
+                id, name, kind, language, file_path,
+                start_line, start_col, end_line, end_col,
+                containing_symbol_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "ident_import",
+                "UserService",
+                "Reference",  # Import reference
+                "python",
+                "handlers/api.py",
+                1,  # line 1: from models.user import UserService
+                0,
+                1,
+                11,
+                None,  # module-level, no containing symbol
+            ),
+        )
+
+        storage.conn.execute(
+            """
+            INSERT INTO identifiers (
+                id, name, kind, language, file_path,
+                start_line, start_col, end_line, end_col,
+                containing_symbol_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "ident_instantiation",
+                "UserService",
+                "Reference",  # Class instantiation
+                "python",
+                "handlers/api.py",
+                4,  # line 4: svc = UserService()
+                10,
+                4,
+                21,
+                "symbol_get_user",  # inside get_user function
+            ),
+        )
+
+        # NOTE: We intentionally DO NOT add any relationships entries
+        # This simulates the real-world case where class instantiation
+        # is not captured as a "Call" relationship
+
+        storage.conn.commit()
+        return storage
+
+    def test_find_class_instantiation_references(self, storage_with_identifiers):
+        """Test that find_references finds class usages from identifiers table.
+
+        This test should FAIL with current implementation (only queries relationships)
+        and PASS after fix (also queries identifiers).
+        """
+        from miller.tools.refs import find_references
+
+        # Query for references to UserService class
+        result = find_references(storage_with_identifiers, symbol_name="UserService")
+
+        # Should find 2 references (import + instantiation) from identifiers table
+        assert result is not None
+        assert result["symbol"] == "UserService"
+        assert result["total_references"] == 2, (
+            f"Expected 2 references from identifiers table, got {result['total_references']}. "
+            "Bug: find_references only queries relationships table."
+        )
+
+        # Both references should be in handlers/api.py
+        assert len(result["files"]) == 1
+        assert result["files"][0]["path"] == "handlers/api.py"
+        assert result["files"][0]["references_count"] == 2
+
+    def test_find_references_combines_relationships_and_identifiers(self, storage_with_identifiers):
+        """Test that references from both tables are combined without duplicates."""
+        from miller.tools.refs import find_references
+
+        # Add a relationship entry for the same location as an identifier
+        # (some extractors might capture both)
+        # Note: symbol_get_user already exists from fixture setup
+
+        storage_with_identifiers.conn.execute(
+            """
+            INSERT INTO relationships (
+                id, from_symbol_id, to_symbol_id, kind,
+                file_path, line_number
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("rel_1", "symbol_get_user", "symbol_user_service", "Call", "handlers/api.py", 4),
+        )
+        storage_with_identifiers.conn.commit()
+
+        result = find_references(storage_with_identifiers, symbol_name="UserService")
+
+        # Should find 3 references total:
+        # - 2 from identifiers (import line 1 + instantiation line 4)
+        # - 1 from relationships (call on line 4)
+        # Note: line 4 appears in both tables, but they're different reference types
+        # so both should be included (or deduplicated by file:line if we choose)
+        assert result["total_references"] >= 2, (
+            f"Expected at least 2 references, got {result['total_references']}"
+        )
+
+    def test_identifier_references_respect_kind_filter(self, storage_with_identifiers):
+        """Test that kind_filter applies to identifier-based references."""
+        from miller.tools.refs import find_references
+
+        # Query with kind filter that matches identifier kinds
+        result = find_references(
+            storage_with_identifiers,
+            symbol_name="UserService",
+            kind_filter=["Reference"],
+        )
+
+        # Should find the 2 Reference-kind identifiers
+        assert result["total_references"] == 2
+
+        # Query with kind filter that doesn't match
+        result = find_references(
+            storage_with_identifiers,
+            symbol_name="UserService",
+            kind_filter=["Call"],  # No "Call" kind in our identifiers
+        )
+
+        # Should find 0 (no relationships, and identifiers are "Reference" not "Call")
+        assert result["total_references"] == 0

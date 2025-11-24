@@ -2,7 +2,7 @@
 
 **Python MCP Server with Rust-Powered Tree-sitter Core**
 
-Miller is a hybrid Python/Rust code intelligence server that combines the battle-tested tree-sitter parsing from [Julie](https://github.com/yourusername/julie) with Python's superior ML ecosystem for embeddings and semantic search.
+Miller is a hybrid Python/Rust code intelligence server that combines battle-tested tree-sitter parsing (31 languages) with Python's superior ML ecosystem for embeddings and semantic search.
 
 ## Architecture
 
@@ -92,8 +92,6 @@ await fast_search(ctx, "user", output_format="auto")  # Default
 On large codebases with 100+ results, TOON can save thousands of tokens per query.
 
 ## Quick Start
-
-See [QUICKSTART.md](QUICKSTART.md) for detailed setup instructions.
 
 ```bash
 # 1. Install Rust
@@ -205,10 +203,10 @@ See `.claude/commands/` for slash command definitions.
 
 ## Documentation
 
-- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide
-- **[CLAUDE.md](CLAUDE.md)** - Development guidelines (TDD rules!)
-- **[docs/PLAN.md](docs/PLAN.md)** - Detailed migration plan from Julie
-- **[`.memories/`](.memories/)** - Development memory storage
+- **[CLAUDE.md](CLAUDE.md)** - Development guidelines and agent onboarding
+- **[docs/TOON.md](docs/TOON.md)** - TOON format specification
+- **[docs/GPU_SETUP.md](docs/GPU_SETUP.md)** - PyTorch GPU installation
+- **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)** - Build and release process
 
 ## Project Status
 
@@ -241,4 +239,4 @@ MIT
 
 ## Acknowledgments
 
-Built on the shoulders of [Julie](https://github.com/yourusername/julie), a mature Rust MCP server with excellent tree-sitter parsing.
+Tree-sitter extractors originally developed for Julie, a Rust MCP server project.

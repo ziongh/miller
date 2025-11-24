@@ -1,0 +1,29 @@
+{
+  "description": "Tool audit via dogfooding revealed fast_refs returns empty because it only queries relationships table (0 entries for classes) while identifiers table has all usages (78 for StorageManager). Root cause: relationships only capture function calls, not class instantiation. Fix: query identifiers table too.",
+  "git": {
+    "branch": "main",
+    "commit": "121ba52",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      "TODO.md",
+      "docs/TOOL_AUDIT_FINDINGS.md",
+      "python/miller/server.py",
+      "python/miller/tools/explore_wrapper.py",
+      ".memories/2025-11-24/181730_841e.json",
+      ".memories/2025-11-24/185215_bf8b.json",
+      ".memories/2025-11-24/193359_041e.json",
+      ".memories/2025-11-24/195316_f3c0.json",
+      ".memories/plans/plan_test-plan.json"
+    ]
+  },
+  "id": "learning_3fc95d26_121f8c",
+  "tags": [
+    "fast-refs",
+    "dogfooding",
+    "identifiers",
+    "root-cause-analysis"
+  ],
+  "timestamp": 1763949969,
+  "type": "learning"
+}

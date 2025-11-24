@@ -577,14 +577,18 @@ async def fast_explore(
     mode: Literal["types", "similar", "dependencies"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
-    threshold: float = 0.7,
     depth: int = 3,
     limit: int = 10,
     workspace: str = "primary",
-    output_format: Literal["text", "json"] = "text",
+    output_format: Literal["text", "json", "toon", "auto"] = "text",
 ) -> Union[dict[str, Any], str]:
     """
     Explore codebases with different modes.
+
+    Use this for advanced code exploration beyond simple search. Each mode provides
+    specialized intelligence that helps you understand code structure and relationships.
+
+    You are excellent at choosing the right exploration mode for your task.
 
     Modes:
     - types: Type intelligence (implementations, hierarchy, return/parameter types)
@@ -595,30 +599,38 @@ async def fast_explore(
         mode: Exploration mode
         type_name: Name of type to explore (required for types mode)
         symbol: Symbol name to explore (required for similar/dependencies modes)
-        threshold: Minimum similarity score for similar mode (0.0-1.0, default 0.7)
         depth: Maximum traversal depth for dependencies mode (1-10, default 3)
         limit: Maximum results (default: 10)
         workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "text" (default) or "json"
+        output_format: Output format - "text" (default), "json", "toon", or "auto"
+                      - "text": Lean formatted output (DEFAULT)
+                      - "json": Full structured data
+                      - "toon": TOON-encoded (30-40% token savings)
+                      - "auto": TOON if ≥10 results, else JSON
 
     Returns:
-        Dict or formatted string based on output_format
+        - text mode: Lean formatted string (DEFAULT)
+        - json mode: Dict with exploration results
+        - toon mode: TOON-encoded string
+        - auto mode: Switches based on result size
 
     Examples:
-        # Type intelligence
+        # Type intelligence - find implementations and usages
         await fast_explore(mode="types", type_name="IUserService")
 
-        # Find similar code
-        await fast_explore(mode="similar", symbol="getUserData", threshold=0.8)
+        # Find similar code - duplicate detection
+        await fast_explore(mode="similar", symbol="getUserData")
 
-        # Trace dependencies
+        # Trace dependencies - impact analysis before refactoring
         await fast_explore(mode="dependencies", symbol="PaymentService", depth=3)
+
+    Note: Similar mode uses an optimized similarity threshold internally.
+    Results are ranked by relevance - trust the top matches.
     """
     return await fast_explore_impl(
         mode=mode,
         type_name=type_name,
         symbol=symbol,
-        threshold=threshold,
         depth=depth,
         limit=limit,
         workspace=workspace,

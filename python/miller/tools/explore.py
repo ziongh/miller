@@ -19,6 +19,7 @@ async def fast_explore(
     threshold: float = 0.7,
     depth: int = 3,
     storage: Optional[StorageManager] = None,
+    vector_store: Optional[Any] = None,  # VectorStore for similar mode
     limit: int = 10,
 ) -> dict[str, Any]:
     """
@@ -44,7 +45,7 @@ async def fast_explore(
     if mode == "types":
         return await _explore_types(type_name, storage, limit)
     elif mode == "similar":
-        return await _explore_similar(symbol, threshold, storage, limit)
+        return await _explore_similar(symbol, threshold, storage, vector_store, limit)
     elif mode == "dependencies":
         return await _explore_dependencies(symbol, depth, storage, limit)
     else:
@@ -116,6 +117,7 @@ async def _explore_similar(
     symbol: Optional[str],
     threshold: float,
     storage: Optional[StorageManager],
+    vector_store: Optional[Any],
     limit: int,
 ) -> dict[str, Any]:
     """Find semantically similar symbols using vector embeddings."""
@@ -134,14 +136,16 @@ async def _explore_similar(
     if not target:
         return {"symbol": symbol, "error": "Symbol not found", "similar": [], "total_found": 0}
 
-    # Get vector store for similarity search
+    # Get vector store for similarity search (use passed param or fall back to server global)
     try:
-        import miller.server as server
-        if server.vector_store is None:
+        if vector_store is None:
+            import miller.server as server
+            vector_store = server.vector_store
+        if vector_store is None:
             return {"symbol": symbol, "error": "Vector store not available", "similar": [], "total_found": 0}
 
         # Search for similar symbols using semantic search
-        results = server.vector_store.search(symbol, method="semantic", limit=limit + 1)
+        results = vector_store.search(symbol, method="semantic", limit=limit + 1)
 
         # Filter by threshold and exclude self
         similar = []

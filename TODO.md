@@ -1,8 +1,47 @@
 # Miller - TODO
 
-*Last updated: 2025-11-23*
+*Last updated: 2025-11-24*
 
 <!-- Add your notes below -->
+
+## 🔴 CRITICAL BUGS (Found via Dogfooding 2025-11-24)
+
+**Root Cause**: Julie's extractors aren't populating relationship data during indexing. This breaks multiple tools.
+
+### Critical Severity
+
+| Issue | Tool | Status |
+|-------|------|--------|
+| ~~**`fast_refs` only queries relationships, not identifiers**~~ | `fast_refs` | ✅ FIXED - now queries both tables |
+| ~~**`fast_refs` returns empty** for classes~~ | Works for function calls, not class instantiation | ✅ FIXED - finds 79 refs for StorageManager |
+| ~~**`fast_explore` "Vector store not available"**~~ | Similar mode throws error | ✅ FIXED - now passes workspace-specific vector_store |
+| ~~**`fast_explore` types/deps empty**~~ | Returns nothing for known types | ✅ NOT A BUG - works for types WITH relationships (TypedDict: 6, UserRepository: 1) |
+
+### Medium Severity
+
+| Issue | Tool | Status |
+|-------|------|--------|
+| **`code_context` always null** | `fast_search` | Falls back to signature instead of grep-style context |
+| ~~**`get_symbols` mode="full" broken**~~ | Doesn't show code bodies as documented | ✅ NOT A BUG - use `output_format="code"` to see bodies, `mode` controls extraction scope |
+| ~~**`trace_call_path` JSON explodes**~~ | Duplicate "variant" nodes, 25k+ tokens | ✅ BY DESIGN - tree format (default) is compact; JSON includes full metadata |
+
+### Low Severity
+
+| Issue | Tool | Status |
+|-------|------|--------|
+| **`get_symbols` JSON bloated** | Unused fields: doc_quality, importance_score, cross_language_hints |
+| **`get_symbols` TOON missing file_path** | Shows empty string for file_path column |
+
+### What's Working ✅
+
+- `fast_search` - All formats and methods work (text/json/toon, auto/text/semantic/pattern/hybrid)
+- `fast_goto` - Clean output both formats
+- `trace_call_path` tree format - ASCII tree looks excellent
+- `checkpoint` / `recall` - Working perfectly
+- `plan` - Working well with task counting
+- `manage_workspace` - Concise and useful
+
+---
 
 ## ✅ COMPLETED
 
@@ -38,7 +77,11 @@
    - we made some good progress but the plan tool is still very inefficient with token usage
    - we need to reduce the tokens needed and returned for each operation too
 
-5. In Julie we created a set of rules to follow when auditing each tool and then went one by one validating each tool (/Users/murphy/source/julie/docs/archive/TOOL_AUDIT_2025-11-11_COMPLETE.md) we should do something similar in Miller to make sure that every tool is leveraging our unique functionality to highest level it can. Also part of this audit should be the specialized output formats. Another point: as we audit the tools we should explore how Julie implemented the same tool, not to copy it but make sure that Julie hasn't already solved some issue we haven't encountered yet or maybe Julie has some genuinely clever implementation we can build on.
+5. ~~In Julie we created a set of rules to follow when auditing each tool and then went one by one validating each tool (/Users/murphy/source/julie/docs/archive/TOOL_AUDIT_2025-11-11_COMPLETE.md) we should do something similar in Miller to make sure that every tool is leveraging our unique functionality to highest level it can. Also part of this audit should be the specialized output formats. Another point: as we audit the tools we should explore how Julie implemented the same tool, not to copy it but make sure that Julie hasn't already solved some issue we haven't encountered yet or maybe Julie has some genuinely clever implementation we can build on. All params that can be optional with a smart default should be.~~ ✅ **DONE (2025-11-24)**
+   - Created `docs/TOOL_AUDIT_CHECKLIST.md` with 7-dimension audit framework
+   - Created `docs/TOOL_AUDIT_FINDINGS.md` with per-tool analysis
+   - All 10 tools audited: 7 FIXED, 3 EXCELLENT (no changes needed)
+   - Key fixes: hardcoded threshold in fast_explore, added TOON to all tools, text defaults everywhere
 
 6. We should look at the skills defined in Julie and create our own version for Miller ~/source/julie/.claude/skills https://code.claude.com/docs/en/skills
 

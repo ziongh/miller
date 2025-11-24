@@ -81,6 +81,33 @@ Without restart, you're testing old code!
 
 ---
 
+## Workspace-Specific Paths (Important!)
+
+Miller uses **per-workspace databases**, NOT a single global database. This is critical for debugging:
+
+```
+.miller/
+├── workspace_registry.json          # Maps workspace IDs to paths
+└── indexes/
+    └── <workspace_id>/              # e.g., miller_816288f4
+        ├── symbols.db               # SQLite: symbols, relationships, identifiers
+        └── vectors.lance/           # LanceDB: embeddings for semantic search
+```
+
+**Common pitfall:** Don't query `.miller/index.db` directly - it may be empty or stale. Use:
+
+```python
+from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
+
+# Get correct paths for a workspace
+db_path = get_workspace_db_path("primary")      # → .miller/indexes/<id>/symbols.db
+vector_path = get_workspace_vector_path("primary")  # → .miller/indexes/<id>/vectors.lance
+```
+
+**For tools that need vector search:** Always pass workspace-specific `vector_store`, don't rely on `server.vector_store` global (it may not match the workspace being queried).
+
+---
+
 ## Build & Test Commands
 
 ### Build Rust Extension (after Rust changes)

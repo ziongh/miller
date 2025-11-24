@@ -15,7 +15,7 @@
 | `fast_refs` | P2 | ✅ EXCELLENT | 0 issues | None needed |
 | `get_symbols` | P2 | ✅ FIXED | 2 issues | ✅ Added text format, changed default to text |
 | `trace_call_path` | P2 | ✅ EXCELLENT | 0 issues | None needed |
-| `fast_explore` | P3 | ✅ EXCELLENT | 0 issues | Already had text default, workspace support |
+| `fast_explore` | P3 | ✅ FIXED | 3 issues | ✅ Hardcoded threshold (0.7), added TOON/auto, improved docstring |
 | `checkpoint` | P2 | ✅ FIXED | 1 issue | ✅ output_schema=None |
 | `recall` | P2 | ✅ FIXED | 2 issues | ✅ output_schema=None, output_format, text formatter |
 | `plan` | P2 | ✅ FIXED | 3 issues | ✅ output_schema=None, output_format, lean save return |
@@ -265,10 +265,10 @@ None!
 
 **File:** `python/miller/tools/explore_wrapper.py`
 
-### Current State
+### Current State ✅ FIXED (2025-11-24)
 - **Purpose:** Type/similar/dependency exploration
 - **Default Output:** `text` ✅
-- **Output Formats:** text, json only ⚠️ (missing TOON)
+- **Output Formats:** text, json, toon, auto ✅ (TOON added!)
 - **Registration:** `output_schema=None` ✅
 
 ### Parameter Review
@@ -278,34 +278,26 @@ None!
 | `mode` | Literal | "types" | ✅ | Good |
 | `type_name` | Optional[str] | None | ✅ | Required for types |
 | `symbol` | Optional[str] | None | ✅ | Required for similar/deps |
-| `threshold` | float | 0.7 | ⚠️ | EXPOSED! Could cause iteration |
 | `depth` | int | 3 | ✅ | Good |
 | `limit` | int | 10 | ✅ | Good |
 | `workspace` | str | "primary" | ✅ | Smart |
-| `output_format` | Literal | "text" | ✅ | Lean |
+| `output_format` | Literal | "text" | ✅ | text/json/toon/auto |
 
-### Behavioral Adoption ⚠️ WEAK
-- [ ] Imperative: ❌ Missing
-- [ ] Confidence: ❌ Missing
-- [ ] Emotional stakes: ❌ Missing
-- [ ] Value prop: ⚠️ Minimal
+**Note:** `threshold` parameter removed from MCP API (INTENTIONALLY HARDCODED at 0.7 internally)
+
+### Behavioral Adoption ✅ IMPROVED
+- [x] Confidence: "You are excellent at choosing the right exploration mode"
+- [x] Value prop: Mode descriptions with use cases
 - [x] When to use/not: Mode descriptions
-- [ ] Examples: ❌ Missing (only in docstring args)
-- [ ] Trust statement: ❌ Missing
+- [x] Examples: 3 clear examples
+- [x] Trust statement: "Results are ranked by relevance - trust the top matches"
 
-### Issues Found
-1. ⚠️ `threshold` parameter exposed (could cause agent iteration)
-2. ⚠️ Missing TOON format
-3. ⚠️ Weak behavioral adoption
+### Changes Made (2025-11-24)
+1. ✅ Removed `threshold` from MCP-exposed parameters (hardcoded 0.7 internally)
+2. ✅ Added TOON/auto to output_format options
+3. ✅ Improved docstring with confidence building and trust statement
 
-### Recommendations
-**Priority: MEDIUM**
-1. Consider hardcoding threshold or removing (INTENTIONALLY HARDCODED pattern)
-2. Add TOON to output_format options
-3. Strengthen docstring behavioral adoption
-4. Add examples section
-
-### Verdict: ⚠️ NEEDS WORK (70% confidence)
+### Verdict: ✅ FIXED (90% confidence)
 
 ---
 
