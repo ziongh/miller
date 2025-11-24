@@ -179,11 +179,14 @@ async def fast_refs(
         registry = WorkspaceRegistry()
         workspace_entry = registry.get_workspace(workspace)
         if not workspace_entry:
+            error_msg = f"Workspace '{workspace}' not found"
+            if output_format == "text":
+                return f'No references found for "{symbol_name}": {error_msg}'
             return {
                 "symbol": symbol_name,
                 "total_references": 0,
                 "files": [],
-                "error": f"Workspace '{workspace}' not found"
+                "error": error_msg
             }
         db_path = get_workspace_db_path(workspace)
         workspace_storage = StorageManager(db_path=str(db_path))

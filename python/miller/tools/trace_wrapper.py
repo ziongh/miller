@@ -80,10 +80,10 @@ async def trace_call_path(
         registry = WorkspaceRegistry()
         workspace_entry = registry.get_workspace(workspace)
         if not workspace_entry:
-            return {
-                "symbol": symbol_name,
-                "error": f"Workspace '{workspace}' not found"
-            }
+            error_msg = f"Workspace '{workspace}' not found"
+            if output_format == "tree":
+                return f"Error: {error_msg}"
+            return {"symbol": symbol_name, "error": error_msg}
         db_path = get_workspace_db_path(workspace)
         workspace_storage = StorageManager(db_path=str(db_path))
     else:

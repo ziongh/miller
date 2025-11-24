@@ -17,7 +17,7 @@ async def manage_workspace(
     operation: Literal["index", "list", "add", "remove", "stats", "clean", "refresh", "health"],
     path: Optional[str] = None,
     name: Optional[str] = None,
-    workspace_id: Optional[str] = None,
+    workspace: Optional[str] = None,
     force: bool = False,
     detailed: bool = False,
     output_format: Literal["text", "json"] = "text",
@@ -44,7 +44,7 @@ async def manage_workspace(
         operation: Operation to perform
         path: Workspace path (for index, add)
         name: Workspace display name (for add)
-        workspace_id: Workspace ID (for stats, remove, refresh). Defaults to primary workspace.
+        workspace: Workspace to query ("primary" or workspace_id). Defaults to primary workspace.
         force: Force re-indexing even if up-to-date (for index, refresh)
         detailed: Include detailed per-workspace info (for health)
         output_format: Output format - "text" (default, lean) or "json"
@@ -73,7 +73,8 @@ async def manage_workspace(
     """
     registry = WorkspaceRegistry()
 
-    # Default to primary workspace when workspace_id not provided
+    # Default to primary workspace when workspace not provided
+    workspace_id = workspace
     if workspace_id is None and operation in ("stats", "remove", "refresh"):
         workspaces = registry.list_workspaces()
         primary = next((w for w in workspaces if w.get("workspace_type") == "primary"), None)

@@ -57,7 +57,10 @@ async def fast_explore(
         registry = WorkspaceRegistry()
         workspace_entry = registry.get_workspace(workspace)
         if not workspace_entry:
-            return {"error": f"Workspace '{workspace}' not found"}
+            error_msg = f"Workspace '{workspace}' not found"
+            if output_format == "text":
+                return f"Error: {error_msg}"
+            return {"error": error_msg}
         db_path = get_workspace_db_path(workspace)
         workspace_storage = StorageManager(db_path=str(db_path))
         # For similar mode, we need workspace-specific vector store

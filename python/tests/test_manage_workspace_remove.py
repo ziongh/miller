@@ -47,7 +47,7 @@ class TestManageWorkspaceRemove:
 
             try:
                 result = await manage_workspace(
-                    operation="remove", workspace_id="nonexistent_abc123"
+                    operation="remove", workspace="nonexistent_abc123"
                 )
 
                 # Should return error
@@ -77,7 +77,7 @@ class TestManageWorkspaceRemove:
 
                 # Remove it
                 result = await manage_workspace(
-                    operation="remove", workspace_id=workspace_id
+                    operation="remove", workspace=workspace_id
                 )
 
                 # Should report success
@@ -125,7 +125,7 @@ class TestManageWorkspaceRemove:
 
                 # Remove workspace
                 result = await manage_workspace(
-                    operation="remove", workspace_id=workspace_id
+                    operation="remove", workspace=workspace_id
                 )
 
                 # Verify directories are deleted
@@ -153,7 +153,7 @@ class TestManageWorkspaceRemove:
                 )
 
                 result = await manage_workspace(
-                    operation="remove", workspace_id=workspace_id
+                    operation="remove", workspace=workspace_id
                 )
 
                 # Should include workspace name
@@ -181,7 +181,7 @@ class TestManageWorkspaceRemove:
 
                 # Remove without creating directories first
                 result = await manage_workspace(
-                    operation="remove", workspace_id=workspace_id
+                    operation="remove", workspace=workspace_id
                 )
 
                 # Should still succeed (no error about missing dirs)
@@ -218,7 +218,7 @@ class TestManageWorkspaceRemove:
                 db_path.write_text("data")
 
                 # Remove
-                await manage_workspace(operation="remove", workspace_id=workspace_id)
+                await manage_workspace(operation="remove", workspace=workspace_id)
 
                 # Verify complete cleanup
                 registry = WorkspaceRegistry()

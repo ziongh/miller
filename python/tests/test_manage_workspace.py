@@ -133,7 +133,7 @@ class TestManageWorkspaceStats:
 
             try:
                 result = await manage_workspace(
-                    operation="stats", workspace_id="nonexistent_abc123"
+                    operation="stats", workspace="nonexistent_abc123"
                 )
 
                 # Should return error
@@ -164,7 +164,7 @@ class TestManageWorkspaceStats:
                 ensure_workspace_directories(workspace_id)
 
                 result = await manage_workspace(
-                    operation="stats", workspace_id=workspace_id
+                    operation="stats", workspace=workspace_id
                 )
 
                 # Lean format: "Test Project [primary]\n  0 sym | 0 files | 0.00 MB"
@@ -207,7 +207,7 @@ class TestManageWorkspaceStats:
                 db_path.write_text("dummy data")
 
                 result = await manage_workspace(
-                    operation="stats", workspace_id=workspace_id
+                    operation="stats", workspace=workspace_id
                 )
 
                 # Lean format shows total size as "X.XX MB"
@@ -216,7 +216,7 @@ class TestManageWorkspaceStats:
 
                 # JSON format provides detailed breakdown
                 result_json = await manage_workspace(
-                    operation="stats", workspace_id=workspace_id, output_format="json"
+                    operation="stats", workspace=workspace_id, output_format="json"
                 )
                 import json
                 data = json.loads(result_json)

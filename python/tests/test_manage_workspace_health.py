@@ -134,7 +134,7 @@ class TestManageWorkspaceHealth:
                 )
 
                 # Index workspace
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 result = await manage_workspace(operation="health")
 
@@ -166,7 +166,7 @@ class TestManageWorkspaceHealth:
                 )
 
                 # Index workspace
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Get detailed health
                 result = await manage_workspace(operation="health", detailed=True)
@@ -202,7 +202,7 @@ class TestManageWorkspaceHealth:
                 )
 
                 # Index to create data files
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 result = await manage_workspace(operation="health", detailed=True)
 

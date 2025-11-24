@@ -145,7 +145,7 @@ class TestManageWorkspaceClean:
                 )
 
                 # Index to create data files
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Verify data files exist
                 db_path = get_workspace_db_path(workspace_id)

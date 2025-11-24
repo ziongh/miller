@@ -50,7 +50,7 @@ class TestManageWorkspaceRefresh:
 
             try:
                 result = await manage_workspace(
-                    operation="refresh", workspace_id="nonexistent_workspace_123"
+                    operation="refresh", workspace="nonexistent_workspace_123"
                 )
 
                 # Should return error for non-existent workspace
@@ -83,13 +83,13 @@ class TestManageWorkspaceRefresh:
                 )
 
                 # Do initial refresh to index the workspace
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Add a new file after initial indexing
                 (workspace_dir / "new.py").write_text("def new_func(): pass")
 
                 # Refresh the workspace again
-                result = await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                result = await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Should indicate successful refresh
                 assert "refresh" in result.lower()
@@ -123,7 +123,7 @@ class TestManageWorkspaceRefresh:
                 )
 
                 # Do initial refresh
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Get initial metadata
                 workspace_before = registry.get_workspace(workspace_id)
@@ -134,7 +134,7 @@ class TestManageWorkspaceRefresh:
                 (workspace_dir / "new2.py").write_text("def new2(): pass")
 
                 # Refresh again
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Check updated metadata (create fresh registry to reload from disk)
                 fresh_registry = WorkspaceRegistry()
@@ -168,13 +168,13 @@ class TestManageWorkspaceRefresh:
                 )
 
                 # Do initial refresh
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Delete a file
                 (workspace_dir / "utils.py").unlink()
 
                 # Refresh again
-                result = await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                result = await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Should report deleted files
                 assert "deleted" in result.lower() or "removed" in result.lower()
@@ -205,10 +205,10 @@ class TestManageWorkspaceRefresh:
                 )
 
                 # Do initial refresh
-                await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Refresh without changes
-                result = await manage_workspace(operation="refresh", workspace_id=workspace_id)
+                result = await manage_workspace(operation="refresh", workspace=workspace_id)
 
                 # Should report no changes or up to date
                 assert "skipped" in result.lower() or "unchanged" in result.lower() or "up to date" in result.lower()

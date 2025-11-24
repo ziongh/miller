@@ -7,7 +7,7 @@ Provides different exploration strategies:
 - dependencies: Trace transitive dependencies for impact analysis
 """
 
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional
 
 from miller.storage import StorageManager
 
@@ -342,66 +342,6 @@ def _format_explore_as_text(result: dict[str, Any]) -> str:
         output.pop()
 
     return "\n".join(output)
-
-
-async def fast_explore_with_format(
-    mode: Literal["types"] = "types",
-    type_name: Optional[str] = None,
-    storage: Optional[StorageManager] = None,
-    limit: int = 10,
-    output_format: Literal["text", "json"] = "text",
-) -> Union[dict[str, Any], str]:
-    """
-    Explore codebases with different modes - currently supports type intelligence.
-
-    Use this to understand type relationships in OOP codebases:
-    - What classes implement an interface?
-    - What's the inheritance hierarchy?
-    - What functions return or take a specific type?
-
-    Args:
-        mode: Exploration mode - currently only "types" is supported
-        type_name: Name of type to explore (required for types mode)
-              Examples: "IUser", "PaymentProcessor", "BaseService"
-        storage: StorageManager instance (uses global if not provided)
-        limit: Maximum results per category (default: 10)
-        output_format: Output format - "text" (default) or "json"
-                      - "text": Lean formatted string - DEFAULT
-                      - "json": Dict with full metadata
-
-    Returns:
-        - Text mode: Formatted string with type relationships
-        - JSON mode: Dict with exploration results:
-          - type_name: The queried type
-          - implementations: Classes implementing this interface
-          - hierarchy: {parents: [...], children: [...]} - inheritance tree
-          - returns: Functions that return this type
-          - parameters: Functions taking this type as parameter
-          - total_found: Total matches across all categories
-
-    Examples:
-        # Find what implements an interface
-        await fast_explore_with_format(mode="types", type_name="IUserService")
-
-        # Explore a base class hierarchy
-        await fast_explore_with_format(mode="types", type_name="BaseController")
-
-    Type Intelligence Workflow:
-        1. fast_explore_with_format(type_name="IService") → See all implementations
-        2. get_symbols on implementing class → Understand the implementation
-        3. trace_call_path on implementation → See how it's used
-    """
-    result = await fast_explore(
-        mode=mode,
-        type_name=type_name,
-        storage=storage,
-        limit=limit,
-    )
-
-    if output_format == "text":
-        return _format_explore_as_text(result)
-    else:
-        return result
 
 
 def _format_similar_as_text(result: dict[str, Any]) -> str:

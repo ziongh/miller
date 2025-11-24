@@ -91,6 +91,9 @@ async def fast_search(
 
     # If workspace_id specified (and not "primary"), use that workspace's vector store
     # "primary" uses the default injected stores (fast path)
+    # Track which storage to use for expansion (workspace-specific or injected)
+    active_storage = storage
+
     if workspace_id and workspace_id != "primary":
         from miller.workspace_paths import get_workspace_vector_path
         from miller.workspace_registry import WorkspaceRegistry
@@ -128,6 +131,8 @@ async def fast_search(
         if workspace_db_path.exists():
             workspace_storage = StorageManager(db_path=str(workspace_db_path))
             results = _hydrate_search_results(results, workspace_storage)
+            # Use workspace-specific storage for expansion too
+            active_storage = workspace_storage
     else:
         # Use default vector store (primary workspace)
         results = vector_store.search(query, method=method, limit=limit)
@@ -144,8 +149,9 @@ async def fast_search(
         results = rerank_search_results(query, results, enabled=rerank)
 
     # Expand results with caller/callee context if requested
-    if expand and storage is not None and results:
-        results = _expand_search_results(results, storage, expand_limit=expand_limit)
+    # Use active_storage (workspace-specific or primary) for correct expansion
+    if expand and active_storage is not None and results:
+        results = _expand_search_results(results, active_storage, expand_limit=expand_limit)
 
     # Format results for MCP
     formatted = []

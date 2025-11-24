@@ -235,7 +235,7 @@ async def fast_search(
     query: str,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 20,
-    workspace_id: str = "primary",
+    workspace: str = "primary",
     output_format: Literal["text", "json", "toon"] = "text",
     rerank: bool = True,
     expand: bool = False,
@@ -281,7 +281,7 @@ async def fast_search(
         fast_search("auth", output_format="toon")   # Get TOON format
 
         # Workspace-specific search
-        fast_search("auth", workspace_id="my-lib_abc123")
+        fast_search("auth", workspace="my-lib_abc123")
 
         # With graph expansion (includes callers/callees)
         fast_search("authenticate", expand=True)
@@ -290,8 +290,7 @@ async def fast_search(
         query: Search query (code patterns, keywords, or natural language)
         method: Search method (auto-detects by default)
         limit: Maximum results to return (default: 20)
-        workspace_id: Optional workspace ID to search (defaults to primary workspace)
-                     Get workspace IDs from manage_workspace(operation="list")
+        workspace: Workspace to query ("primary" or workspace_id from manage_workspace)
         output_format: Output format - "text" (default), "json", or "toon"
         rerank: Enable cross-encoder re-ranking for improved relevance (default: True).
                 Adds ~20-50ms latency but improves result quality 15-30%.
@@ -312,7 +311,7 @@ async def fast_search(
         query=query,
         method=method,
         limit=limit,
-        workspace_id=workspace_id,
+        workspace_id=workspace,
         output_format=output_format,
         rerank=rerank,
         expand=expand,
@@ -636,6 +635,7 @@ async def fast_explore(
         workspace=workspace,
         output_format=output_format,
         storage=storage,
+        vector_store=vector_store,
     )
 
 
