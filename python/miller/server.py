@@ -103,22 +103,40 @@ async def lifespan(_app):
         global storage, vector_store, embeddings, scanner, workspace_root
 
         try:
-            # CRITICAL: Yield to event loop BEFORE heavy imports
-            # Python imports are synchronous and block the event loop. Even though this is an
-            # async task, importing torch/sentence-transformers blocks the thread for 3+ seconds.
-            # This delay ensures the MCP handshake completes BEFORE we start blocking imports.
-            await asyncio.sleep(0.1)  # 100ms delay - lets handshake complete first
+            import time
+            import threading
 
-            # PHASE 1: Initialize components (in background, doesn't block handshake)
+            init_start = time.time()
+            init_phase = "starting"
+
+            # Watchdog thread logs every 15s if initialization is still running
+            # This helps diagnose hangs - if you see repeated watchdog messages,
+            # something is stuck at the logged phase
+            def watchdog():
+                while init_phase != "complete":
+                    time.sleep(15)
+                    if init_phase != "complete":
+                        elapsed = time.time() - init_start
+                        logger.warning(f"⏳ Initialization still running after {elapsed:.0f}s (phase: {init_phase})")
+
+            watchdog_thread = threading.Thread(target=watchdog, daemon=True)
+            watchdog_thread.start()
+
             logger.info("🔧 Initializing Miller components in background...")
 
             # Lazy imports - only load heavy ML libraries in background task
-            from miller.embeddings import EmbeddingManager, VectorStore
+            # WorkspaceScanner transitively imports embeddings (torch, sentence-transformers)
+            # which takes ~6s on first load. This is expected and doesn't block MCP handshake.
+            init_phase = "imports"
+            t0 = time.time()
             from miller.storage import StorageManager
             from miller.workspace import WorkspaceScanner
             from miller.workspace_registry import WorkspaceRegistry
             from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
+            from miller.embeddings import EmbeddingManager, VectorStore
+            logger.info(f"✅ Imports complete ({time.time()-t0:.1f}s)")
 
+            init_phase = "workspace_setup"
             workspace_root = Path.cwd()
             logger.info(f"📁 Workspace root: {workspace_root}")
 
@@ -147,6 +165,7 @@ async def lifespan(_app):
             logger.info("✅ Miller components initialized and ready")
 
             # PHASE 2: Check if indexing needed and run if stale (uses hashes + mtime)
+            init_phase = "indexing"
             logger.info("🔍 Checking if workspace indexing needed...")
             if await scanner.check_if_indexing_needed():
                 logger.info("📚 Workspace needs indexing - starting background indexing")
@@ -173,6 +192,7 @@ async def lifespan(_app):
                 logger.info("✅ Workspace already indexed - ready for search")
 
             # PHASE 3: Start file watcher for real-time updates
+            init_phase = "file_watcher"
             logger.info("👁️  Starting file watcher for real-time indexing...")
             from miller.ignore_patterns import load_all_ignores
 
@@ -186,6 +206,8 @@ async def lifespan(_app):
             )
             file_watcher.start()
             logger.info("✅ File watcher active - workspace changes will be indexed automatically")
+
+            init_phase = "complete"  # Stop watchdog thread
 
         except Exception as e:
             logger.error(f"❌ Background initialization/indexing failed: {e}", exc_info=True)

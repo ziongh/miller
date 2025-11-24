@@ -57,6 +57,26 @@ def setup_logging(
         encoding="utf-8",
     )
 
+    # Flush immediately after each write (ensures errors are visible immediately)
+    # Without this, Python may buffer log writes and errors might not appear
+    # in the log file until much later (or never, if the process crashes)
+    class FlushingHandler(logging.handlers.TimedRotatingFileHandler):
+        """Handler that flushes after every emit for immediate visibility."""
+
+        def emit(self, record):
+            super().emit(record)
+            self.flush()
+
+    # Replace with flushing version
+    file_handler.close()
+    file_handler = FlushingHandler(
+        log_file,
+        when="midnight",
+        interval=1,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+
     # Format with timestamp, level, module, and message
     formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d | %(message)s",

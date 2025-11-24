@@ -12,15 +12,31 @@ uv pip install torch
 # Miller auto-detects MPS and uses GPU acceleration
 ```
 
-### Windows/Linux with NVIDIA GPU
+### Linux with NVIDIA GPU
 ```bash
 # Use uv (faster, better dependency resolution)
-uv pip install torch --index-url https://download.pytorch.org/whl/cu130
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128
 
-# This installs: torch 2.9.1+cu130 (CUDA 13.0 support)
+# This installs: torch 2.9.x+cu128 (CUDA 12.8 support)
 # Works with: Python 3.10-3.14, NVIDIA drivers 527.41+
 # Supports: RTX 20/30/40/50 series, A100, H100, etc.
 ```
+
+### Windows with NVIDIA GPU
+```bash
+# CUDA wheels for Windows require Python 3.13 or earlier
+# Python 3.14 + Windows + CUDA is NOT yet supported by PyTorch
+
+# For Python 3.13 and earlier:
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+# For Python 3.14 on Windows: Must use CPU-only (GPU not available yet)
+uv pip install torch
+```
+
+> **⚠️ Windows + Python 3.14 Limitation:** As of November 2025, PyTorch's CUDA
+> indices only have Windows wheels for Python 3.9-3.13. Linux has cp314 CUDA
+> wheels, but Windows does not. Use Python 3.13 if you need Windows CUDA support.
 
 ### Linux with AMD GPU
 ```bash
@@ -179,15 +195,22 @@ Miller will auto-detect DirectML and use it for GPU acceleration (though CUDA on
 
 ## CUDA Version Selection
 
-**Why CUDA 13.0 (`cu130`) is recommended:**
-- PyTorch 2.9.1 added CUDA 13.0 support
-- CUDA 12.x indexes (`cu121`, `cu124`) only have wheels up to Python 3.13
-- CUDA 13.0 index has Python 3.14 wheels
-- CUDA is backward compatible (cu130 binaries work with CUDA 12.x/13.x drivers)
+**Recommended: CUDA 12.8 (`cu128`)**
+
+| Index | Python Support | Notes |
+|-------|----------------|-------|
+| `cu128` | 3.10-3.14 (Linux), 3.10-3.13 (Windows) | Recommended |
+| `cu126` | 3.10-3.13 | Stable alternative |
+| `cu124` | 3.9-3.13 | Older, wider Python compat |
+
+**Platform-specific availability (November 2025):**
+- **Linux**: Python 3.14 CUDA wheels available (cp314-manylinux)
+- **Windows**: Python 3.14 CUDA wheels NOT available (only CPU)
+- **macOS**: Uses MPS (Metal), not CUDA
 
 **Alternative CUDA versions:**
 ```bash
-uv pip install torch --index-url https://download.pytorch.org/whl/cu130  # CUDA 13.0 (recommended)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128  # CUDA 12.8 (recommended)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu126  # CUDA 12.6
 uv pip install torch --index-url https://download.pytorch.org/whl/cu124  # CUDA 12.4
-uv pip install torch --index-url https://download.pytorch.org/whl/cu121  # CUDA 12.1
 ```

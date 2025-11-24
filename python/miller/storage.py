@@ -54,7 +54,10 @@ class StorageManager:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
+        # check_same_thread=False is required for async/background tasks where
+        # connection creation thread may differ from usage thread (common on Windows).
+        # This is safe because we use WAL mode and serialize writes with commit().
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row  # Access columns by name
 
         # Enable WAL mode (for file-based databases)

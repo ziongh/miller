@@ -93,6 +93,8 @@ On large codebases with 100+ results, TOON can save thousands of tokens per quer
 
 ## Quick Start
 
+### Linux/macOS
+
 ```bash
 # 1. Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -109,6 +111,44 @@ maturin develop --release
 # 4. Test
 pytest python/tests/ -v
 ```
+
+### Windows
+
+```powershell
+# 1. Install Rust (download installer from https://rustup.rs)
+winget install Rustlang.Rustup
+# Or download rustup-init.exe from https://win.rustup.rs
+
+# 2. Install UV
+winget install astral-sh.uv
+# Or: powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 3. Set up Python environment (use 3.12 for GPU support)
+uv venv --python 3.12        # Python 3.12 for CUDA + DirectML support
+.venv\Scripts\activate       # PowerShell
+# Or: .venv\Scripts\activate.bat  # CMD
+
+# 4. Install GPU-accelerated PyTorch (choose one):
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128  # NVIDIA GPU
+# Or: uv pip install torch-directml  # Intel Arc / AMD GPU
+
+# 5. Install build tools and dependencies
+uv pip install -e ".[dev]"   # Install package with dev dependencies
+uv tool install maturin      # Install maturin as global tool
+
+# 6. Build Rust extension
+maturin develop --release
+
+# 7. Test
+pytest python/tests/ -v
+```
+
+> **⚠️ Windows GPU Note:** Use Python 3.12 for maximum GPU compatibility:
+> - Python 3.12: CUDA ✅ + DirectML ✅ (recommended)
+> - Python 3.13: CUDA ✅ + DirectML ❌
+> - Python 3.14: CUDA ❌ + DirectML ❌ (CPU only)
+>
+> See [docs/GPU_SETUP.md](docs/GPU_SETUP.md) for detailed GPU setup instructions.
 
 ## Development
 
