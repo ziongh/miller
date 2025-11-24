@@ -359,3 +359,171 @@ async def test_plan_list_summary_excludes_git(temp_memories_dir, mock_git_contex
         # But should be included with include_content=True
         plans_full = await plan(ctx, action="list", include_content=True, output_format="json")
         assert "git" in plans_full[0]
+
+
+# ============================================================================
+# Text Format Tests
+# ============================================================================
+
+
+class TestPlanTextFormat:
+    """Tests for plan text output format."""
+
+    @pytest.mark.asyncio
+    async def test_save_text_format_returns_string(self, temp_memories_dir, mock_git_context, mock_context):
+        """Save action with text format should return a string confirmation."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            result = await plan(
+                mock_context,
+                action="save",
+                title="Test Plan",
+                content="## Goals\n- Task 1",
+                output_format="text"
+            )
+
+            assert isinstance(result, str)
+            assert "Test Plan" in result
+
+    @pytest.mark.asyncio
+    async def test_get_text_format_shows_plan_details(self, temp_memories_dir, mock_git_context, mock_context):
+        """Get action with text format should show plan details."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            # Create a plan first
+            result = await plan(
+                mock_context,
+                action="save",
+                title="Feature Plan",
+                content="## Goals\nBuild the feature\n\n## Tasks\n- [ ] Task 1\n- [x] Task 2",
+                output_format="json"
+            )
+
+            # Get with text format
+            text_result = await plan(
+                mock_context,
+                action="get",
+                id=result["id"],
+                output_format="text"
+            )
+
+            assert isinstance(text_result, str)
+            assert "Feature Plan" in text_result
+            assert "active" in text_result.lower()
+
+    @pytest.mark.asyncio
+    async def test_list_text_format_shows_all_plans(self, temp_memories_dir, mock_git_context, mock_context):
+        """List action with text format should show all plans."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            # Create multiple plans
+            await plan(mock_context, action="save", title="Plan A", content="A", activate=False)
+            await plan(mock_context, action="save", title="Plan B", content="B", activate=False)
+            await plan(mock_context, action="save", title="Plan C", content="C")
+
+            # List with text format
+            result = await plan(mock_context, action="list", output_format="text")
+
+            assert isinstance(result, str)
+            assert "3 plans" in result
+            assert "Plan A" in result
+            assert "Plan B" in result
+            assert "Plan C" in result
+
+    @pytest.mark.asyncio
+    async def test_list_text_format_shows_status_icons(self, temp_memories_dir, mock_git_context, mock_context):
+        """List text format should show status icons."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            # Create active plan
+            active_plan = await plan(
+                mock_context, action="save", title="Active Plan", content="A", output_format="json"
+            )
+            # Create pending plan
+            await plan(mock_context, action="save", title="Pending Plan", content="P", activate=False)
+            # Create completed plan
+            completed_plan = await plan(
+                mock_context, action="save", title="Done Plan", content="D", activate=False, output_format="json"
+            )
+            await plan(mock_context, action="complete", id=completed_plan["id"])
+
+            # List with text format
+            result = await plan(mock_context, action="list", output_format="text")
+
+            # Should have status indicators
+            assert "▶" in result or "●" in result  # active/pending icons
+            assert "✓" in result  # completed icon
+
+    @pytest.mark.asyncio
+    async def test_list_text_format_shows_task_progress(self, temp_memories_dir, mock_git_context, mock_context):
+        """List text format should show task progress (e.g., '2/5 tasks')."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            content = "## Tasks\n- [x] Done 1\n- [x] Done 2\n- [ ] Todo 1\n- [ ] Todo 2\n- [ ] Todo 3"
+            await plan(mock_context, action="save", title="Progress Plan", content=content)
+
+            result = await plan(mock_context, action="list", output_format="text")
+
+            assert isinstance(result, str)
+            # Should show task progress
+            assert "2/5" in result
+
+    @pytest.mark.asyncio
+    async def test_list_text_empty_shows_message(self, temp_memories_dir, mock_context):
+        """Empty list should show friendly message."""
+        from miller.tools.plan import plan
+
+        result = await plan(mock_context, action="list", output_format="text")
+
+        assert isinstance(result, str)
+        assert "No plans" in result or "0 plans" in result
+
+    @pytest.mark.asyncio
+    async def test_complete_text_format_shows_confirmation(self, temp_memories_dir, mock_git_context, mock_context):
+        """Complete action with text format should show confirmation."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            # Create and complete a plan
+            created = await plan(
+                mock_context, action="save", title="Finish Me", content="Done", output_format="json"
+            )
+            result = await plan(
+                mock_context, action="complete", id=created["id"], output_format="text"
+            )
+
+            assert isinstance(result, str)
+            assert "Finish Me" in result or "completed" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_text_format_is_default(self, temp_memories_dir, mock_git_context, mock_context):
+        """Default output format should be text."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            await plan(mock_context, action="save", title="Default Test", content="Test")
+
+            # Call list without specifying output_format
+            result = await plan(mock_context, action="list")
+
+            # Should be text (string), not JSON (list)
+            assert isinstance(result, str)
+
+    @pytest.mark.asyncio
+    async def test_list_text_format_singular_plan(self, temp_memories_dir, mock_git_context, mock_context):
+        """List text format should correctly use singular 'plan' for 1 item."""
+        from miller.tools.plan import plan
+
+        with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+            await plan(mock_context, action="save", title="Only Plan", content="Solo")
+
+            result = await plan(mock_context, action="list", output_format="text")
+
+            assert isinstance(result, str)
+            assert "1 plan" in result
+            assert "1 plans" not in result

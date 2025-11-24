@@ -225,3 +225,141 @@ async def test_recall_handles_empty_memories(temp_memories_dir, mock_context):
 
     assert results == []
     assert isinstance(results, list)
+
+
+# ============================================================================
+# Text Format Tests
+# ============================================================================
+
+
+class TestRecallTextFormat:
+    """Tests for recall text output format."""
+
+    @pytest.mark.asyncio
+    async def test_text_format_returns_string(self, temp_memories_dir, mock_git_context, mock_context):
+        """Text format should return a string, not a list."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Test checkpoint")
+
+            result = await recall(mock_context, output_format="text", limit=10)
+
+            assert isinstance(result, str)
+            assert "1 memory found" in result
+
+    @pytest.mark.asyncio
+    async def test_text_format_contains_description(self, temp_memories_dir, mock_git_context, mock_context):
+        """Text format should include checkpoint descriptions."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Fixed authentication bug in login flow")
+
+            result = await recall(mock_context, output_format="text", limit=10)
+
+            assert "Fixed authentication bug in login flow" in result
+
+    @pytest.mark.asyncio
+    async def test_text_format_shows_type_icons(self, temp_memories_dir, mock_git_context, mock_context):
+        """Text format should show icons for different memory types."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Regular checkpoint", type="checkpoint")
+            await checkpoint(mock_context, "Important decision", type="decision")
+            await checkpoint(mock_context, "Learned something", type="learning")
+
+            result = await recall(mock_context, output_format="text", limit=10)
+
+            # Check icons appear
+            assert "✓" in result  # checkpoint
+            assert "🎯" in result  # decision
+            assert "💡" in result  # learning
+
+    @pytest.mark.asyncio
+    async def test_text_format_shows_branch(self, temp_memories_dir, mock_git_context, mock_context):
+        """Text format should show git branch."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Test checkpoint")
+
+            result = await recall(mock_context, output_format="text", limit=10)
+
+            # mock_git_context has branch "main"
+            assert "[main]" in result
+
+    @pytest.mark.asyncio
+    async def test_text_format_shows_tags(self, temp_memories_dir, mock_git_context, mock_context):
+        """Text format should show tags when present."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Tagged checkpoint", tags=["bugfix", "auth"])
+
+            result = await recall(mock_context, output_format="text", limit=10)
+
+            assert "Tags:" in result
+            assert "bugfix" in result
+            assert "auth" in result
+
+    @pytest.mark.asyncio
+    async def test_text_format_shows_relative_time(self, temp_memories_dir, mock_git_context, mock_context):
+        """Text format should show relative time (e.g., '2 min ago')."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Recent checkpoint")
+
+            result = await recall(mock_context, output_format="text", limit=10)
+
+            # Should show some relative time indicator
+            assert "ago" in result or "just now" in result
+
+    @pytest.mark.asyncio
+    async def test_text_format_empty_shows_message(self, temp_memories_dir, mock_context):
+        """Empty results should show a friendly message, not empty string."""
+        from miller.tools.recall import recall
+
+        result = await recall(mock_context, output_format="text", limit=10)
+
+        assert isinstance(result, str)
+        assert "No memories found" in result
+
+    @pytest.mark.asyncio
+    async def test_text_format_plural_memories(self, temp_memories_dir, mock_git_context, mock_context):
+        """Text format should correctly pluralize 'memory/memories'."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "First checkpoint")
+            await asyncio.sleep(1.1)
+            await checkpoint(mock_context, "Second checkpoint")
+
+            result = await recall(mock_context, output_format="text", limit=10)
+
+            assert "2 memories found" in result
+
+    @pytest.mark.asyncio
+    async def test_text_format_default(self, temp_memories_dir, mock_git_context, mock_context):
+        """Default output format should be text."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Test checkpoint")
+
+            # Call without specifying output_format
+            result = await recall(mock_context, limit=10)
+
+            # Should be text (string), not JSON (list)
+            assert isinstance(result, str)
+            assert "memory found" in result
