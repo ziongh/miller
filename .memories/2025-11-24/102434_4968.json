@@ -1,0 +1,25 @@
+{
+  "description": "Fixed multiple Windows-specific issues: SQLite threading (check_same_thread=False), Unicode encoding crash (utf-8 for file writes), added FlushingHandler for immediate log writes, and watchdog thread to detect stuck initialization. Changed requires-python to >=3.12 for Windows GPU (CUDA/DirectML) support.",
+  "git": {
+    "branch": "main",
+    "commit": "96168a7",
+    "dirty": true,
+    "files_changed": [
+      "README.md",
+      "docs/GPU_SETUP.md",
+      "pyproject.toml",
+      "python/miller/logging_config.py",
+      "python/miller/server.py",
+      "python/miller/storage.py"
+    ]
+  },
+  "id": "checkpoint_312596f5_0e943d",
+  "tags": [
+    "windows",
+    "gpu",
+    "logging",
+    "debugging"
+  ],
+  "timestamp": 1764001473,
+  "type": "checkpoint"
+}
