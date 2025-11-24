@@ -301,6 +301,48 @@ def process_payment():
         assert "new_name" in names
         assert "old_name" not in names
 
+    def test_handles_apostrophes_in_file_paths(self):
+        """Test that file paths with apostrophes don't cause SQL injection errors."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+
+        # Create test data with file paths containing apostrophes
+        code = "def user_func(): pass"
+        result = miller_core.extract_file(code, "python", "kid's_file.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Verify the symbols were added
+        results = store.search(query="user_func", method="text", limit=10)
+        assert len(results) > 0
+        assert any(r["file_path"] == "kid's_file.py" for r in results)
+
+        # Test update_file_symbols with apostrophe (should not crash)
+        code2 = "def new_func(): pass"
+        result2 = miller_core.extract_file(code2, "python", "kid's_file.py")
+        vectors2 = embeddings.embed_batch(result2.symbols)
+        store.update_file_symbols("kid's_file.py", result2.symbols, vectors2)
+
+        # Verify old symbols removed, new symbols added
+        results = store.search(query="new_func", method="text", limit=10)
+        assert len(results) > 0
+        assert any(r["name"] == "new_func" for r in results)
+
+        old_results = store.search(query="user_func", method="text", limit=10)
+        assert not any(r["name"] == "user_func" for r in old_results)
+
+        # Test delete_files_batch with apostrophe (should not crash)
+        deleted = store.delete_files_batch(["kid's_file.py"])
+        assert deleted == 1
+
+        # Verify symbols were deleted
+        results = store.search(query="new_func", method="text", limit=10)
+        assert not any(r["file_path"] == "kid's_file.py" for r in results)
+
 
 class TestTantivyFTS:
     """Test Tantivy full-text search integration (Phase 1 of FTS migration)."""

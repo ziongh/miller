@@ -238,6 +238,19 @@ class WorkspaceScanner:
             logger.info("📊 Found new files not in database - indexing needed")
             return True
 
+        # Check 5: Deleted files still in database (files in DB that no longer exist on disk)
+        disk_files = self._walk_directory()
+        disk_paths = {
+            str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
+            for file_path in disk_files
+        }
+
+        deleted_files = db_paths - disk_paths
+        if deleted_files:
+            logger.info(f"📊 Found {len(deleted_files)} deleted files still in database - indexing needed")
+            logger.debug(f"   Deleted files: {list(deleted_files)[:5]}")
+            return True
+
         # Index is up-to-date
         logger.info("✅ Index is up-to-date - no indexing needed")
         return False
@@ -521,11 +534,20 @@ class WorkspaceScanner:
 
         # Phase 3: Clean up deleted files
         cleanup_start = time.time()
+        deleted_files = []
         for db_file_path in db_files_map:
             if db_file_path not in disk_files_set:
-                # File deleted from disk, remove from DB
+                # File deleted from disk, collect for batch cleanup
+                deleted_files.append(db_file_path)
+
+        if deleted_files:
+            # Remove from both SQLite and LanceDB vector store
+            for db_file_path in deleted_files:
                 self.storage.delete_file(db_file_path)
-                stats.deleted += 1
+            self.vector_store.delete_files_batch(deleted_files)
+            stats.deleted = len(deleted_files)
+            logger.debug(f"🗑️ Cleaned up {len(deleted_files)} deleted files from both SQLite and vector store")
+
         cleanup_time = time.time() - cleanup_start
 
         # Final timing summary

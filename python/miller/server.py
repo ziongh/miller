@@ -73,27 +73,77 @@ async def lifespan(_app):
         """
         Callback for file watcher - re-indexes changed files in real-time.
 
+        Optimized for batch processing:
+        - Deduplicates events by file path (keeps latest event per file)
+        - Batches deletions for efficiency
+        - Processes independent files concurrently
+
         Args:
             events: List of (event_type, file_path) tuples from watcher
         """
+        if not events:
+            return
+
+        # Phase 1: Deduplicate events by file path (keep latest event per file)
+        # DELETED events take priority - if a file is deleted, ignore earlier CREATED/MODIFIED
+        file_events: dict[Path, FileEvent] = {}
         for event_type, file_path in events:
-            try:
+            if file_path in file_events:
+                # If already seen and this is DELETED, override
                 if event_type == FileEvent.DELETED:
-                    # Convert to relative path for storage
-                    rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
-                    storage.delete_file(rel_path)
-                    logger.info(f"🗑️  Deleted from index: {rel_path}")
+                    file_events[file_path] = event_type
+                # If previous was DELETED, keep it (don't resurrect deleted files)
+                elif file_events[file_path] == FileEvent.DELETED:
+                    pass
+                # Otherwise, keep the later event (MODIFIED over CREATED)
                 else:
-                    # Re-index file (handles CREATED and MODIFIED)
-                    success = await scanner._index_file(file_path)
-                    rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
-                    if success:
-                        action = "Indexed" if event_type == FileEvent.CREATED else "Updated"
-                        logger.info(f"✏️  {action}: {rel_path}")
-                    else:
-                        logger.warning(f"⚠️  Failed to index: {rel_path}")
+                    file_events[file_path] = event_type
+            else:
+                file_events[file_path] = event_type
+
+        # Phase 2: Separate deletions from indexing operations
+        deleted_files: list[str] = []
+        files_to_index: list[tuple[FileEvent, Path]] = []
+
+        for file_path, event_type in file_events.items():
+            if event_type == FileEvent.DELETED:
+                rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
+                deleted_files.append(rel_path)
+            else:
+                files_to_index.append((event_type, file_path))
+
+        # Phase 3: Batch process deletions (efficient single operation)
+        if deleted_files:
+            try:
+                for rel_path in deleted_files:
+                    storage.delete_file(rel_path)
+                vector_store.delete_files_batch(deleted_files)
+                logger.info(f"🗑️  Deleted {len(deleted_files)} file(s) from index")
             except Exception as e:
-                logger.error(f"❌ Error processing file change {file_path}: {e}", exc_info=True)
+                logger.error(f"❌ Error batch deleting files: {e}", exc_info=True)
+
+        # Phase 4: Process indexing operations concurrently
+        if files_to_index:
+            async def index_one(event_type: FileEvent, file_path: Path) -> tuple[bool, FileEvent, Path]:
+                """Index a single file and return result."""
+                try:
+                    success = await scanner._index_file(file_path)
+                    return (success, event_type, file_path)
+                except Exception as e:
+                    logger.error(f"❌ Error indexing {file_path}: {e}", exc_info=True)
+                    return (False, event_type, file_path)
+
+            # Index all files concurrently
+            results = await asyncio.gather(*[index_one(et, fp) for et, fp in files_to_index])
+
+            # Log results
+            for success, event_type, file_path in results:
+                rel_path = str(file_path.relative_to(workspace_root)).replace("\\", "/")
+                if success:
+                    action = "Indexed" if event_type == FileEvent.CREATED else "Updated"
+                    logger.info(f"✏️  {action}: {rel_path}")
+                else:
+                    logger.warning(f"⚠️  Failed to index: {rel_path}")
 
     async def background_initialization_and_indexing():
         """

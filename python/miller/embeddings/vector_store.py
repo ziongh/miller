@@ -759,7 +759,9 @@ class VectorStore:
             return self.add_symbols(symbols, vectors)
 
         # Delete old symbols for this file
-        self._table.delete(f"file_path = '{file_path}'")
+        # Escape single quotes for SQL (e.g., kid's_file.py -> kid''s_file.py)
+        escaped_path = file_path.replace("'", "''")
+        self._table.delete(f"file_path = '{escaped_path}'")
 
         # Add new symbols
         count = self.add_symbols(symbols, vectors)
@@ -806,7 +808,9 @@ class VectorStore:
 
         # Build OR condition for all file paths
         # LanceDB delete uses SQL-like WHERE syntax
-        conditions = " OR ".join(f"file_path = '{fp}'" for fp in file_paths)
+        # Escape single quotes for SQL (e.g., kid's_file.py -> kid''s_file.py)
+        escaped_paths = [fp.replace("'", "''") for fp in file_paths]
+        conditions = " OR ".join(f"file_path = '{fp}'" for fp in escaped_paths)
         self._table.delete(conditions)
 
         return len(file_paths)

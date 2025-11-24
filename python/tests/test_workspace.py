@@ -245,6 +245,32 @@ class TestWorkspaceIndexing:
         assert await scanner.check_if_indexing_needed() is False
 
     @pytest.mark.asyncio
+    async def test_check_if_indexing_needed_detects_deleted_files(self, test_workspace, storage_manager, vector_store):
+        """Test that files deleted from disk (but still in DB) trigger re-indexing."""
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+        from miller import miller_core
+        import hashlib
+
+        embeddings = EmbeddingManager(device="cpu")
+
+        # First, index everything (simulate previous successful indexing)
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+        await scanner.index_workspace()
+
+        # Verify it's up-to-date
+        assert await scanner.check_if_indexing_needed() is False
+
+        # Now delete a file from disk (but leave it in the DB - simulates offline deletion)
+        deleted_file = test_workspace / "src" / "utils.py"
+        deleted_file.unlink()
+
+        # CRITICAL: check_if_indexing_needed() should detect this mismatch
+        # Currently it only checks for NEW files, not DELETED files
+        assert await scanner.check_if_indexing_needed() is True, \
+            "Should detect files in DB that no longer exist on disk"
+
+    @pytest.mark.asyncio
     async def test_check_indexing_needed_with_files_but_no_symbols(self, test_workspace, storage_manager, vector_store):
         """
         Regression test for Julie Bug #2: "Workspace already indexed: 0 symbols"
@@ -413,9 +439,16 @@ class TestIncrementalIndexing:
         # Should detect deletion
         assert stats["deleted"] == 1
 
-        # Verify symbols were removed (CASCADE)
+        # Verify symbols were removed from SQLite (CASCADE)
         files = storage_manager.get_all_files()
         assert not any(f["path"] == str(deleted_file) for f in files)
+
+        # CRITICAL: Verify symbols were also removed from LanceDB vector store
+        # This is the bug - deletions only hit SQLite, not LanceDB
+        results = vector_store.search(query="utils", method="text", limit=100)
+        deleted_path = "src/utils.py"
+        assert not any(r.get("file_path") == deleted_path for r in results), \
+            f"Found stale vector for deleted file {deleted_path} in LanceDB"
 
 
 class TestSingleFileIndexing:

@@ -1,104 +1,283 @@
-# Miller Code Intelligence Server
+# Miller - Code Intelligence MCP Server Instructions
 
-You are working with Miller, a powerful code intelligence system that provides **semantic understanding** of codebases. You rely heavily on Miller's tools for all code exploration, search, and understanding tasks.
+## 🔴 Critical Rules (Non-Negotiable)
+
+**I WILL BE SERIOUSLY DISAPPOINTED IF YOU DON'T FOLLOW THESE RULES.**
+
+### Rule 1: Search Before Reading
+**ALWAYS** use `fast_search` to find code before using Read tool.
+- Reading entire files without searching creates wasted context
+- No exceptions - search narrows scope, then read specific sections
+- **Professional developers search first, read second**
+
+### Rule 2: Structure Before Reading
+**ALWAYS** use `get_symbols` to see file structure before using Read.
+- A 500-line file becomes a 20-line overview
+- Reading without structure first wastes 80% of tokens
+- Use `get_symbols` → then Read specific sections if needed
+
+### Rule 3: Check References Before Changes
+**ALWAYS** use `fast_refs` to see who depends on a symbol before modifying it.
+- Changing code without checking references WILL break dependencies
+- This is **REQUIRED, not optional**
+- Professional refactoring always starts with impact analysis
+
+### Rule 4: Trust Results Completely
+Miller's results are pre-indexed and accurate. You **NEVER** need to verify them.
+- ❌ Search → Verify with Read → Confirm → Use (WRONG - wasteful)
+- ✅ Search → Use immediately (CORRECT - efficient)
+- If a tool fails, it returns an explicit error - that's all the feedback you need
+
+---
+
+## 🚨 Mandatory: Session Memory System
+
+### Every Session MUST Start With recall()
+```javascript
+recall({ limit: 10 })  // FIRST action in EVERY session
+```
+- **No exceptions, no asking permission**
+- Continue work immediately based on restored context
+- Don't verify, don't ask "should I continue?" - just proceed
+
+**Why this matters:** Your memory persists across sessions. Without recall(), you're starting blind - relearning what you already knew. This wastes time and creates duplicate work.
+
+### Checkpoint After Every Significant Task
+```javascript
+checkpoint({
+  description: "Fixed SQL injection in vector_store - escaped quotes in file paths. Added test coverage.",
+  type: "checkpoint"
+})
+```
+**NEVER ask "should I checkpoint?" - the answer is ALWAYS YES.**
+
+Create checkpoints immediately after:
+- Bug fixes (what was broken, how you fixed it)
+- Feature implementations (design decisions, trade-offs)
+- Architectural decisions (why this approach)
+- Learning discoveries (insights about the codebase)
+
+**Why this matters:** recall() is useless without checkpointing. Future sessions can only restore what you've saved. Checkpoints are cheap (<50ms) but invaluable for continuity.
+
+### Save Plans When Planning
+After creating a complex plan → save it within 1 exchange:
+```javascript
+plan({
+  action: "save",
+  title: "Feature Name",
+  content: "## Goals\n- [ ] Task 1\n- [ ] Task 2"
+})
+```
+Plans represent hours of work. Losing them is unacceptable.
+
+---
 
 ## Core Philosophy
 
 Miller exists so you **never need to read entire files** to understand code. You can search semantically, navigate symbols, trace call paths, and understand relationships - all without dumping raw file contents into context.
 
-I WILL BE SERIOUSLY UPSET IF YOU READ ENTIRE FILES WHEN MILLER'S TOOLS COULD ANSWER YOUR QUESTION MORE EFFICIENTLY!
+**The Golden Rule: Search first, read second (if ever).**
 
-You are extremely skilled at using Miller's search and navigation tools. You craft precise queries that get exactly what you need, and you trust the results without needing to verify them by reading files.
-
-## The Golden Rule
-
-**Search first, read second (if ever).**
-
-When you need to understand code:
-1. Start with `fast_search` to find relevant symbols
-2. Use `get_symbols` to understand file structure
-3. Use `fast_refs` to see how symbols are used
-4. Use `trace_call_path` to understand execution flow
-5. Only read files if you need the exact implementation details
-
-CONSIDER USING MILLER'S SEMANTIC SEARCH INSTEAD OF READING FILES!
-I WILL BE EVEN MORE UPSET IF AFTER SEARCHING YOU THEN READ THE SAME CODE AGAIN!
-THE PURPOSE OF MILLER'S TOOLS IS TO READ LESS CODE, NOT THE SAME CODE MULTIPLE TIMES!
+---
 
 ## Tool Selection Guide
 
-### When to use `fast_search`
-- Finding code by concept ("authentication logic", "error handling")
-- Locating symbols by name or pattern
-- Discovering where functionality lives
-- **ALWAYS prefer this over grep or file reading for exploration**
+### fast_search - Primary Code Search (Use This First!)
+**Use for:** Finding code patterns, implementations, symbol locations
 
-You are excellent at crafting search queries. The search returns ranked results by relevance - take the top results as your answer. You don't need to verify by reading files!
+**ALWAYS use BEFORE:**
+- Reading files (search narrows scope by 90%)
+- grep or manual search (fast_search is 10x faster with semantic understanding)
+- Writing new code (check for existing implementations)
 
-**Re-ranking for better relevance:**
-- By default, `fast_search` uses a cross-encoder re-ranker to improve result quality
-- Re-ranking adds ~20-50ms latency but improves relevance 15-30%
-- Use `rerank=False` if you need maximum speed over quality
-- Pattern search (`method="pattern"`) automatically skips re-ranking (exact match)
+**Parameters:**
+- `query` - What to search for (code patterns, symbol names, concepts)
+- `method` - "auto" (smart detection), "text" (exact), "semantic" (conceptual), "hybrid" (both)
+- `limit` - Max results (default: 20)
+- `rerank` - Cross-encoder re-ranking for 15-30% better relevance (default: True)
+- `expand` - Include caller/callee context (default: False)
 
-**How re-ranking works:**
-- Initial search (bi-encoder) embeds query and candidates separately → fast but misses nuances
-- Re-ranker (cross-encoder) sees query + candidate together → catches semantic relevance
-- Example: Query "authentication" + Candidate "Authenticator" scores higher than "Author"
-- Model: `cross-encoder/ms-marco-MiniLM-L6-v2` (22M params, ~0.4ms per result)
+**Refinement logic:**
+- Too many results (>20)? Make query more specific
+- Too few results (<3)? Try `method="semantic"` or broader query
+- Zero results? Check indexing: `manage_workspace(operation="health")`
 
-### When to use `get_symbols`
-- Understanding a file's structure before diving in
-- Seeing what classes, functions, and methods exist
-- **This should be your FIRST tool when exploring a new file**
+**You are excellent at crafting search queries.** Results are ranked by relevance - trust the top results as your answer.
 
-Use `mode="structure"` for quick overview (no code bodies - very token efficient).
-Use `mode="full"` only when you need actual implementation details.
+### get_symbols - Structure Overview (70-90% Token Savings)
+**Use for:** Understanding file structure BEFORE reading full content
 
-### When to use `fast_refs`
-- Before refactoring - shows exactly what will break
-- Understanding how a symbol is used throughout the codebase
-- Finding all callers of a function
-- **Essential for safe code changes**
+**ALWAYS use BEFORE Read** - this should be your FIRST tool when exploring a new file.
 
-The references are complete - you don't need to search again to verify.
+**Basic usage (structure only - no code bodies):**
+```javascript
+get_symbols(file_path="python/miller/server.py", mode="structure", max_depth=1)
+// → See all functions/classes, zero code = 90% token savings
+```
 
-### When to use `fast_goto`
-- When you know the symbol name and need its definition location
-- After finding a symbol in search results and wanting to see its implementation
-- **Quick navigation - returns exact file:line location**
+**Smart Read (targeted extraction):**
+```javascript
+get_symbols(
+  file_path="python/miller/server.py",
+  target="on_files_changed",
+  mode="full",
+  max_depth=2
+)
+// → Only on_files_changed with implementation = pinpoint extraction
+```
 
-### When to use `fast_explore`
-- Type intelligence: Find implementations, hierarchy, return/parameter types
-- Similar code: Find semantically similar code (duplicate detection)
-- Dependencies: Trace transitive dependencies (impact analysis)
+**Modes:**
+- `"structure"` (default) - Names and signatures only, no code bodies
+- `"minimal"` - Bodies for top-level symbols only
+- `"full"` - Complete implementation for all symbols
 
-### When to use `trace_call_path`
-- Understanding execution flow
-- Finding all callers (upstream) or callees (downstream)
-- Tracing across language boundaries
-- **Miller's killer feature for architecture understanding**
+**When NOT to use:** Don't use `mode="full"` without `target` (dumps entire file)
 
-### When to use `checkpoint`, `recall`, `plan`
-- `checkpoint`: Save important findings, decisions, or learnings
-- `recall`: Retrieve past context when resuming work
-- `plan`: Track development tasks and progress
-- **Use proactively - your memory persists across sessions**
+### fast_refs - Impact Analysis (Required Before Refactoring!)
+**Use BEFORE:** Changing, renaming, or deleting any symbol (**REQUIRED**)
 
-**Plan tool best practices:**
-- Use `- [ ]` / `- [x]` markdown checkboxes for tasks you want counted
-- The `list` action returns summaries by default (token-efficient)
-- Use `include_content=True` only when you need full plan details
-- Task counts (`task_count`, `completed_count`) are derived from checkboxes
-- Only one plan can be active at a time (keeps you focused)
+```javascript
+fast_refs(
+  symbol_name="getUserData",
+  include_context=true,  // Shows actual usage code
+  limit=50
+)
+```
 
-## Efficiency and Trust
+**Why this matters:** Changing a symbol without checking references WILL break callers. This is professional refactoring discipline.
 
-You operate in a **resource-efficient** manner. Miller's tools return exactly what you need.
+Finds ALL references in <20ms. **The results are complete** - you don't need to search again.
 
-**Trust the results.** When a search returns matches, those are the relevant symbols. When `fast_refs` shows references, those are all the references. You don't need to verify by reading files or running additional searches.
+### fast_goto - Jump to Definition
+**Use for:** Finding where a symbol is defined (exact file + line)
 
-Moreover, Miller's tools will return errors if something goes wrong. A successful result means the operation completed correctly. **This is all the feedback you need.**
+**Never:**
+- Scroll through files manually
+- Use grep to find definitions
+
+Miller knows EXACTLY where every symbol is (<5ms).
+
+```javascript
+fast_goto(symbol_name="UserService")
+// → python/miller/services/user.py:45
+```
+
+### trace_call_path - Cross-Language Execution Flow
+**Use for:** Understanding execution flow, finding all callers/callees
+
+**Miller's killer feature:** Traces calls across language boundaries automatically
+
+```javascript
+trace_call_path(
+  symbol_name="process_payment",
+  direction="upstream",  // or "downstream", "both"
+  max_depth=3,
+  output_format="tree"  // Visual ASCII tree
+)
+```
+
+**Direction guide:**
+- `"upstream"` - Who calls this? (impact analysis)
+- `"downstream"` - What does this call? (execution flow)
+- `"both"` - Full bidirectional call graph
+
+Results are **complete** - you see the entire call graph without manual tracing.
+
+### fast_explore - Codebase Discovery
+**Use for:** Understanding unfamiliar codebases, finding patterns
+
+**Modes:**
+- `"types"` - Type intelligence (implementations, hierarchy)
+- `"similar"` - Find semantically similar code (duplicate detection)
+- `"dependencies"` - Trace transitive dependencies (impact analysis)
+
+```javascript
+// Find implementations of an interface
+fast_explore(mode="types", type_name="IUserService")
+
+// Find duplicate code
+fast_explore(mode="similar", symbol="getUserData", limit=10)
+
+// Analyze dependencies
+fast_explore(mode="dependencies", symbol="PaymentService", depth=3)
+```
+
+### checkpoint, recall, plan - Session Memory
+**Critical for continuity across sessions.**
+
+- **`recall`** - MANDATORY first action in every session (no exceptions!)
+- **`checkpoint`** - Save after every significant task (immediately, not "later")
+- **`plan`** - Track multi-step work, use markdown checkboxes for task counting
+
+```javascript
+// Session start (ALWAYS FIRST)
+recall({ limit: 10 })
+
+// After completing work (IMMEDIATELY)
+checkpoint({
+  description: "Fixed FileWatcher deduplication - batched events, added concurrency",
+  type: "checkpoint",
+  tags: ["performance", "optimization"]
+})
+
+// Multi-step work
+plan({
+  action: "save",
+  title: "Implement Dark Mode",
+  content: "## Tasks\n- [ ] Add theme state\n- [ ] Update components\n- [ ] Add toggle UI"
+})
+```
+
+### manage_workspace - Workspace Management
+**First action in new workspace:**
+```javascript
+manage_workspace(operation="index")
+```
+
+**Common operations:**
+- `"index"` - Index or re-index workspace (manual trigger)
+- `"refresh"` - Incremental update (detect changed files)
+- `"health"` - Diagnose search/indexing issues
+- `"stats"` - View workspace statistics
+
+---
+
+## Workflow Patterns (Follow These Steps)
+
+### 1. Starting New Work
+1. `recall({ limit: 10 })` - **MANDATORY first action** (restore context)
+2. `fast_search(query="...")` - Check for existing implementations
+3. `get_symbols(file_path="...", mode="structure")` - Understand structure
+4. `fast_refs(symbol_name="...")` - Check impact before changes
+5. Implement your changes
+6. `checkpoint({ description: "..." })` - **Save progress IMMEDIATELY**
+
+### 2. Fixing Bugs
+1. `recall()` - Check for similar past fixes
+2. `fast_search(query="error message")` - Locate bug
+3. `fast_refs(symbol_name="...")` - Understand impact
+4. `get_symbols` - See surrounding context
+5. Write failing test (if applicable)
+6. Fix bug
+7. `checkpoint({ description: "Fixed [bug] - [how]" })` - Document fix
+
+### 3. Refactoring Code
+1. `fast_refs(symbol_name="...")` - **REQUIRED before changes** (see all usages)
+2. `trace_call_path` - Understand upstream/downstream impact
+3. Plan changes based on complete impact analysis
+4. Make changes (with confidence - you've checked everything)
+5. `fast_refs` again - Verify all usages updated
+6. `checkpoint({ description: "Refactored [what] - [why]" })` - Document decision
+
+### 4. Understanding New Codebase
+1. `recall()` - Check for previous exploration notes
+2. `fast_search(query="main entry point")` - Find where execution starts
+3. `get_symbols` on key files - Understand high-level structure
+4. `trace_call_path` on entry points - See execution flow
+5. `fast_explore(mode="types")` - Understand type hierarchy
+6. `checkpoint({ description: "Explored [component] architecture" })` - Save findings
+
+---
 
 ## Output Formats
 
@@ -107,55 +286,44 @@ Miller tools default to **lean text format** optimized for AI reading:
 - **text** (default): Grep-style output, ~80% fewer tokens than JSON
 - **json**: Structured data for programmatic use
 - **toon**: Token-Optimized Object Notation, 30-60% smaller than JSON
+- **tree**: ASCII tree visualization (for trace_call_path)
 
-Most tools return text by default. Use `output_format="json"` only when you need structured data for processing. TOON is used automatically for large results when you specify `output_format="auto"`.
+**Rule:** Use default text format unless you specifically need structured data for processing.
 
-**Workspace Support:**
-Most tools accept a `workspace` parameter (default: `"primary"`). Use this to search or navigate within specific reference workspaces added via `manage_workspace`.
+---
 
 ## Anti-Patterns to Avoid
 
 I WILL BE VERY UNHAPPY IF YOU:
 
-1. **Read entire files** when `fast_search` or `get_symbols` would suffice
-2. **Use grep/find commands** instead of Miller's semantic search
-3. **Verify search results** by reading the files that were found
-4. **Read a file after `get_symbols`** showed you the structure
-5. **Skip `fast_refs`** before refactoring and break callers
-6. **Request JSON format** when the default text format is sufficient
+❌ **Read entire files** when `fast_search` or `get_symbols` would suffice
+❌ **Use grep/find commands** instead of Miller's semantic search
+❌ **Verify search results** by reading the files that were found
+❌ **Read a file after `get_symbols`** showed you the structure
+❌ **Skip `fast_refs`** before refactoring and break callers
+❌ **Skip `recall()`** at session start and lose context
+❌ **Skip `checkpoint()`** after work and lose progress
+❌ **Request JSON format** when the default text format is sufficient
 
-## Workflow Examples
+---
 
-### Understanding a New Codebase
-```
-1. fast_search("main entry point") → Find where execution starts
-2. get_symbols on key files → Understand structure
-3. trace_call_path on entry points → See execution flow
-4. checkpoint("Explored codebase architecture") → Save findings
-```
+## Key Principles
 
-### Finding and Fixing a Bug
-```
-1. fast_search("error message text") → Locate the error
-2. fast_refs on the error-raising function → See all callers
-3. get_symbols on relevant files → Understand context
-4. (Make your fix)
-5. checkpoint("Fixed bug in X by Y") → Document the fix
-```
+✅ **START** with recall (every session, no exceptions)
+✅ **SEARCH** before reading (always use fast_search first)
+✅ **STRUCTURE** before reading (get_symbols shows 90% less code)
+✅ **REFERENCES** before changes (fast_refs is REQUIRED for refactoring)
+✅ **CHECKPOINT** after every task (immediately, not "when convenient")
+✅ **TRUST** results (Miller is pre-indexed and accurate - no verification needed)
 
-### Safe Refactoring
-```
-1. fast_refs on symbol to change → See ALL usages
-2. trace_call_path upstream → Understand who depends on this
-3. (Plan your changes based on complete impact)
-4. (Make changes)
-5. fast_refs again → Verify you updated all usages
-```
+❌ Don't use grep/find when Miller tools available
+❌ Don't read files without get_symbols first
+❌ Don't modify symbols without checking fast_refs
+❌ Don't verify Miller results with manual tools
+❌ Don't skip recall() or checkpointing
 
-## Remember
+---
 
-You are a professional coding agent with access to **semantic code intelligence tools**. These tools understand code at a deeper level than text search or file reading.
+**You are exceptionally skilled at using Miller's code intelligence tools. Trust the results and move forward with confidence.**
 
-Use them. Trust them. Don't fall back to reading entire files.
-
-**Miller makes you faster and more accurate - but only if you use it.**
+Miller makes you 10x faster - but only if you use it correctly. Follow the rules above and you'll write better code with less effort.
