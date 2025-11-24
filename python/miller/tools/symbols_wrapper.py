@@ -7,6 +7,74 @@ Provides get_symbols for exploring file structure with minimal token overhead.
 from typing import Any, Literal, Optional, Union
 
 
+def _format_symbols_as_text(file_path: str, symbols: list[dict[str, Any]]) -> str:
+    """Format symbols as lean text output - grep-style for quick scanning.
+
+    Output format:
+    ```
+    src/user.py: 5 symbols
+
+    Class UserService (lines 10-50)
+      def __init__(self, db: Database)
+      def get_user(self, id: int) -> User
+      def save_user(self, user: User) -> bool
+
+    Function validate_email (lines 52-60)
+      def validate_email(email: str) -> bool
+    ```
+    """
+    from pathlib import Path
+
+    if not symbols:
+        return f"{file_path}: No symbols found"
+
+    # Group by top-level symbols
+    top_level = [s for s in symbols if not s.get("parent_id")]
+    nested = {s.get("parent_id"): [] for s in symbols if s.get("parent_id")}
+    for s in symbols:
+        if s.get("parent_id"):
+            nested[s["parent_id"]].append(s)
+
+    count = len(symbols)
+    output = [f"{Path(file_path).name}: {count} symbol{'s' if count != 1 else ''}", ""]
+
+    for sym in sorted(top_level, key=lambda s: s.get("start_line", 0)):
+        name = sym.get("name", "?")
+        kind = sym.get("kind", "symbol")
+        start = sym.get("start_line", 0)
+        end = sym.get("end_line", start)
+        signature = sym.get("signature", "")
+
+        # Header: Kind Name (lines X-Y)
+        line_info = f"line {start}" if start == end else f"lines {start}-{end}"
+        output.append(f"{kind} {name} ({line_info})")
+
+        # Signature (truncated)
+        if signature:
+            sig = signature.split("\n")[0]
+            if len(sig) > 80:
+                sig = sig[:77] + "..."
+            output.append(f"  {sig}")
+
+        # Nested symbols (methods, etc.)
+        sym_id = sym.get("id")
+        if sym_id and sym_id in nested:
+            for child in sorted(nested[sym_id], key=lambda s: s.get("start_line", 0)):
+                child_sig = child.get("signature", child.get("name", "?"))
+                child_sig = child_sig.split("\n")[0]
+                if len(child_sig) > 76:
+                    child_sig = child_sig[:73] + "..."
+                output.append(f"    {child_sig}")
+
+        output.append("")
+
+    # Trim trailing blank lines
+    while output and output[-1] == "":
+        output.pop()
+
+    return "\n".join(output)
+
+
 def _format_code_output(file_path: str, symbols: list[dict[str, Any]]) -> str:
     """Format symbols as raw code output - optimal for AI reading.
 
@@ -64,7 +132,7 @@ async def get_symbols(
     target: Optional[str] = None,
     limit: Optional[int] = None,
     workspace: str = "primary",
-    output_format: Literal["json", "toon", "auto", "code"] = "json"
+    output_format: Literal["text", "json", "toon", "auto", "code"] = "text"
 ) -> Union[list[dict[str, Any]], str]:
     """
     Get file structure with enhanced filtering and modes.
@@ -88,16 +156,18 @@ async def get_symbols(
         target: Filter to symbols matching this name (case-insensitive partial match)
         limit: Maximum number of symbols to return
         workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "json" (default), "toon", "auto", or "code"
-                      - "json": Standard list format
+        output_format: Output format - "text" (default), "json", "toon", "auto", or "code"
+                      - "text": Lean grep-style list (DEFAULT - most token-efficient)
+                      - "json": Standard list format (for programmatic use)
                       - "toon": TOON-encoded string (30-40% token reduction)
                       - "auto": TOON if ≥20 symbols, else JSON
                       - "code": Raw source code without metadata (optimal for AI reading)
 
     Returns:
+        - Text mode: Lean grep-style list with signatures (DEFAULT)
         - JSON mode: List of symbol dictionaries
         - TOON mode: TOON-encoded string (compact table format)
-        - Auto mode: Switches based on result count
+        - Auto mode: TOON if ≥20 symbols, else JSON
         - Code mode: Raw source code string with minimal file header
 
     Examples:
@@ -128,11 +198,14 @@ async def get_symbols(
         workspace=workspace
     )
 
-    # Handle "code" output format - raw source code without metadata
+    # Handle special output formats
     if output_format == "code":
         return _format_code_output(file_path, result)
 
-    # Apply TOON encoding if requested
+    if output_format == "text":
+        return _format_symbols_as_text(file_path, result)
+
+    # Apply TOON encoding if requested (for json/toon/auto)
     if should_use_toon(output_format, len(result)):
         return encode_toon(result)
     else:

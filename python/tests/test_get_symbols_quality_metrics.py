@@ -47,7 +47,7 @@ def calculate_tax(amount):
         """When target is specified, should add relevance_score to each result."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(auth_file),
             target="login"
         )
@@ -64,7 +64,7 @@ def calculate_tax(amount):
         """Exact match should have the highest relevance score (1.0)."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(auth_file),
             target="login"
         )
@@ -79,7 +79,7 @@ def calculate_tax(amount):
         """Partial matches (contains target) should have high scores (>0.7)."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(auth_file),
             target="login"
         )
@@ -95,7 +95,7 @@ def calculate_tax(amount):
         """Semantically similar symbols should have moderate scores (0.4-0.7)."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(auth_file),
             target="login"
         )
@@ -111,7 +111,7 @@ def calculate_tax(amount):
         """Irrelevant symbols should have lower scores than relevant ones."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(auth_file),
             target="login"
         )
@@ -135,7 +135,7 @@ def calculate_tax(amount):
         """Results should be sorted by relevance_score (highest first)."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(auth_file),
             target="login"
         )
@@ -153,7 +153,7 @@ def calculate_tax(amount):
         """When target not specified, relevance_score should not be added."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(auth_file)
         )
 
@@ -182,7 +182,7 @@ def delete_file(file_path):
 
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(test_file),
             target="user"
         )
@@ -222,7 +222,7 @@ def main():
     helper()
 """)
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(test_file)
         )
 
@@ -244,7 +244,7 @@ def unused_function():
     pass
 """)
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(test_file)
         )
 
@@ -311,7 +311,7 @@ def documented_function():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(output_format="json", file_path=str(test_file))
 
         # All symbols should have doc quality fields
         for symbol in result:
@@ -331,7 +331,7 @@ def undocumented():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(output_format="json", file_path=str(test_file))
 
         undoc = next(s for s in result if s["name"] == "undocumented")
         assert undoc["has_docs"] is False
@@ -349,7 +349,7 @@ def short_doc():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(output_format="json", file_path=str(test_file))
 
         func = next(s for s in result if s["name"] == "short_doc")
         assert func["has_docs"] is True
@@ -371,7 +371,7 @@ def medium_doc():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(output_format="json", file_path=str(test_file))
 
         func = next(s for s in result if s["name"] == "medium_doc")
         assert func["has_docs"] is True
@@ -398,7 +398,7 @@ def well_documented():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(output_format="json", file_path=str(test_file))
 
         func = next(s for s in result if s["name"] == "well_documented")
         assert func["has_docs"] is True
@@ -449,7 +449,7 @@ def good_docs():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(output_format="json", file_path=str(test_file))
 
         # Check each symbol has correct quality
         no_docs = next(s for s in result if s["name"] == "no_docs")

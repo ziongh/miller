@@ -9,6 +9,7 @@ from typing import Any, Literal, Optional, Union
 
 async def fast_goto(
     symbol_name: str,
+    workspace: str = "primary",
     output_format: Literal["text", "json"] = "text",
     storage=None,
 ) -> Union[str, Optional[dict[str, Any]]]:
@@ -20,6 +21,7 @@ async def fast_goto(
 
     Args:
         symbol_name: Name of symbol to find
+        workspace: Workspace to query ("primary" or workspace_id)
         output_format: Output format - "text" (default) or "json"
                       - "text": Lean formatted string - DEFAULT
                       - "json": Dict with full metadata
@@ -32,6 +34,24 @@ async def fast_goto(
     Note: For exploring unknown code, use fast_search first. Use fast_goto when
     you already know the symbol name from search results or references.
     """
+    # Get workspace-specific storage if needed
+    if workspace != "primary":
+        from miller.workspace_paths import get_workspace_db_path
+        from miller.workspace_registry import WorkspaceRegistry
+        from miller.storage import StorageManager
+
+        registry = WorkspaceRegistry()
+        workspace_entry = registry.get_workspace(workspace)
+        if workspace_entry:
+            db_path = get_workspace_db_path(workspace)
+            storage = StorageManager(db_path=str(db_path))
+        else:
+            # Return not found for non-existent workspace
+            if output_format == "text":
+                return f'No definition found for "{symbol_name}" (workspace "{workspace}" not found).'
+            else:
+                return None
+
     # Query SQLite for exact match
     sym = storage.get_symbol_by_name(symbol_name)
 

@@ -41,7 +41,8 @@ def calculate_user_age():
         result = await get_symbols(
             file_path=str(multi_symbol_file),
             target="UserService",
-            max_depth=2
+            max_depth=2,
+            output_format="json"
         )
 
         # Should return UserService and its methods
@@ -68,7 +69,8 @@ def calculate_user_age():
         result = await get_symbols(
             file_path=str(multi_symbol_file),
             target="user",  # Lowercase, partial
-            max_depth=2
+            max_depth=2,
+            output_format="json"
         )
 
         names = [s["name"] for s in result]
@@ -91,7 +93,8 @@ def calculate_user_age():
         result = await get_symbols(
             file_path=str(multi_symbol_file),
             target="UserService",
-            max_depth=1
+            max_depth=1,
+            output_format="json"
         )
 
         # Should return UserService AND its direct children (methods)
@@ -108,7 +111,8 @@ def calculate_user_age():
 
         result = await get_symbols(
             file_path=str(multi_symbol_file),
-            max_depth=2
+            max_depth=2,
+            output_format="json"
         )
 
         # Should return everything
@@ -133,7 +137,7 @@ def user_logout():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # All symbols should have related_symbols field
         for symbol in result:
@@ -157,7 +161,7 @@ class UserService:
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # If any related symbols exist, check structure
         for symbol in result:
@@ -192,7 +196,7 @@ class UserRepository:
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # Check that related symbols are sorted by similarity
         for symbol in result:
@@ -211,7 +215,7 @@ class UserRepository:
         code = "\n".join([f"class User{i}:\n    pass" for i in range(20)])
         test_file.write_text(code)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # No symbol should have more than 5 related symbols
         for symbol in result:
@@ -231,7 +235,7 @@ class UserProfile:
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # Check that no symbol is related to itself
         for symbol in result:
@@ -247,7 +251,7 @@ class UserProfile:
         test_file = tmp_path / "empty.py"
         test_file.write_text("")
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # Empty file = no symbols
         assert len(result) == 0
@@ -263,7 +267,7 @@ def lonely_function():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # Single symbol has no other symbols to be related to
         assert len(result) == 1

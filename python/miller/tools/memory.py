@@ -112,7 +112,8 @@ async def recall(
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
-) -> list[dict[str, Any]]:
+    output_format: str = "text",
+) -> str | list[dict[str, Any]]:
     """
     Retrieve development memory checkpoints with filtering and semantic search.
 
@@ -134,9 +135,11 @@ async def recall(
                Uses local timezone - automatically converted to UTC for filtering
         until: Memories until this date (ISO 8601, same format as since)
         limit: Maximum number of results (default: 10)
+        output_format: "text" (default, lean) or "json" (structured)
 
     Returns:
-        List of checkpoint dictionaries with keys:
+        - text mode: Formatted summary of memories (default)
+        - json mode: List of checkpoint dictionaries with keys:
         - id: Checkpoint ID
         - timestamp: Unix timestamp (seconds)
         - type: Memory type
@@ -166,10 +169,93 @@ async def recall(
     """
     # SEMANTIC SEARCH MODE: Use indexed embeddings for natural language queries
     if query:
-        return await _recall_semantic(query, type, since, until, limit)
+        results = await _recall_semantic(query, type, since, until, limit)
+    else:
+        # FILESYSTEM SCAN MODE: Fast time-based filtering (original implementation)
+        results = await _recall_filesystem(type, since, until, limit)
 
-    # FILESYSTEM SCAN MODE: Fast time-based filtering (original implementation)
-    return await _recall_filesystem(type, since, until, limit)
+    # Apply output format
+    if output_format == "json":
+        return results
+    else:
+        return _format_recall_as_text(results, query=query)
+
+
+def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] = None) -> str:
+    """Format recall results as lean text output.
+
+    Output format:
+    ```
+    5 memories found:
+
+    ✓ checkpoint_abc123 (2 min ago) [main]
+      Fixed authentication bug - was missing await
+
+    🎯 decision_def456 (1 hour ago) [feature-x]
+      Decided to use PostgreSQL for transactions
+      Tags: architecture, database
+    ```
+    """
+    if not results:
+        if query:
+            return f'No memories found matching "{query}".'
+        return "No memories found."
+
+    # Type icons
+    icons = {
+        "checkpoint": "✓",
+        "decision": "🎯",
+        "learning": "💡",
+        "observation": "👁️",
+    }
+
+    count = len(results)
+    header = f'{count} {"memory" if count == 1 else "memories"} found'
+    if query:
+        header += f' for "{query}"'
+    header += ":"
+
+    output = [header, ""]
+
+    now = time.time()
+    for mem in results:
+        mem_type = mem.get("type", "checkpoint")
+        icon = icons.get(mem_type, "•")
+        mem_id = mem.get("id", "?")
+        description = mem.get("description", "")
+        tags = mem.get("tags", [])
+        timestamp = mem.get("timestamp", 0)
+        git = mem.get("git", {})
+        branch = git.get("branch", "?")
+
+        # Relative time
+        diff = now - timestamp
+        if diff < 60:
+            rel_time = "just now"
+        elif diff < 3600:
+            mins = int(diff / 60)
+            rel_time = f"{mins} min ago"
+        elif diff < 86400:
+            hours = int(diff / 3600)
+            rel_time = f"{hours} hour{'s' if hours > 1 else ''} ago"
+        else:
+            days = int(diff / 86400)
+            rel_time = f"{days} day{'s' if days > 1 else ''} ago"
+
+        # Format: icon id (time) [branch]
+        output.append(f"{icon} {mem_id} ({rel_time}) [{branch}]")
+        output.append(f"  {description}")
+
+        if tags:
+            output.append(f"  Tags: {', '.join(tags)}")
+
+        output.append("")
+
+    # Trim trailing blank line
+    while output and output[-1] == "":
+        output.pop()
+
+    return "\n".join(output)
 
 
 async def _recall_semantic(
@@ -338,6 +424,91 @@ async def _recall_filesystem(
     return all_checkpoints[:limit]
 
 
+def _format_plan_as_text(plan_data: dict[str, Any]) -> str:
+    """Format a single plan as readable text with content.
+
+    Output format:
+    ```
+    Plan: Add Search Feature (plan_add-search-feature)
+    Status: active
+    Progress: [2/5] tasks
+
+    ## Content
+    [plan markdown content]
+    ```
+    """
+    plan_id = plan_data.get("id", "?")
+    title = plan_data.get("title", "Untitled")
+    status = plan_data.get("status", "pending")
+    content = plan_data.get("content", "")
+
+    task_count, completed_count = _count_tasks(content)
+    progress = f"[{completed_count}/{task_count}] tasks" if task_count > 0 else "No tasks"
+
+    output = [
+        f"Plan: {title} ({plan_id})",
+        f"Status: {status}",
+        f"Progress: {progress}",
+        "",
+    ]
+
+    if content:
+        output.append(content)
+
+    return "\n".join(output)
+
+
+def _format_plan_list_as_text(plans: list[dict[str, Any]]) -> str:
+    """Format plan list as lean text output.
+
+    Output format:
+    ```
+    3 plans:
+
+    ● [active] Add Search Feature [2/5]
+      plan_add-search-feature
+
+    ○ [pending] Fix Authentication [0/3]
+      plan_fix-auth
+
+    ✓ [completed] Database Migration [5/5]
+      plan_db-migration
+    ```
+    """
+    if not plans:
+        return "No plans found."
+
+    count = len(plans)
+    output = [f'{count} {"plan" if count == 1 else "plans"}:', ""]
+
+    # Status icons
+    icons = {
+        "active": "●",
+        "pending": "○",
+        "completed": "✓",
+    }
+
+    for plan in plans:
+        plan_id = plan.get("id", "?")
+        title = plan.get("title", "Untitled")
+        status = plan.get("status", "pending")
+        task_count = plan.get("task_count", 0)
+        completed_count = plan.get("completed_count", 0)
+
+        icon = icons.get(status, "○")
+        progress = f"[{completed_count}/{task_count}]" if task_count > 0 else ""
+
+        output.append(f"{icon} [{status}] {title} {progress}")
+        output.append(f"  {plan_id}")
+        output.append("")
+
+    # Trim trailing blank line
+    while output and output[-1] == "":
+        output.pop()
+
+    return "\n".join(output)
+
+
 def _count_tasks(content: str) -> tuple[int, int]:
     """Count total tasks and completed tasks in markdown content.
 
@@ -366,6 +537,7 @@ async def plan(
     status: Optional[str] = None,
     activate: bool = True,
     include_content: bool = False,
+    output_format: str = "text",
 ) -> Any:
     """
     Manage mutable development plans.
@@ -393,15 +565,11 @@ async def plan(
         status: Plan status (optional for update/list filter) - "active"|"pending"|"completed"
         activate: Auto-activate after save (default: True, enforces single-active)
         include_content: Include full content in list (default: False for token efficiency)
+        output_format: "text" (default, lean) or "json" (structured)
 
     Returns:
-        - save: Plan dict with generated ID
-        - get: Plan dict with all fields
-        - list: List of plan summaries (id, title, status, task_count, completed_count)
-                Use include_content=True for full content
-        - activate: Success message dict
-        - update: Summary dict (id, title, status, task_count, completed_count, message)
-        - complete: Summary dict with completed_at timestamp and celebration message
+        - text mode (default): Lean confirmation messages
+        - json mode: Structured dicts/lists for programmatic use
 
     Task Counting:
         The `task_count` and `completed_count` fields in list results are calculated
@@ -475,7 +643,10 @@ async def plan(
         plan_file = plans_dir / f"{plan_id}.json"
         write_json_file(plan_file, plan_data)
 
-        return plan_data
+        # Return based on output_format
+        if output_format == "json":
+            return plan_data
+        return f"✓ Created plan '{title}' ({plan_id})"
 
     elif action == "get":
         if not id:
@@ -485,7 +656,10 @@ async def plan(
         if not plan_file.exists():
             raise FileNotFoundError(f"Plan {id} not found")
 
-        return read_json_file(plan_file)
+        plan_data = read_json_file(plan_file)
+        if output_format == "json":
+            return plan_data
+        return _format_plan_as_text(plan_data)
 
     elif action == "list":
         all_plans = []
@@ -525,7 +699,9 @@ async def plan(
         # Sort by timestamp descending
         all_plans.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
 
-        return all_plans
+        if output_format == "json":
+            return all_plans
+        return _format_plan_list_as_text(all_plans)
 
     elif action == "activate":
         if not id:
@@ -543,7 +719,9 @@ async def plan(
         plan_data["status"] = "active"
         write_json_file(plan_file, plan_data)
 
-        return {"status": "success", "message": f"Plan {id} activated"}
+        if output_format == "json":
+            return {"status": "success", "message": f"Plan {id} activated", "id": id}
+        return f"✓ Plan '{plan_data.get('title', id)}' activated"
 
     elif action == "update":
         if not id:
@@ -563,16 +741,19 @@ async def plan(
 
         write_json_file(plan_file, plan_data)
 
-        # Return summary (not full content) for token efficiency
         task_count, completed_count = _count_tasks(plan_data.get("content", ""))
-        return {
-            "id": plan_data.get("id"),
-            "title": plan_data.get("title"),
-            "status": plan_data.get("status"),
-            "task_count": task_count,
-            "completed_count": completed_count,
-            "message": "Plan updated successfully",
-        }
+        if output_format == "json":
+            return {
+                "id": plan_data.get("id"),
+                "title": plan_data.get("title"),
+                "status": plan_data.get("status"),
+                "task_count": task_count,
+                "completed_count": completed_count,
+                "message": "Plan updated successfully",
+            }
+        title = plan_data.get("title", id)
+        progress = f"[{completed_count}/{task_count}]" if task_count > 0 else ""
+        return f"✓ Updated '{title}' {progress}"
 
     elif action == "complete":
         if not id:
@@ -587,17 +768,20 @@ async def plan(
         plan_data["completed_at"] = int(time.time())
         write_json_file(plan_file, plan_data)
 
-        # Return summary (not full content) for token efficiency
         task_count, completed_count = _count_tasks(plan_data.get("content", ""))
-        return {
-            "id": plan_data.get("id"),
-            "title": plan_data.get("title"),
-            "status": "completed",
-            "completed_at": plan_data["completed_at"],
-            "task_count": task_count,
-            "completed_count": completed_count,
-            "message": "Plan completed! 🎉",
-        }
+        if output_format == "json":
+            return {
+                "id": plan_data.get("id"),
+                "title": plan_data.get("title"),
+                "status": "completed",
+                "completed_at": plan_data["completed_at"],
+                "task_count": task_count,
+                "completed_count": completed_count,
+                "message": "Plan completed! 🎉",
+            }
+        title = plan_data.get("title", id)
+        progress = f"[{completed_count}/{task_count}]" if task_count > 0 else ""
+        return f"🎉 Completed '{title}' {progress}"
 
     else:
         raise ValueError(f"Unknown action: {action}")

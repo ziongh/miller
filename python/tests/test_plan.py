@@ -119,8 +119,8 @@ async def test_plan_list_returns_all_plans(temp_memories_dir, mock_git_context, 
         await plan(ctx, action="save", title="Plan 2", content="Content 2", activate=False)
         await plan(ctx, action="save", title="Plan 3", content="Content 3", activate=False)
 
-        # List all plans
-        results = await plan(ctx, action="list")
+        # List all plans (use json format for structured data in tests)
+        results = await plan(ctx, action="list", output_format="json")
 
         assert len(results) == 3
         titles = [p["title"] for p in results]
@@ -136,23 +136,23 @@ async def test_plan_list_filters_by_status(temp_memories_dir, mock_git_context, 
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
-        # Create plans with different statuses
-        plan1_id = await plan(ctx, action="save", title="Active Plan 1", content="C1")
-        plan2_id = await plan(ctx, action="save", title="Active Plan 2", content="C2")
-        plan3_id = await plan(ctx, action="save", title="Complete Plan", content="C3", activate=False)
+        # Create plans with different statuses (use json for structured returns)
+        plan1_id = await plan(ctx, action="save", title="Active Plan 1", content="C1", output_format="json")
+        plan2_id = await plan(ctx, action="save", title="Active Plan 2", content="C2", output_format="json")
+        plan3_id = await plan(ctx, action="save", title="Complete Plan", content="C3", activate=False, output_format="json")
 
         # Complete one plan
         await plan(ctx, action="complete", id=plan3_id["id"])
 
         # List only active plans
-        active_plans = await plan(ctx, action="list", status="active")
+        active_plans = await plan(ctx, action="list", status="active", output_format="json")
 
         # Should have 2 active plans (plan2 is active, plan1 was deactivated when plan2 was created)
         active_titles = [p["title"] for p in active_plans]
         assert len([p for p in active_plans if p["status"] == "active"]) >= 1
 
         # List completed plans
-        completed_plans = await plan(ctx, action="list", status="completed")
+        completed_plans = await plan(ctx, action="list", status="completed", output_format="json")
         assert len(completed_plans) == 1
         assert completed_plans[0]["title"] == "Complete Plan"
 
@@ -164,16 +164,16 @@ async def test_plan_activate_deactivates_others(temp_memories_dir, mock_git_cont
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
-        # Create 3 plans
-        plan1_result = await plan(ctx, action="save", title="Plan 1", content="C1")
-        plan2_result = await plan(ctx, action="save", title="Plan 2", content="C2")
-        plan3_result = await plan(ctx, action="save", title="Plan 3", content="C3")
+        # Create 3 plans (use json for structured returns)
+        plan1_result = await plan(ctx, action="save", title="Plan 1", content="C1", output_format="json")
+        plan2_result = await plan(ctx, action="save", title="Plan 2", content="C2", output_format="json")
+        plan3_result = await plan(ctx, action="save", title="Plan 3", content="C3", output_format="json")
 
         # Activate plan 1
         await plan(ctx, action="activate", id=plan1_result["id"])
 
         # List all plans and check statuses
-        all_plans = await plan(ctx, action="list")
+        all_plans = await plan(ctx, action="list", output_format="json")
 
         active_count = sum(1 for p in all_plans if p["status"] == "active")
         assert active_count == 1, "Only one plan should be active"
@@ -190,12 +190,13 @@ async def test_plan_update_modifies_content(temp_memories_dir, mock_git_context,
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
-        # Create plan
+        # Create plan (use json for structured returns)
         plan_result = await plan(
             ctx,
             action="save",
             title="Test Plan",
-            content="## Original Content"
+            content="## Original Content",
+            output_format="json"
         )
 
         # Update content
@@ -206,8 +207,8 @@ async def test_plan_update_modifies_content(temp_memories_dir, mock_git_context,
             content="## Updated Content\nNew sections here..."
         )
 
-        # Get plan and verify content changed
-        updated_plan = await plan(ctx, action="get", id=plan_result["id"])
+        # Get plan and verify content changed (use json for structured return)
+        updated_plan = await plan(ctx, action="get", id=plan_result["id"], output_format="json")
 
         assert "Updated Content" in updated_plan["content"]
         assert "Original Content" not in updated_plan["content"]
@@ -220,19 +221,20 @@ async def test_plan_complete_sets_timestamp(temp_memories_dir, mock_git_context,
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
-        # Create plan
+        # Create plan (use json for structured returns)
         plan_result = await plan(
             ctx,
             action="save",
             title="Test Plan",
-            content="## Test"
+            content="## Test",
+            output_format="json"
         )
 
         # Complete it
         await plan(ctx, action="complete", id=plan_result["id"])
 
-        # Get plan and verify completed_at is set
-        completed_plan = await plan(ctx, action="get", id=plan_result["id"])
+        # Get plan and verify completed_at is set (use json for structured return)
+        completed_plan = await plan(ctx, action="get", id=plan_result["id"], output_format="json")
 
         assert completed_plan["status"] == "completed"
         assert "completed_at" in completed_plan
@@ -247,13 +249,13 @@ async def test_plan_get_retrieves_by_id(temp_memories_dir, mock_git_context, moc
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
-        # Create multiple plans
-        plan1 = await plan(ctx, action="save", title="Plan 1", content="C1", activate=False)
-        plan2 = await plan(ctx, action="save", title="Plan 2", content="C2", activate=False)
-        plan3 = await plan(ctx, action="save", title="Plan 3", content="C3", activate=False)
+        # Create multiple plans (use json for structured returns)
+        plan1 = await plan(ctx, action="save", title="Plan 1", content="C1", activate=False, output_format="json")
+        plan2 = await plan(ctx, action="save", title="Plan 2", content="C2", activate=False, output_format="json")
+        plan3 = await plan(ctx, action="save", title="Plan 3", content="C3", activate=False, output_format="json")
 
-        # Get plan 2 by ID
-        retrieved = await plan(ctx, action="get", id=plan2["id"])
+        # Get plan 2 by ID (use json for structured return)
+        retrieved = await plan(ctx, action="get", id=plan2["id"], output_format="json")
 
         assert retrieved["id"] == plan2["id"]
         assert retrieved["title"] == "Plan 2"
@@ -276,8 +278,8 @@ async def test_plan_list_excludes_content_by_default(temp_memories_dir, mock_git
         large_content = "## Goal\n" + "x" * 5000  # 5KB of content
         await plan(ctx, action="save", title="Big Plan", content=large_content)
 
-        # List plans (default - summary mode)
-        plans = await plan(ctx, action="list")
+        # List plans (default - summary mode, use json for structured data)
+        plans = await plan(ctx, action="list", output_format="json")
 
         assert len(plans) == 1
         # Content should NOT be included by default
@@ -298,8 +300,8 @@ async def test_plan_list_includes_content_when_requested(temp_memories_dir, mock
 
         await plan(ctx, action="save", title="Test Plan", content="Test content here")
 
-        # List with include_content=True
-        plans = await plan(ctx, action="list", include_content=True)
+        # List with include_content=True (use json for structured data)
+        plans = await plan(ctx, action="list", include_content=True, output_format="json")
 
         assert len(plans) == 1
         # Content SHOULD be included when requested
@@ -327,8 +329,8 @@ Implement feature X
 """
         await plan(ctx, action="save", title="Task Plan", content=content)
 
-        # List plans
-        plans = await plan(ctx, action="list")
+        # List plans (use json for structured data)
+        plans = await plan(ctx, action="list", output_format="json")
 
         assert len(plans) == 1
         # Should have task counts
@@ -347,13 +349,13 @@ async def test_plan_list_summary_excludes_git(temp_memories_dir, mock_git_contex
 
         await plan(ctx, action="save", title="Git Plan", content="Content")
 
-        # List plans (summary mode - default)
-        plans = await plan(ctx, action="list")
+        # List plans (summary mode - default, use json for structured data)
+        plans = await plan(ctx, action="list", output_format="json")
 
         assert len(plans) == 1
         # Git should NOT be included in summary
         assert "git" not in plans[0]
 
         # But should be included with include_content=True
-        plans_full = await plan(ctx, action="list", include_content=True)
+        plans_full = await plan(ctx, action="list", include_content=True, output_format="json")
         assert "git" in plans_full[0]

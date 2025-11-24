@@ -89,8 +89,9 @@ async def fast_search(
     Note: Results are complete and accurate. Trust them - no need to verify with file reads!
     """
 
-    # If workspace_id specified, use that workspace's vector store
-    if workspace_id:
+    # If workspace_id specified (and not "primary"), use that workspace's vector store
+    # "primary" uses the default injected stores (fast path)
+    if workspace_id and workspace_id != "primary":
         from miller.workspace_paths import get_workspace_vector_path
         from miller.workspace_registry import WorkspaceRegistry
 
@@ -99,8 +100,14 @@ async def fast_search(
         workspace = registry.get_workspace(workspace_id)
 
         if not workspace:
-            # Return empty results for non-existent workspace
-            return []
+            # Return formatted "no results" for non-existent workspace
+            if output_format == "text":
+                return f'No matches for "{query}" (workspace "{workspace_id}" not found).'
+            elif output_format == "toon":
+                from miller.toon_types import encode_toon
+                return encode_toon([])
+            else:
+                return []
 
         # Open workspace-specific vector store
         from miller.embeddings import VectorStore

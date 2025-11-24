@@ -120,12 +120,14 @@ class TestGetSymbolsToonEdgeCases:
         assert "No" in result or "[]" in result or len(result) < 50
 
     @pytest.mark.asyncio
-    async def test_default_mode_is_json(self, temp_python_file):
-        """Test that default output_format is JSON."""
+    async def test_default_mode_is_text(self, temp_python_file):
+        """Test that default output_format is text (lean, token-efficient)."""
         result = await get_symbols(str(temp_python_file))  # No output_format specified
 
-        # Should default to JSON
-        assert isinstance(result, list)
+        # Should default to text format (string, not list)
+        assert isinstance(result, str)
+        # Text format has file name and symbol count header
+        assert "symbol" in result.lower()
 
     @pytest.mark.asyncio
     async def test_mode_parameter_works_with_toon(self, temp_python_file):

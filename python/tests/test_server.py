@@ -443,7 +443,7 @@ class TestGetSymbolsTool:
         from miller.server import get_symbols
 
         file_path = str(test_workspace / "test.py")
-        result = await get_symbols(file_path)
+        result = await get_symbols(file_path, output_format="json")
 
         # Should return list of symbols with metadata
         assert len(result) > 0
@@ -456,7 +456,7 @@ class TestGetSymbolsTool:
         from miller.server import get_symbols
 
         file_path = str(test_workspace / "test.py")
-        result = await get_symbols(file_path)
+        result = await get_symbols(file_path, output_format="json")
 
         sym = result[0]
         assert "name" in sym

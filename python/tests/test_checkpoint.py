@@ -9,7 +9,7 @@ import pytest
 import json
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 
@@ -27,7 +27,7 @@ async def test_checkpoint_creates_file_in_correct_location(temp_memories_dir, mo
         checkpoint_id = await checkpoint(mock_context, "Test checkpoint")
 
         # Find created file
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
         assert date_dir.exists(), f"Date directory {date_dir} should exist"
 
@@ -54,7 +54,7 @@ async def test_checkpoint_json_schema_matches_julie(temp_memories_dir, mock_git_
         )
 
         # Read the created file
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
         checkpoint_file = list(date_dir.glob("*.json"))[0]
 
@@ -129,7 +129,7 @@ async def test_checkpoint_captures_git_context(temp_memories_dir, mock_context):
         checkpoint_id = await checkpoint(ctx, "Test git capture")
 
         # Read the checkpoint file
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
         checkpoint_file = list(date_dir.glob("*.json"))[0]
 
@@ -168,7 +168,7 @@ async def test_checkpoint_supports_all_memory_types(temp_memories_dir, mock_git_
                 f"ID should start with '{mem_type}_', got {checkpoint_id}"
 
             # Read file and verify type field by finding the correct checkpoint
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             date_dir = temp_memories_dir / today
 
             # Find the file with matching ID
@@ -199,7 +199,7 @@ async def test_checkpoint_handles_tags(temp_memories_dir, mock_git_context, mock
         )
 
         # Read file
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
         checkpoint_file = list(date_dir.glob("*.json"))[0]
 
@@ -226,7 +226,7 @@ async def test_checkpoint_returns_checkpoint_id(temp_memories_dir, mock_git_cont
         assert re.match(r'^checkpoint_[a-f0-9]{8}_[a-f0-9]{6}$', checkpoint_id)
 
         # Verify the ID in the file matches the return value
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
         checkpoint_file = list(date_dir.glob("*.json"))[0]
 
@@ -245,7 +245,7 @@ async def test_checkpoint_file_is_pretty_printed(temp_memories_dir, mock_git_con
         await checkpoint(ctx, "Test formatting", tags=["test"])
 
         # Read raw file content
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
         checkpoint_file = list(date_dir.glob("*.json"))[0]
 

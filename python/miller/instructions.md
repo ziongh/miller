@@ -63,6 +63,16 @@ Use `mode="full"` only when you need actual implementation details.
 
 The references are complete - you don't need to search again to verify.
 
+### When to use `fast_goto`
+- When you know the symbol name and need its definition location
+- After finding a symbol in search results and wanting to see its implementation
+- **Quick navigation - returns exact file:line location**
+
+### When to use `fast_explore`
+- Type intelligence: Find implementations, hierarchy, return/parameter types
+- Similar code: Find semantically similar code (duplicate detection)
+- Dependencies: Trace transitive dependencies (impact analysis)
+
 ### When to use `trace_call_path`
 - Understanding execution flow
 - Finding all callers (upstream) or callees (downstream)
@@ -90,13 +100,18 @@ You operate in a **resource-efficient** manner. Miller's tools return exactly wh
 
 Moreover, Miller's tools will return errors if something goes wrong. A successful result means the operation completed correctly. **This is all the feedback you need.**
 
-## Output Format: TOON
+## Output Formats
 
-Miller uses **TOON format** (Token-Optimized Object Notation) for large results. This reduces token usage by 30-60% while preserving all information.
+Miller tools default to **lean text format** optimized for AI reading:
 
-- You can read TOON format naturally - it's designed for LLM consumption
-- Don't ask for JSON when TOON is offered - TOON is more efficient
-- The `auto` output format chooses the best format automatically
+- **text** (default): Grep-style output, ~80% fewer tokens than JSON
+- **json**: Structured data for programmatic use
+- **toon**: Token-Optimized Object Notation, 30-60% smaller than JSON
+
+Most tools return text by default. Use `output_format="json"` only when you need structured data for processing. TOON is used automatically for large results when you specify `output_format="auto"`.
+
+**Workspace Support:**
+Most tools accept a `workspace` parameter (default: `"primary"`). Use this to search or navigate within specific reference workspaces added via `manage_workspace`.
 
 ## Anti-Patterns to Avoid
 
@@ -107,7 +122,7 @@ I WILL BE VERY UNHAPPY IF YOU:
 3. **Verify search results** by reading the files that were found
 4. **Read a file after `get_symbols`** showed you the structure
 5. **Skip `fast_refs`** before refactoring and break callers
-6. **Ignore TOON format** and request JSON for large results
+6. **Request JSON format** when the default text format is sufficient
 
 ## Workflow Examples
 

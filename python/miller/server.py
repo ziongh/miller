@@ -235,7 +235,7 @@ async def fast_search(
     query: str,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 20,
-    workspace_id: Optional[str] = None,
+    workspace_id: str = "primary",
     output_format: Literal["text", "json", "toon"] = "text",
     rerank: bool = True,
     expand: bool = False,
@@ -325,6 +325,7 @@ async def fast_search(
 
 async def fast_goto(
     symbol_name: str,
+    workspace: str = "primary",
     output_format: Literal["text", "json"] = "text"
 ) -> Union[str, Optional[dict[str, Any]]]:
     """
@@ -335,6 +336,7 @@ async def fast_goto(
 
     Args:
         symbol_name: Name of symbol to find
+        workspace: Workspace to query ("primary" or workspace_id)
         output_format: Output format - "text" (default) or "json"
                       - "text": Lean formatted string - DEFAULT
                       - "json": Dict with full metadata
@@ -348,6 +350,7 @@ async def fast_goto(
     """
     return await fast_goto_impl(
         symbol_name=symbol_name,
+        workspace=workspace,
         output_format=output_format,
         storage=storage,
     )
@@ -360,7 +363,7 @@ async def get_symbols(
     target: Optional[str] = None,
     limit: Optional[int] = None,
     workspace: str = "primary",
-    output_format: Literal["json", "toon", "auto", "code"] = "json"
+    output_format: Literal["text", "json", "toon", "auto", "code"] = "text"
 ) -> Union[list[dict[str, Any]], str]:
     """
     Get file structure with enhanced filtering and modes.
@@ -384,16 +387,18 @@ async def get_symbols(
         target: Filter to symbols matching this name (case-insensitive partial match)
         limit: Maximum number of symbols to return
         workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "json" (default), "toon", "auto", or "code"
-                      - "json": Standard list format
+        output_format: Output format - "text" (default), "json", "toon", "auto", or "code"
+                      - "text": Lean grep-style list (DEFAULT - most token-efficient)
+                      - "json": Standard list format (for programmatic use)
                       - "toon": TOON-encoded string (30-40% token reduction)
                       - "auto": TOON if ≥20 symbols, else JSON
                       - "code": Raw source code without metadata (optimal for AI reading)
 
     Returns:
+        - Text mode: Lean grep-style list with signatures (DEFAULT)
         - JSON mode: List of symbol dictionaries
         - TOON mode: TOON-encoded string (compact table format)
-        - Auto mode: Switches based on result count
+        - Auto mode: TOON if ≥20 symbols, else JSON
         - Code mode: Raw source code string with minimal file header
 
     Examples:
@@ -633,9 +638,10 @@ mcp.tool(output_schema=None)(trace_call_path)  # Returns tree/TOON string (defau
 mcp.tool(output_schema=None)(fast_explore)     # Returns text string (default: text)
 
 # Register memory tools
-mcp.tool()(checkpoint)
-mcp.tool()(recall)
-mcp.tool()(plan)
+# output_schema=None ensures raw string output (not JSON wrapped)
+mcp.tool(output_schema=None)(checkpoint)  # Returns checkpoint ID string
+mcp.tool(output_schema=None)(recall)      # Returns formatted text/JSON
+mcp.tool(output_schema=None)(plan)        # Returns formatted text/JSON
 
 # Register workspace management tool
 from miller.tools.workspace import manage_workspace

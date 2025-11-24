@@ -35,7 +35,7 @@ async def test_recall_returns_recent_first(temp_memories_dir, mock_git_context, 
                 await asyncio.sleep(1.1)  # Ensure different timestamps (1-second resolution)
 
         # Recall all
-        results = await recall(ctx, limit=10)
+        results = await recall(ctx, output_format="json", limit=10)
 
         # Verify order (most recent first)
         assert len(results) == 5
@@ -59,7 +59,7 @@ async def test_recall_filters_by_type(temp_memories_dir, mock_git_context, mock_
         await checkpoint(ctx, "Decision 2", type="decision")
 
         # Filter for decisions only
-        decisions = await recall(ctx, type="decision", limit=10)
+        decisions = await recall(ctx, output_format="json", type="decision", limit=10)
 
         assert len(decisions) == 2
         for result in decisions:
@@ -98,7 +98,7 @@ async def test_recall_filters_by_since_date(temp_memories_dir, mock_git_context,
     # Recall since yesterday (should get today + yesterday)
     ctx = mock_context
     since_date = yesterday.strftime("%Y-%m-%d")
-    results = await recall(ctx, since=since_date, limit=10)
+    results = await recall(ctx, output_format="json", since=since_date, limit=10)
 
     assert len(results) == 2, f"Should get 2 results, got {len(results)}"
 
@@ -139,7 +139,7 @@ async def test_recall_filters_by_until_date(temp_memories_dir, mock_git_context,
     # Recall until yesterday (should get yesterday + two_days_ago)
     ctx = mock_context
     until_date = yesterday.strftime("%Y-%m-%d")
-    results = await recall(ctx, until=until_date, limit=10)
+    results = await recall(ctx, output_format="json", until=until_date, limit=10)
 
     assert len(results) == 2, f"Should get 2 results, got {len(results)}"
 
@@ -163,7 +163,7 @@ async def test_recall_respects_limit(temp_memories_dir, mock_git_context, mock_c
                 await asyncio.sleep(1.1)  # Ensure different timestamps
 
         # Recall with limit=10
-        results = await recall(ctx, limit=10)
+        results = await recall(ctx, output_format="json", limit=10)
 
         assert len(results) == 10, f"Should return 10 results, got {len(results)}"
 
@@ -205,7 +205,7 @@ async def test_recall_reads_julie_checkpoints(temp_memories_dir, mock_context):
 
     # Try to recall it
     ctx = mock_context
-    results = await recall(ctx, limit=10)
+    results = await recall(ctx, output_format="json", limit=10)
 
     assert len(results) == 1
     assert results[0]["id"] == "checkpoint_691cb498_2fc504"
@@ -218,7 +218,7 @@ async def test_recall_handles_empty_memories(temp_memories_dir, mock_context):
     """Verify recall returns empty list when no checkpoints exist."""
     from miller.tools.memory import recall
     ctx = mock_context
-    results = await recall(ctx, limit=10)
+    results = await recall(ctx, output_format="json", limit=10)
 
     assert results == []
     assert isinstance(results, list)

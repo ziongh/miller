@@ -180,8 +180,8 @@ def unique_function_abc123():
             os.chdir(tmpdir)
 
             try:
-                # Search with non-existent workspace_id
-                results = await fast_search("test", workspace_id="nonexistent_abc123")
+                # Search with non-existent workspace_id (using json format for list assertion)
+                results = await fast_search("test", workspace_id="nonexistent_abc123", output_format="json")
 
                 # Should return empty list (no crash)
                 assert isinstance(results, list)

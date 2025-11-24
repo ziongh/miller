@@ -41,7 +41,7 @@ def standalone_function():
         """Structure mode should return only names/signatures, no implementation code."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(sample_python_file),
             mode="structure",
             max_depth=2
@@ -69,7 +69,7 @@ def standalone_function():
         """Minimal mode should return code bodies for top-level symbols only."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(sample_python_file),
             mode="minimal",
             max_depth=2
@@ -97,7 +97,7 @@ def standalone_function():
         """Full mode should return code bodies for all symbols."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(sample_python_file),
             mode="full",
             max_depth=2
@@ -115,7 +115,7 @@ def standalone_function():
         """When mode not specified, should default to 'structure'."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(sample_python_file),
             max_depth=1
         )
@@ -151,7 +151,7 @@ def top_function():
         """Depth 0 should return only top-level symbols."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(nested_python_file),
             max_depth=0
         )
@@ -175,7 +175,7 @@ def top_function():
         """
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(nested_python_file),
             max_depth=1
         )
@@ -201,7 +201,7 @@ def top_function():
         """
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(nested_python_file),
             max_depth=2
         )
@@ -220,7 +220,7 @@ def top_function():
         """Depth 3 should include all symbols."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(nested_python_file),
             max_depth=3
         )
@@ -253,7 +253,7 @@ class TestLimitParameter:
         """Limit should restrict the number of results returned."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(large_file),
             limit=5
         )
@@ -266,7 +266,7 @@ class TestLimitParameter:
         """When limited, should indicate that results were truncated."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(large_file),
             limit=5
         )
@@ -281,7 +281,7 @@ class TestLimitParameter:
         """When limit not specified, should return all symbols."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(large_file)
         )
 
@@ -300,7 +300,7 @@ class TestWorkspaceFiltering:
         test_file = tmp_path / "test.py"
         test_file.write_text(sample_python_code)
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(test_file)
         )
 
@@ -315,7 +315,7 @@ class TestWorkspaceFiltering:
         test_file = tmp_path / "test.py"
         test_file.write_text(sample_python_code)
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(test_file),
             workspace="primary"
         )
@@ -332,7 +332,7 @@ class TestErrorHandling:
         """Should handle nonexistent files gracefully."""
         from miller.server import get_symbols
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path="/nonexistent/file.py"
         )
 
@@ -349,7 +349,7 @@ class TestErrorHandling:
         binary_file = tmp_path / "test.bin"
         binary_file.write_bytes(b"\x00\x01\x02\xFF\xFE")
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(binary_file)
         )
 
@@ -364,7 +364,7 @@ class TestErrorHandling:
         empty_file = tmp_path / "empty.py"
         empty_file.write_text("")
 
-        result = await get_symbols(
+        result = await get_symbols(output_format="json", 
             file_path=str(empty_file)
         )
 

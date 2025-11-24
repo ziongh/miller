@@ -22,7 +22,7 @@ def user_login():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # All symbols should have cross_language_hints field
         for symbol in result:
@@ -40,7 +40,7 @@ class UserService:
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         for symbol in result:
             hints = symbol["cross_language_hints"]
@@ -71,7 +71,7 @@ class UserService:
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # Without indexed symbols in DB, should find no variants
         for symbol in result:
@@ -145,7 +145,7 @@ class UserService {
             storage.add_symbols_batch(list(ts_result.symbols))
 
         # Now query Python file and check for TypeScript variant
-        result = await get_symbols(file_path=str(py_file))
+        result = await get_symbols(file_path=str(py_file), output_format="json")
 
         user_service_sym = next((s for s in result if "user_service" in s["name"].lower()), None)
         if user_service_sym and storage is not None:
@@ -187,7 +187,7 @@ function authenticateUser() {
         storage.add_symbols_batch(list(js_result.symbols))
 
         # Query and verify count
-        result = await get_symbols(file_path=str(py_file))
+        result = await get_symbols(file_path=str(py_file), output_format="json")
 
         auth_sym = next((s for s in result if "authenticate" in s["name"].lower()), None)
         if auth_sym:
@@ -232,7 +232,7 @@ class User {
             storage.add_symbols_batch(list(result.symbols))
 
         # Query Python file
-        result = await get_symbols(file_path=str(py_file1))
+        result = await get_symbols(file_path=str(py_file1), output_format="json")
 
         user_sym = next((s for s in result if s["name"] == "User"), None)
         if user_sym:
@@ -260,7 +260,7 @@ def main():
     helper()
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # All symbols should have importance fields
         for symbol in result:
@@ -282,7 +282,7 @@ def process():
     return calculate()
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         for symbol in result:
             # importance_score should be float between 0 and 1
@@ -356,7 +356,7 @@ def api_endpoint_3():
         storage.add_relationships_batch(list(result_extract.relationships))
 
         # Get symbols with importance
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # main_handler should be an entry point (called by 3 endpoints, calls only 1 helper)
         main_handler = next((s for s in result if s["name"] == "main_handler"), None)
@@ -397,7 +397,7 @@ def caller3():
         storage.add_relationships_batch(list(result_extract.relationships))
 
         # Get symbols
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # Hub should have highest importance score
         hub = next((s for s in result if s["name"] == "hub"), None)
@@ -425,7 +425,7 @@ def func3():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         # All symbols should have equal scores (no relationships)
         scores = [s["importance_score"] for s in result]
@@ -444,7 +444,7 @@ def lonely():
     pass
 """)
 
-        result = await get_symbols(file_path=str(test_file))
+        result = await get_symbols(file_path=str(test_file), output_format="json")
 
         assert len(result) == 1
         symbol = result[0]

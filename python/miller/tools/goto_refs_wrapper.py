@@ -9,6 +9,7 @@ from typing import Any, Literal, Optional, Union
 
 async def fast_goto(
     symbol_name: str,
+    workspace: str = "primary",
     output_format: Literal["text", "json"] = "text",
     storage=None,
 ) -> Union[str, Optional[dict[str, Any]]]:
@@ -20,6 +21,7 @@ async def fast_goto(
 
     Args:
         symbol_name: Name of symbol to find
+        workspace: Workspace to query ("primary" or workspace_id)
         output_format: Output format - "text" (default) or "json"
                       - "text": Lean formatted string - DEFAULT
                       - "json": Dict with full metadata
@@ -34,6 +36,7 @@ async def fast_goto(
     from miller.tools.navigation import fast_goto as goto_impl
     return await goto_impl(
         symbol_name=symbol_name,
+        workspace=workspace,
         output_format=output_format,
         storage=storage,
     )
