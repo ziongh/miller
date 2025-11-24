@@ -21,7 +21,7 @@ from unittest.mock import patch
 @pytest.mark.asyncio
 async def test_checkpoint_creates_file_in_correct_location(temp_memories_dir, mock_git_context, mock_context):
     """Verify checkpoint creates file in .memories/YYYY-MM-DD/HHMMSS_XXXX.json."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
 
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         checkpoint_id = await checkpoint(mock_context, "Test checkpoint")
@@ -44,7 +44,7 @@ async def test_checkpoint_creates_file_in_correct_location(temp_memories_dir, mo
 @pytest.mark.asyncio
 async def test_checkpoint_json_schema_matches_julie(temp_memories_dir, mock_git_context, mock_context):
     """Verify checkpoint JSON has all required fields with correct types."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
         checkpoint_id = await checkpoint(
@@ -89,7 +89,7 @@ async def test_checkpoint_json_schema_matches_julie(temp_memories_dir, mock_git_
 @pytest.mark.asyncio
 async def test_checkpoint_generates_unique_id_format(temp_memories_dir, mock_git_context, mock_context):
     """Verify checkpoint ID format: {type}_{8hex}_{6hex} and uniqueness."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -111,7 +111,7 @@ async def test_checkpoint_generates_unique_id_format(temp_memories_dir, mock_git
 @pytest.mark.asyncio
 async def test_checkpoint_captures_git_context(temp_memories_dir, mock_context):
     """Verify checkpoint captures branch, commit, dirty, files_changed."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
 
     # Mock git context with realistic data
     mock_git = {
@@ -124,7 +124,7 @@ async def test_checkpoint_captures_git_context(temp_memories_dir, mock_context):
         ]
     }
 
-    with patch('miller.tools.memory.get_git_context', return_value=mock_git):
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git):
         ctx = mock_context
         checkpoint_id = await checkpoint(ctx, "Test git capture")
 
@@ -149,7 +149,7 @@ async def test_checkpoint_captures_git_context(temp_memories_dir, mock_context):
 @pytest.mark.asyncio
 async def test_checkpoint_supports_all_memory_types(temp_memories_dir, mock_git_context, mock_context):
     """Test all memory types: checkpoint, decision, learning, observation."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
 
     memory_types = ["checkpoint", "decision", "learning", "observation"]
 
@@ -187,7 +187,7 @@ async def test_checkpoint_supports_all_memory_types(temp_memories_dir, mock_git_
 @pytest.mark.asyncio
 async def test_checkpoint_handles_tags(temp_memories_dir, mock_git_context, mock_context):
     """Verify tags are stored as array with lowercase hyphenated format."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -216,7 +216,7 @@ async def test_checkpoint_handles_tags(temp_memories_dir, mock_git_context, mock
 @pytest.mark.asyncio
 async def test_checkpoint_returns_checkpoint_id(temp_memories_dir, mock_git_context, mock_context):
     """Verify checkpoint tool returns the generated checkpoint ID."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
         checkpoint_id = await checkpoint(ctx, "Test return value")
@@ -239,7 +239,7 @@ async def test_checkpoint_returns_checkpoint_id(temp_memories_dir, mock_git_cont
 @pytest.mark.asyncio
 async def test_checkpoint_file_is_pretty_printed(temp_memories_dir, mock_git_context, mock_context):
     """Verify JSON is formatted with indent=2 and sorted keys."""
-    from miller.tools.memory import checkpoint
+    from miller.tools.checkpoint import checkpoint
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
         await checkpoint(ctx, "Test formatting", tags=["test"])

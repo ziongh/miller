@@ -16,7 +16,9 @@ from typing import Any, Literal, Optional, Union
 from fastmcp import FastMCP
 
 from miller.logging_config import setup_logging
-from miller.tools.memory import checkpoint, plan, recall
+from miller.tools.checkpoint import checkpoint
+from miller.tools.plan import plan
+from miller.tools.recall import recall
 from miller.watcher import FileEvent, FileWatcher
 
 # Heavy imports (torch, sentence-transformers) are done in background task after handshake:

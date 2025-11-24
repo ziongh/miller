@@ -21,7 +21,8 @@ from unittest.mock import patch
 @pytest.mark.asyncio
 async def test_recall_returns_recent_first(temp_memories_dir, mock_git_context, mock_context):
     """Verify recall returns checkpoints in reverse chronological order."""
-    from miller.tools.memory import checkpoint, recall
+    from miller.tools.checkpoint import checkpoint
+    from miller.tools.recall import recall
 
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
@@ -47,7 +48,8 @@ async def test_recall_returns_recent_first(temp_memories_dir, mock_git_context, 
 @pytest.mark.asyncio
 async def test_recall_filters_by_type(temp_memories_dir, mock_git_context, mock_context):
     """Verify recall filters by memory type correctly."""
-    from miller.tools.memory import checkpoint, recall
+    from miller.tools.checkpoint import checkpoint
+    from miller.tools.recall import recall
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -69,7 +71,7 @@ async def test_recall_filters_by_type(temp_memories_dir, mock_git_context, mock_
 @pytest.mark.asyncio
 async def test_recall_filters_by_since_date(temp_memories_dir, mock_git_context, mock_context):
     """Verify recall respects 'since' date filter."""
-    from miller.tools.memory import recall
+    from miller.tools.recall import recall
 
     # Create checkpoints with different timestamps
     # We'll manually create files to control timestamps
@@ -111,7 +113,7 @@ async def test_recall_filters_by_since_date(temp_memories_dir, mock_git_context,
 @pytest.mark.asyncio
 async def test_recall_filters_by_until_date(temp_memories_dir, mock_git_context, mock_context):
     """Verify recall respects 'until' date filter."""
-    from miller.tools.memory import recall
+    from miller.tools.recall import recall
 
     # Create checkpoints with different timestamps
     today = datetime.now()
@@ -152,7 +154,8 @@ async def test_recall_filters_by_until_date(temp_memories_dir, mock_git_context,
 @pytest.mark.asyncio
 async def test_recall_respects_limit(temp_memories_dir, mock_git_context, mock_context):
     """Verify recall returns at most 'limit' results."""
-    from miller.tools.memory import checkpoint, recall
+    from miller.tools.checkpoint import checkpoint
+    from miller.tools.recall import recall
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -177,7 +180,7 @@ async def test_recall_respects_limit(temp_memories_dir, mock_git_context, mock_c
 @pytest.mark.asyncio
 async def test_recall_reads_julie_checkpoints(temp_memories_dir, mock_context):
     """Verify recall can read actual Julie checkpoint files."""
-    from miller.tools.memory import recall
+    from miller.tools.recall import recall
 
     # Copy an actual Julie checkpoint (from .memories/2025-11-18/180200_abd3.json)
     julie_checkpoint = {
@@ -216,7 +219,7 @@ async def test_recall_reads_julie_checkpoints(temp_memories_dir, mock_context):
 @pytest.mark.asyncio
 async def test_recall_handles_empty_memories(temp_memories_dir, mock_context):
     """Verify recall returns empty list when no checkpoints exist."""
-    from miller.tools.memory import recall
+    from miller.tools.recall import recall
     ctx = mock_context
     results = await recall(ctx, output_format="json", limit=10)
 

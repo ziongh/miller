@@ -20,7 +20,7 @@ from unittest.mock import patch
 @pytest.mark.asyncio
 async def test_plan_save_creates_file(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan save creates file in .memories/plans/plan_{slug}.json."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
         result = await plan(
@@ -45,7 +45,7 @@ async def test_plan_save_creates_file(temp_memories_dir, mock_git_context, mock_
 @pytest.mark.asyncio
 async def test_plan_generates_slug_from_title(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan generates correct slugs from titles."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
 
     test_cases = [
         ("Add Search", "plan_add-search.json"),
@@ -85,7 +85,7 @@ async def test_plan_generates_slug_from_title(temp_memories_dir, mock_git_contex
 @pytest.mark.asyncio
 async def test_plan_save_auto_activates_by_default(temp_memories_dir, mock_git_context, mock_context):
     """Verify new plan is activated automatically by default."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -110,7 +110,7 @@ async def test_plan_save_auto_activates_by_default(temp_memories_dir, mock_git_c
 @pytest.mark.asyncio
 async def test_plan_list_returns_all_plans(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan list returns all plans."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -132,7 +132,7 @@ async def test_plan_list_returns_all_plans(temp_memories_dir, mock_git_context, 
 @pytest.mark.asyncio
 async def test_plan_list_filters_by_status(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan list filters by status correctly."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -160,7 +160,7 @@ async def test_plan_list_filters_by_status(temp_memories_dir, mock_git_context, 
 @pytest.mark.asyncio
 async def test_plan_activate_deactivates_others(temp_memories_dir, mock_git_context, mock_context):
     """Verify activating a plan deactivates all others (single active plan)."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -186,7 +186,7 @@ async def test_plan_activate_deactivates_others(temp_memories_dir, mock_git_cont
 @pytest.mark.asyncio
 async def test_plan_update_modifies_content(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan update modifies content correctly."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -217,7 +217,7 @@ async def test_plan_update_modifies_content(temp_memories_dir, mock_git_context,
 @pytest.mark.asyncio
 async def test_plan_complete_sets_timestamp(temp_memories_dir, mock_git_context, mock_context):
     """Verify completing a plan sets completed_at timestamp."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -245,7 +245,7 @@ async def test_plan_complete_sets_timestamp(temp_memories_dir, mock_git_context,
 @pytest.mark.asyncio
 async def test_plan_get_retrieves_by_id(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan get retrieves correct plan by ID."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -270,7 +270,7 @@ async def test_plan_get_retrieves_by_id(temp_memories_dir, mock_git_context, moc
 @pytest.mark.asyncio
 async def test_plan_list_excludes_content_by_default(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan list excludes content field by default for token efficiency."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -294,7 +294,7 @@ async def test_plan_list_excludes_content_by_default(temp_memories_dir, mock_git
 @pytest.mark.asyncio
 async def test_plan_list_includes_content_when_requested(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan list includes content when include_content=True."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -312,7 +312,7 @@ async def test_plan_list_includes_content_when_requested(temp_memories_dir, mock
 @pytest.mark.asyncio
 async def test_plan_list_includes_task_counts(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan list includes task_count and completed_count."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
@@ -343,7 +343,7 @@ Implement feature X
 @pytest.mark.asyncio
 async def test_plan_list_summary_excludes_git(temp_memories_dir, mock_git_context, mock_context):
     """Verify plan list summary excludes git field to save tokens."""
-    from miller.tools.memory import plan
+    from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
 
