@@ -4,7 +4,12 @@ Fast semantic and text search tool implementation.
 Provides keyword, pattern, semantic, and hybrid search across indexed codebases.
 """
 
+import logging
 from typing import Any, Literal, Optional, Union
+
+from miller.tools.search_filters import apply_file_pattern_filter, apply_language_filter
+
+logger = logging.getLogger("miller.search")
 
 
 async def fast_search(
@@ -16,6 +21,8 @@ async def fast_search(
     rerank: bool = True,
     expand: bool = False,
     expand_limit: int = 5,
+    language: Optional[str] = None,
+    file_pattern: Optional[str] = None,
     # These are injected by server.py
     vector_store=None,
     storage=None,
@@ -152,6 +159,41 @@ async def fast_search(
 
         results = rerank_search_results(query, results, enabled=rerank)
 
+    # Apply language filter if specified
+    if language is not None:
+        results = apply_language_filter(results, language)
+
+    # Apply file pattern filter if specified
+    if file_pattern is not None:
+        results = apply_file_pattern_filter(results, file_pattern)
+
+    # Semantic fallback: when text search returns 0 results, try semantic
+    original_method = method
+    semantic_fallback_used = False
+    if not results and method == "text":
+        logger.info("🔄 Text search returned 0 results, attempting semantic fallback")
+        # Try semantic search as fallback
+        if workspace_vector_store is not None:
+            results = workspace_vector_store.search(query, method="semantic", limit=limit)
+        else:
+            results = vector_store.search(query, method="semantic", limit=limit)
+
+        # Hydrate semantic results
+        if results:
+            if workspace_storage is not None:
+                results = _hydrate_search_results(results, workspace_storage)
+            elif storage is not None:
+                results = _hydrate_search_results(results, storage)
+
+            # Apply filters to semantic results too
+            if language is not None:
+                results = apply_language_filter(results, language)
+            if file_pattern is not None:
+                results = apply_file_pattern_filter(results, file_pattern)
+
+            semantic_fallback_used = True
+            logger.info(f"✅ Semantic fallback found {len(results)} results")
+
     # Expand results with caller/callee context if requested
     # Use active_storage (workspace-specific or primary) for correct expansion
     if expand and active_storage is not None and results:
@@ -164,6 +206,7 @@ async def fast_search(
             "id": r.get("id"),  # Needed for tools that work with symbol IDs
             "name": r.get("name", ""),
             "kind": r.get("kind", ""),
+            "language": r.get("language", ""),  # Include language for filtering visibility
             "file_path": r.get("file_path", ""),
             "signature": r.get("signature"),
             "doc_comment": r.get("doc_comment"),
@@ -187,6 +230,10 @@ async def fast_search(
     # Apply output format
     if output_format == "text":
         result = _format_search_as_text(formatted, query=query)
+        # Add semantic fallback notice if used
+        if semantic_fallback_used and formatted:
+            fallback_notice = "🔄 Text search returned 0 results. Showing semantic matches instead.\n💡 Semantic search finds conceptually similar code even when exact terms don't match.\n\n"
+            result = fallback_notice + result
     elif output_format == "toon":
         from miller.toon_types import encode_toon
         result = encode_toon(formatted)

@@ -16,13 +16,13 @@ from pathlib import Path
 from ..embeddings import EmbeddingManager, VectorStore
 from ..ignore_patterns import (
     load_all_ignores,
-    load_millerignore,
     analyze_vendor_patterns,
     generate_millerignore,
 )
 from ..storage import StorageManager
 from . import hash_tracking
 from .index_stats import IndexStats
+from . import discovery
 
 # Get logger instance
 logger = logging.getLogger("miller.workspace")
@@ -110,66 +110,30 @@ class WorkspaceScanner:
         if miller_core is None:
             return []  # Can't detect languages without Rust core
 
-        # Check if we need to do smart vendor detection
-        millerignore_path = self.workspace_root / ".millerignore"
-        needs_vendor_detection = (
-            not self._millerignore_checked
-            and not millerignore_path.exists()
+        # Perform vendor detection on first run if .millerignore doesn't exist
+        indexable_files, has_files = discovery.walk_directory(
+            self.workspace_root,
+            self.ignore_spec,
+            perform_vendor_detection=not self._millerignore_checked,
         )
 
-        if needs_vendor_detection:
-            logger.info("🤖 No .millerignore found - scanning for vendor patterns...")
-
-        indexable_files = []
-        all_files_for_analysis = []  # For vendor detection
-
-        for file_path in self.workspace_root.rglob("*"):
-            # Skip directories and symlinks
-            if file_path.is_dir() or file_path.is_symlink():
-                continue
-
-            # Check if ignored
-            try:
-                relative_path = file_path.relative_to(self.workspace_root)
-            except ValueError:
-                continue  # Not in workspace
-
-            if self.ignore_spec.match_file(str(relative_path)):
-                continue  # Ignored by .gitignore or .millerignore
-
-            # Check if language is supported
-            language = miller_core.detect_language(str(file_path))
-            if language:
-                indexable_files.append(file_path)
-                if needs_vendor_detection:
-                    all_files_for_analysis.append(file_path)
-
         # Smart vendor detection on first run
-        if needs_vendor_detection:
+        if has_files and not self._millerignore_checked:
             self._millerignore_checked = True
-            detected_patterns = analyze_vendor_patterns(
-                all_files_for_analysis, self.workspace_root
-            )
-
-            if detected_patterns:
-                generate_millerignore(self.workspace_root, detected_patterns)
-                logger.info(
-                    f"✅ Generated .millerignore with {len(detected_patterns)} patterns"
-                )
-
-                # Reload ignore spec and re-filter files
-                self.ignore_spec = load_all_ignores(self.workspace_root)
-                indexable_files = [
-                    f for f in indexable_files
-                    if not self.ignore_spec.match_file(
-                        str(f.relative_to(self.workspace_root))
-                    )
-                ]
-                logger.info(
-                    f"📊 After vendor filtering: {len(indexable_files)} files to index"
-                )
-            else:
-                logger.info("✨ No vendor patterns detected - project looks clean!")
+            if not (self.workspace_root / ".millerignore").exists():
+                detected_patterns = analyze_vendor_patterns(indexable_files, self.workspace_root)
+                if detected_patterns:
+                    generate_millerignore(self.workspace_root, detected_patterns)
+                    logger.info(f"✅ Generated .millerignore with {len(detected_patterns)} patterns")
+                    # Reload and re-filter files
+                    self.ignore_spec = load_all_ignores(self.workspace_root)
+                    indexable_files = [
+                        f for f in indexable_files
+                        if not self.ignore_spec.match_file(str(f.relative_to(self.workspace_root)))
+                    ]
+                    logger.info(f"📊 After vendor filtering: {len(indexable_files)} files to index")
+                else:
+                    logger.info("✨ No vendor patterns detected - project looks clean!")
 
         return indexable_files
 
@@ -262,32 +226,7 @@ class WorkspaceScanner:
         Returns:
             Unix timestamp of the most recently modified file
         """
-        max_mtime = 0
-
-        # Quick scan of just supported code files
-        for file_path in self.workspace_root.rglob("*"):
-            if file_path.is_dir() or file_path.is_symlink():
-                continue
-
-            # Check if ignored
-            try:
-                relative_path = file_path.relative_to(self.workspace_root)
-            except ValueError:
-                continue
-
-            if self.ignore_spec.match_file(str(relative_path)):
-                continue
-
-            # Check if language is supported (only check code files)
-            if miller_core and miller_core.detect_language(str(file_path)):
-                try:
-                    mtime = int(file_path.stat().st_mtime)
-                    if mtime > max_mtime:
-                        max_mtime = mtime
-                except OSError:
-                    continue
-
-        return max_mtime
+        return discovery.get_max_file_mtime(self.workspace_root, self.ignore_spec)
 
     def _has_new_files(self, db_paths: set[str]) -> bool:
         """
@@ -299,28 +238,7 @@ class WorkspaceScanner:
         Returns:
             True if new files found, False otherwise
         """
-        for file_path in self.workspace_root.rglob("*"):
-            if file_path.is_dir() or file_path.is_symlink():
-                continue
-
-            try:
-                relative_path = file_path.relative_to(self.workspace_root)
-            except ValueError:
-                continue
-
-            # Convert to Unix-style path for comparison
-            rel_str = str(relative_path).replace("\\", "/")
-
-            if self.ignore_spec.match_file(rel_str):
-                continue
-
-            # Check if supported language and not in DB
-            if miller_core and miller_core.detect_language(str(file_path)):
-                if rel_str not in db_paths:
-                    logger.debug(f"   New file detected: {rel_str}")
-                    return True
-
-        return False
+        return discovery.has_new_files(self.workspace_root, self.ignore_spec, db_paths)
 
     async def index_workspace(self) -> dict[str, int]:
         """

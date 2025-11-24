@@ -5,9 +5,8 @@ Manages vector storage, FTS indexing, and multi-method search (text, pattern, se
 """
 
 import logging
+import shutil
 import tempfile
-
-logger = logging.getLogger("miller.vector_store")
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -16,9 +15,19 @@ import numpy as np
 import pyarrow as pa
 
 from miller.embeddings.search import SearchMethod, detect_search_method
+from miller.embeddings.fts_index import create_fts_index
+from miller.embeddings.search_methods import (
+    search_pattern,
+    search_text,
+    search_semantic,
+    search_hybrid,
+)
+from miller.embeddings.search_enhancements import apply_search_enhancements
 
 if TYPE_CHECKING:
     from miller.embeddings.manager import EmbeddingManager
+
+logger = logging.getLogger("miller.vector_store")
 
 
 class VectorStore:
@@ -96,84 +105,10 @@ class VectorStore:
             self._table = None
 
     def _create_fts_index(self, max_retries: int = 3):
-        """
-        Create Tantivy FTS index with whitespace tokenizer on code_pattern field.
-
-        The whitespace tokenizer preserves special chars (: < > [ ] ( ) { })
-        which is critical for code idiom search. The code_pattern field contains
-        signature + name + kind, so it's suitable for general search too.
-
-        Note: We use whitespace tokenizer instead of stemming because:
-        - Code idioms need exact character matching (: < > [ ])
-        - Whitespace tokenization is sufficient for code search
-        - Pattern field already contains name/signature/kind, so covers general search
-
-        Args:
-            max_retries: Number of retry attempts for Windows file locking issues.
-                         Tantivy has a known race condition on Windows where file
-                         operations can fail with PermissionDenied. Usually succeeds
-                         on retry. See: https://github.com/quickwit-oss/tantivy/issues/587
-        """
-        import sys
-        import time
-
-        if self._table is None:
-            return
-
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                # Create single FTS index with whitespace tokenizer
-                # This supports both pattern search (: BaseClass) and general search (function names)
-                self._table.create_fts_index(
-                    ["code_pattern"],  # Pattern field (contains signature + name + kind)
-                    use_tantivy=True,  # Enable Tantivy FTS
-                    base_tokenizer="whitespace",  # Whitespace only (preserves : < > [ ] ( ) { })
-                    with_position=True,  # Enable phrase search
-                    replace=True,  # Replace existing index
-                )
-                self._fts_index_created = True
-                self._pattern_index_created = True  # Same index serves both purposes
-                if attempt > 0:
-                    logger.info(f"FTS index created successfully on retry {attempt + 1}")
-                else:
-                    logger.debug("FTS index created successfully on code_pattern field")
-                return  # Success!
-
-            except Exception as e:
-                last_error = e
-                error_str = str(e)
-
-                # Check if this is a retryable Windows error
-                # Tantivy has known race conditions on Windows that cause transient failures:
-                # 1. PermissionDenied (code 5) - file locking race condition
-                # 2. "index writer was killed" - thread panic, often from I/O race
-                # See: https://github.com/quickwit-oss/tantivy/issues/587
-                is_windows_transient = (
-                    "PermissionDenied" in error_str
-                    or "Access is denied" in error_str
-                    or "index writer was killed" in error_str
-                    or "worker thread encountered an error" in error_str
-                    or (hasattr(e, "errno") and e.errno == 5)
-                )
-
-                if is_windows_transient and sys.platform == "win32" and attempt < max_retries - 1:
-                    # Exponential backoff: 100ms, 200ms, 400ms...
-                    delay = 0.1 * (2 ** attempt)
-                    logger.debug(
-                        f"FTS index creation hit Windows issue (attempt {attempt + 1}/{max_retries}), "
-                        f"retrying in {delay:.1f}s: {error_str[:100]}"
-                    )
-                    time.sleep(delay)
-                    continue
-
-                # Non-retryable error or max retries exceeded
-                break
-
-        # All retries failed or non-retryable error
-        logger.warning(f"FTS index creation failed: {last_error}", exc_info=True)
-        self._fts_index_created = False
-        self._pattern_index_created = False
+        """Create FTS index using helper function from fts_index module."""
+        fts_created, pattern_created = create_fts_index(self._table, max_retries)
+        self._fts_index_created = fts_created
+        self._pattern_index_created = pattern_created
 
     def add_symbols(self, symbols: list[Any], vectors: np.ndarray) -> int:
         """
@@ -275,413 +210,32 @@ class VectorStore:
 
         # Route to appropriate search method
         if method == "pattern":
-            return self._search_pattern(query, limit)
+            return search_pattern(self._table, self._pattern_index_created, query, limit)
         elif method == "text":
             # OPTIMIZATION: Route text search to hybrid instead of whitespace-FTS
             # Reason: Our FTS index uses whitespace tokenizer (for pattern search),
             # which can't do stemming/prefix matching. Hybrid search (semantic + FTS)
             # provides much better text search quality.
             # Users should use "pattern" for code idioms, "text"/"auto"/"hybrid" for general search.
-            return self._search_hybrid(query, limit)
-        elif method == "semantic":
-            return self._search_semantic(query, limit)
-        else:  # hybrid
-            return self._search_hybrid(query, limit)
-
-    def _search_pattern(self, query: str, limit: int) -> list[dict]:
-        """
-        Pattern search using whitespace-tokenized FTS.
-
-        Designed for code idiom search (: < > [ ] ( ) { }).
-        Uses whitespace tokenizer which preserves all special characters.
-
-        Args:
-            query: Pattern query (e.g., ": BaseClass", "ILogger<", "[Fact]")
-            limit: Maximum results
-
-        Returns:
-            List of matching symbols with normalized scores (0.0-1.0)
-        """
-        if not self._pattern_index_created:
-            # Pattern index not available, return empty
-            return []
-
-        try:
-            # Auto-wrap in quotes for phrase search (handles special chars safely)
-            # Tantivy requires phrase search for queries with special chars
-            search_query = f'"{query}"' if not query.startswith('"') else query
-
-            # Use FTS search - LanceDB will use the whitespace-tokenized index on code_pattern
-            results = self._table.search(search_query, query_type="fts").limit(limit).to_list()
-
-            # Normalize BM25 scores to 0.0-1.0 range
-            if results:
-                max_score = max(r.get("_score", 0.0) for r in results)
-                for r in results:
-                    raw_score = r.get("_score", 0.0)
-                    r["score"] = raw_score / max_score if max_score > 0 else 0.0
-
-            return results
-
-        except (ValueError, Exception) as e:
-            # Tantivy might reject malformed queries
-            # Return empty results instead of crashing (safe failure mode)
-            logger.warning(f"Pattern search failed for query '{query}': {e}")
-            return []
-
-    def _search_text(self, query: str, limit: int) -> list[dict]:
-        """
-        Text search using Tantivy FTS with BM25 scoring + quality enhancements.
-
-        Features:
-        - BM25 relevance ranking (not just 1.0)
-        - Whitespace tokenization (preserves CamelCase, no stemming currently)
-        - Phrase search support (quoted strings)
-        - Safe from SQL injection (Tantivy rejects invalid queries)
-        - Field boosting (name > signature > doc)
-        - Match position boosting (exact > prefix > suffix)
-        - Symbol kind weighting (functions/classes > variables)
-        - Quality filtering (removes noise)
-
-        Note: Currently using whitespace tokenizer (shared with pattern search).
-        For better stemming support, need dual FTS indexes (TODO).
-        """
-        if not self._fts_index_created:
-            # Fallback to LIKE queries if FTS not available
-            # (Older LanceDB versions or index creation failed)
-            return self._search_text_fallback(query, limit)
-
-        try:
-            # Use Tantivy FTS with BM25 scoring (with original query - no preprocessing)
-            # Over-fetch to allow kind weighting to re-rank before truncating
-            # Min of 50 ensures high-value symbols (functions) aren't cut before boosting
-            fetch_limit = max(limit * 3, 50)
-            results = self._table.search(query, query_type="fts").limit(fetch_limit).to_list()
-
-            # Normalize BM25 scores to 0.0-1.0 range (initial normalization)
-            # LanceDB returns _score field with BM25 values
-            if results:
-                max_score = max(r.get("_score", 0.0) for r in results)
-                for r in results:
-                    # Normalize: divide by max score
-                    raw_score = r.get("_score", 0.0)
-                    r["score"] = raw_score / max_score if max_score > 0 else 0.0
-
-            # Apply search quality enhancements (boosting, weighting, filtering)
-            results = self._apply_search_enhancements(results, query, method="text")
-
-            # Return top results after enhancement
-            return results[:limit]
-
-        except (ValueError, Exception) as e:
-            # Tantivy raises ValueError for malformed queries (e.g., SQL injection attempts)
-            # Return empty results instead of crashing (safe failure mode)
-            logger.warning(f"Text search failed for query '{query}': {e}")
-            return []
-
-    def _search_text_fallback(self, query: str, limit: int) -> list[dict]:
-        """
-        Fallback text search using LIKE queries (for older LanceDB versions).
-
-        WARNING: Less efficient, no stemming, no BM25 ranking.
-        """
-        # Use parameterized query to avoid SQL injection
-        # Note: LanceDB's where() still uses string formatting for SQL-like syntax
-        # This is a limitation of the current API
-        results = (
-            self._table.search()
-            .where(
-                f"name LIKE '%{query}%' OR signature LIKE '%{query}%' OR doc_comment LIKE '%{query}%'"
+            return search_hybrid(
+                self._table,
+                self._fts_index_created,
+                self._embeddings,
+                query,
+                limit,
+                self._apply_search_enhancements,
             )
-            .limit(limit)
-            .to_list()
-        )
-
-        # Add score (simple match = 1.0)
-        for r in results:
-            r["score"] = 1.0
-
-        return results
-
-    def _search_semantic(self, query: str, limit: int) -> list[dict]:
-        """
-        Semantic search using vector similarity.
-
-        Requires embedding the query first.
-        """
-        # Get or create embedding manager
-        if self._embeddings is None:
-            # Fallback: create temporary embedding manager (lazy initialization)
-            # This is less efficient but works if VectorStore was created without embeddings
-            from miller.embeddings.manager import EmbeddingManager
-
-            self._embeddings = EmbeddingManager()
-
-        query_vec = self._embeddings.embed_query(query)
-
-        # Vector search
-        results = self._table.search(query_vec.tolist()).limit(limit).to_list()
-
-        # LanceDB returns _distance - convert to similarity score
-        for r in results:
-            # Distance is in results, convert to similarity (1 - distance)
-            # For L2 normalized vectors, distance ≈ 2*(1 - cosine_similarity)
-            if "_distance" in r:
-                r["score"] = 1.0 - (r["_distance"] / 2.0)
-            else:
-                r["score"] = 0.5  # Default
-
-        return results
-
-    def _search_hybrid(self, query: str, limit: int) -> list[dict]:
-        """
-        Hybrid search: combine text (FTS) and semantic (vector) with RRF fusion.
-
-        Uses LanceDB's native Reciprocal Rank Fusion for optimal ranking.
-        Falls back to manual merging if hybrid search not available.
-        """
-        if not self._fts_index_created:
-            # Fall back to manual merging if FTS not available
-            return self._search_hybrid_fallback(query, limit)
-
-        try:
-            # Use LanceDB's native hybrid search with RRF
-            # Need to embed query for vector component
-            if self._embeddings is None:
-                # Fallback: create temporary embedding manager (lazy initialization)
-                from miller.embeddings.manager import EmbeddingManager
-
-                self._embeddings = EmbeddingManager()
-
-            self._embeddings.embed_query(query)
-
-            # Over-fetch to allow kind weighting to re-rank before truncating
-            # Without this, high-value symbols (functions, classes) might be cut
-            # before they can be boosted above low-value symbols (imports)
-            fetch_limit = max(limit * 3, limit + 50)
-            results = self._table.search(query, query_type="hybrid").limit(fetch_limit).to_list()
-
-            # Normalize scores to 0.0-1.0 range
-            if results:
-                max_score = max(r.get("_score", 0.0) for r in results)
-                for r in results:
-                    raw_score = r.get("_score", 0.0)
-                    r["score"] = raw_score / max_score if max_score > 0 else 0.0
-
-            # Apply kind weighting, field boosting, etc.
-            results = self._apply_search_enhancements(results, query, method="hybrid")
-
-            # Now truncate to requested limit (after re-ranking)
-            return results[:limit]
-
-        except Exception as e:
-            # Hybrid search might not be supported in this LanceDB version
-            # Fall back to manual merging
-            logger.debug(f"Native hybrid search failed, using fallback: {e}")
-            return self._search_hybrid_fallback(query, limit)
-
-    def _search_hybrid_fallback(self, query: str, limit: int) -> list[dict]:
-        """
-        Fallback hybrid search: manual merging of text and semantic results.
-
-        Used when LanceDB's native hybrid search is not available.
-        """
-        # Get results from both methods
-        text_results = self._search_text(query, limit)
-        semantic_results = self._search_semantic(query, limit)
-
-        # Merge and deduplicate by ID
-        seen = set()
-        merged = []
-
-        for r in semantic_results + text_results:
-            if r["id"] not in seen:
-                seen.add(r["id"])
-                merged.append(r)
-
-        # Sort by score descending
-        merged.sort(key=lambda x: x.get("score", 0), reverse=True)
-
-        return merged[:limit]
-
-    # === SEARCH QUALITY ENHANCEMENTS ===
-    # Methods below improve search relevance and ranking
-
-    def _preprocess_query(self, query: str, method: str) -> str:
-        """
-        Preprocess query for better search results.
-
-        Enhancements:
-        - CamelCase splitting: "UserService" → "User Service" (better tokenization)
-        - Noise word removal for text search (optional, currently disabled)
-        - Whitespace normalization
-
-        Args:
-            query: Original query
-            method: Search method ("text", "pattern", "semantic", "hybrid")
-
-        Returns:
-            Preprocessed query
-        """
-        import re
-
-        original_query = query
-        query = query.strip()
-
-        if not query:
-            return original_query
-
-        # For text/hybrid search: handle CamelCase
-        if method in ["text", "hybrid"]:
-            # Check if query looks like CamelCase (e.g., "UserService", "parseJSON")
-            # Heuristic: has uppercase letters that aren't at the start
-            if any(c.isupper() for c in query[1:]) and not " " in query:
-                # Split on uppercase letters: "UserService" → "User Service"
-                # This helps tokenizer match "user" and "service" separately
-                query_split = re.sub(r'([A-Z])', r' \1', query).strip()
-                # Use split version if it's different and non-empty
-                if query_split != query and query_split:
-                    query = query_split
-
-        return query
-
-    def _boost_by_field_match(self, result: dict, query: str) -> float:
-        """
-        Boost score based on which field matched.
-
-        Relevance hierarchy:
-        - Name match: 3.0x boost (most important - symbol name is primary identifier)
-        - Signature match: 1.5x boost (important - shows usage)
-        - Doc comment match: 1.0x boost (base - contextual info)
-
-        Args:
-            result: Search result dict
-            query: Search query (lowercased for matching)
-
-        Returns:
-            Boosted score (0.0-1.0 after normalization)
-        """
-        base_score = result.get("score", 0.0)
-        query_lower = query.lower().strip()
-
-        if not query_lower:
-            return base_score
-
-        # Check for partial match in each field
-        name = result.get("name", "").lower()
-        signature = (result.get("signature") or "").lower()
-        doc_comment = (result.get("doc_comment") or "").lower()
-
-        # Apply boosts based on match location
-        if query_lower in name:
-            return min(base_score * 3.0, 1.0)  # Name match = highest priority
-        elif query_lower in signature:
-            return min(base_score * 1.5, 1.0)  # Signature match = medium priority
-        elif query_lower in doc_comment:
-            return base_score * 1.0  # Doc match = base priority
-        else:
-            # No obvious match (might be stemmed or fuzzy)
-            return base_score
-
-    def _boost_by_match_position(self, result: dict, query: str) -> float:
-        """
-        Boost score based on match position (exact > prefix > suffix > substring).
-
-        Match type hierarchy:
-        - Exact match: 3.0x boost (query == name)
-        - Prefix match: 2.0x boost (name starts with query)
-        - Suffix match: 1.5x boost (name ends with query)
-        - Substring match: 1.0x boost (query in name)
-
-        Args:
-            result: Search result dict
-            query: Search query
-
-        Returns:
-            Boosted score (0.0-1.0 after normalization)
-        """
-        base_score = result.get("score", 0.0)
-        query_lower = query.lower().strip()
-        name = result.get("name", "").lower()
-
-        if not query_lower or not name:
-            return base_score
-
-        # Check match type (in order of specificity)
-        if name == query_lower:
-            return min(base_score * 3.0, 1.0)  # Exact match = huge boost
-        elif name.startswith(query_lower):
-            return min(base_score * 2.0, 1.0)  # Prefix match = strong boost
-        elif name.endswith(query_lower):
-            return min(base_score * 1.5, 1.0)  # Suffix match = moderate boost
-        elif query_lower in name:
-            return base_score * 1.0  # Substring = base score
-        else:
-            # Check signature/doc for matches
-            return self._boost_by_field_match(result, query)
-
-    def _apply_kind_weighting(self, result: dict) -> float:
-        """
-        Apply symbol kind weighting to boost commonly-searched symbol types.
-
-        Rationale:
-        - Functions/Classes are usually search targets (user wants to call/extend them)
-        - Variables/Fields are less often the primary search target
-        - This aligns ranking with developer intent
-
-        Kind weights:
-        - Function: 1.5x (most commonly searched)
-        - Class: 1.5x
-        - Method: 1.3x
-        - Interface/Type: 1.2x
-        - Variable/Field: 0.8x (less commonly the target)
-        - Constant: 0.9x
-
-        Args:
-            result: Search result dict
-
-        Returns:
-            Weighted score (0.0-1.0 after normalization)
-        """
-        KIND_WEIGHTS = {
-            "Function": 1.5,
-            "Class": 1.5,
-            "Method": 1.3,
-            "Interface": 1.2,
-            "Type": 1.2,
-            "Struct": 1.2,
-            "Enum": 1.1,
-            "Variable": 0.8,
-            "Field": 0.8,
-            "Constant": 0.9,
-            "Parameter": 0.7,
-            # Deboost noise - you want definitions, not these
-            "Import": 0.4,
-            "Namespace": 0.6,
-        }
-
-        base_score = result.get("score", 0.0)
-        kind = result.get("kind", "")
-
-        # Normalize kind to title case (data has "function", dict has "Function")
-        weight = KIND_WEIGHTS.get(kind.title(), 1.0)  # Default 1.0 for unknown kinds
-        return min(base_score * weight, 1.0)  # Clamp to 1.0
-
-    def _filter_low_quality_results(self, results: list[dict], min_score: float = 0.05) -> list[dict]:
-        """
-        Filter out very low-quality results (noise reduction).
-
-        Low-scoring results are unlikely to be useful and waste tokens.
-        Default threshold: 0.05 (5% of max score) - removes obvious noise.
-
-        Args:
-            results: Search results with normalized scores (0.0-1.0)
-            min_score: Minimum score threshold (default: 0.05)
-
-        Returns:
-            Filtered results (only those above threshold)
-        """
-        return [r for r in results if r.get("score", 0.0) >= min_score]
+        elif method == "semantic":
+            return search_semantic(self._table, self._embeddings, query, limit)
+        else:  # hybrid
+            return search_hybrid(
+                self._table,
+                self._fts_index_created,
+                self._embeddings,
+                query,
+                limit,
+                self._apply_search_enhancements,
+            )
 
     def _apply_search_enhancements(self, results: list[dict], query: str, method: str) -> list[dict]:
         """
@@ -702,41 +256,32 @@ class VectorStore:
         Returns:
             Enhanced and re-ranked results
         """
-        if not results:
-            return results
+        return apply_search_enhancements(results, query, method)
 
-        # Preprocess query (same preprocessing as search)
-        processed_query = self._preprocess_query(query, method)
+    # Backwards compatibility wrappers for tests that call internal methods directly
+    def _search_pattern(self, query: str, limit: int) -> list[dict]:
+        """Pattern search wrapper for backwards compatibility."""
+        return search_pattern(self._table, self._pattern_index_created, query, limit)
 
-        # Apply enhancements to each result
-        for result in results:
-            # Start with base score
-            score = result.get("score", 0.0)
+    def _search_text(self, query: str, limit: int) -> list[dict]:
+        """Text search wrapper for backwards compatibility."""
+        from miller.embeddings.search_methods import search_text_fallback
+        return search_text_fallback(self._table, query, limit)
 
-            # Apply match position boost (exact > prefix > suffix)
-            score = self._boost_by_match_position(result, processed_query)
+    def _search_semantic(self, query: str, limit: int) -> list[dict]:
+        """Semantic search wrapper for backwards compatibility."""
+        return search_semantic(self._table, self._embeddings, query, limit)
 
-            # Apply symbol kind weighting
-            result["score"] = score  # Update for kind weighting
-            score = self._apply_kind_weighting(result)
-
-            # Store final enhanced score
-            result["score"] = score
-
-        # Re-normalize scores to 0.0-1.0 range after boosting
-        if results:
-            max_score = max(r.get("score", 0.0) for r in results)
-            if max_score > 0:
-                for r in results:
-                    r["score"] = r["score"] / max_score
-
-        # Filter low-quality results (remove noise)
-        results = self._filter_low_quality_results(results, min_score=0.05)
-
-        # Re-sort by enhanced scores
-        results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
-
-        return results
+    def _search_hybrid(self, query: str, limit: int) -> list[dict]:
+        """Hybrid search wrapper for backwards compatibility."""
+        return search_hybrid(
+            self._table,
+            self._fts_index_created,
+            self._embeddings,
+            query,
+            limit,
+            self._apply_search_enhancements,
+        )
 
     def update_file_symbols(
         self, file_path: str, symbols: list[Any], vectors: np.ndarray, rebuild_index: bool = True
@@ -818,9 +363,11 @@ class VectorStore:
     def close(self):
         """Close database and cleanup temp directories."""
         if self._temp_dir:
-            import shutil
-
             shutil.rmtree(self._temp_dir, ignore_errors=True)
+
+    def __del__(self):
+        """Destructor to ensure cleanup if close() was not called."""
+        self.close()
 
     def __enter__(self):
         """Context manager support."""

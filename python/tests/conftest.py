@@ -130,48 +130,49 @@ def clean_server_storage():
     tests don't interfere with each other by using fresh in-memory databases.
     """
     import miller.server as server
+    from miller import server_state
     from miller.storage import StorageManager
     from miller.embeddings import VectorStore
 
     # Close old connections if they exist
-    if hasattr(server.storage, 'conn'):
-        server.storage.conn.close()
-    if hasattr(server.vector_store, 'close'):
+    if hasattr(server_state.storage, 'conn'):
+        server_state.storage.conn.close()
+    if hasattr(server_state.vector_store, 'close'):
         try:
-            server.vector_store.close()
+            server_state.vector_store.close()
         except:
             pass
 
     # Replace global instances with fresh in-memory databases
-    server.storage = StorageManager(db_path=":memory:")
-    server.vector_store = VectorStore(db_path=":memory:")
+    server_state.storage = StorageManager(db_path=":memory:")
+    server_state.vector_store = VectorStore(db_path=":memory:")
 
     # Initialize embeddings manager if not already initialized (expensive operation)
-    if server.embeddings is None:
+    if server_state.embeddings is None:
         from miller.embeddings import EmbeddingManager
-        server.embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+        server_state.embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
 
     # Initialize scanner for tests (only if WorkspaceScanner is available)
     try:
         from miller.workspace import WorkspaceScanner
-        server.scanner = WorkspaceScanner(
+        server_state.scanner = WorkspaceScanner(
             workspace_root=Path.cwd(),
-            storage=server.storage,
-            embeddings=server.embeddings,
-            vector_store=server.vector_store
+            storage=server_state.storage,
+            embeddings=server_state.embeddings,
+            vector_store=server_state.vector_store
         )
     except (ImportError, ModuleNotFoundError):
         # WorkspaceScanner not yet available, skip initialization
-        server.scanner = None
+        server_state.scanner = None
 
     yield
 
     # Cleanup: close connections
-    if hasattr(server.storage, 'conn'):
-        server.storage.conn.close()
-    if hasattr(server.vector_store, 'close'):
+    if hasattr(server_state.storage, 'conn'):
+        server_state.storage.conn.close()
+    if hasattr(server_state.vector_store, 'close'):
         try:
-            server.vector_store.close()
+            server_state.vector_store.close()
         except:
             pass
 

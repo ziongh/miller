@@ -124,7 +124,7 @@ async def test_checkpoint_captures_git_context(temp_memories_dir, mock_context):
         ]
     }
 
-    with patch('miller.memory_utils.get_git_context', return_value=mock_git):
+    with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git):
         ctx = mock_context
         checkpoint_id = await checkpoint(ctx, "Test git capture")
 
