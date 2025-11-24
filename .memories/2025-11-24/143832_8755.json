@@ -1,0 +1,43 @@
+{
+  "description": "Completed Tier 3 feature ports from Julie: semantic fallback when text search returns 0 results, language filter parameter, file_pattern (glob) filter parameter. Added 16 new tests for filters. 706 tests passing, coverage at 78.80%.",
+  "git": {
+    "branch": "main",
+    "commit": "a635220",
+    "dirty": true,
+    "files_changed": [
+      ".memories/plans/plan_test-plan.json",
+      "python/miller/embeddings/vector_store.py",
+      "python/miller/ignore_patterns.py",
+      "python/miller/server.py",
+      "python/miller/storage.py",
+      "python/miller/tools/search.py",
+      "python/miller/workspace/scanner.py",
+      "python/tests/conftest.py",
+      "python/tests/test_checkpoint.py",
+      ".memories/2025-11-24/120551_d6c7.json",
+      ".memories/2025-11-24/135457_b696.json",
+      ".memories/2025-11-24/142556_4cc4.json",
+      ".memories/plans/plan_miller-deep-review-fixes.json",
+      "python/miller/embeddings/fts_index.py",
+      "python/miller/embeddings/search_enhancements.py",
+      "python/miller/embeddings/search_methods.py",
+      "python/miller/ignore_defaults.py",
+      "python/miller/lifecycle.py",
+      "python/miller/server_state.py",
+      "python/miller/storage/",
+      "python/miller/tools_wrappers.py",
+      "python/miller/workspace/discovery.py",
+      "python/tests/test_search_filters.py"
+    ]
+  },
+  "id": "checkpoint_3256ae7b_955a62",
+  "tags": [
+    "features",
+    "search",
+    "filters",
+    "semantic-fallback",
+    "tdd"
+  ],
+  "timestamp": 1764016712,
+  "type": "checkpoint"
+}

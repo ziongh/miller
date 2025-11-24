@@ -1,0 +1,25 @@
+{
+  "description": "Committed and pushed refactoring + search filter features. 23 files changed: split 5 oversized modules (storage, vector_store, ignore_patterns, scanner, search), added language filter, file_pattern filter, and semantic fallback. 706 tests pass, all files under 500 lines.",
+  "git": {
+    "branch": "main",
+    "commit": "e1a759f",
+    "dirty": true,
+    "files_changed": [
+      ".memories/plans/plan_test-plan.json",
+      ".memories/2025-11-24/120551_d6c7.json",
+      ".memories/2025-11-24/135457_b696.json",
+      ".memories/2025-11-24/142556_4cc4.json",
+      ".memories/2025-11-24/143832_8755.json",
+      ".memories/plans/plan_miller-deep-review-fixes.json"
+    ]
+  },
+  "id": "checkpoint_3d6125ac_506ecc",
+  "tags": [
+    "commit",
+    "refactoring",
+    "search-filters",
+    "milestone"
+  ],
+  "timestamp": 1764017426,
+  "type": "checkpoint"
+}

@@ -1,0 +1,28 @@
+{
+  "description": "Rewrote Miller instructions using Julie's behavioral adoption patterns - added mandatory session memory system, visual markers (\u2705/\u274c), numbered workflow steps, stronger emotional language, \"why this matters\" explanations, and Key Principles section. Instructions now match Julie's proven pattern for getting agents to use MCP tools proactively.",
+  "git": {
+    "branch": "main",
+    "commit": "3f7c495",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/embeddings/vector_store.py",
+      "python/miller/instructions.md",
+      "python/miller/server.py",
+      "python/miller/workspace/scanner.py",
+      "python/tests/test_embeddings.py",
+      "python/tests/test_workspace.py",
+      ".julie/",
+      ".julieignore",
+      "python/tests/test_watcher_optimization.py"
+    ]
+  },
+  "id": "decision_557d5849_8e3e08",
+  "tags": [
+    "instructions",
+    "behavioral-adoption",
+    "mcp",
+    "ux"
+  ],
+  "timestamp": 1764007551,
+  "type": "decision"
+}
