@@ -612,3 +612,187 @@ class TestPerformance:
         assert len(results) > 0
         # Generous timeout for CI runners which can be slow
         assert elapsed < 10.0, f"Search took {elapsed:.2f}s (expected <10s on CI)"
+
+
+class TestFTSRetryMechanism:
+    """Test FTS index creation retry mechanism for Windows issues.
+
+    Tantivy has known issues on Windows that cause transient failures:
+    1. PermissionDenied - file locking race condition
+    2. "index writer was killed" - thread panic from I/O race
+    The _create_fts_index method implements retry logic with backoff.
+    See: https://github.com/quickwit-oss/tantivy/issues/587
+    """
+
+    def test_fts_retry_succeeds_on_permission_error(self):
+        """Test that FTS index creation retries on permission errors."""
+        from unittest.mock import patch, MagicMock
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = "def hello(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        # Track call count
+        call_count = 0
+        original_create_fts_index = store._table.create_fts_index
+
+        def mock_create_fts_index(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call fails with Windows-style permission error
+                raise ValueError(
+                    "Failed to open file for write: 'IoError { io_error: Os { code: 5, "
+                    "kind: PermissionDenied, message: \"Access is denied.\" }'"
+                )
+            # Subsequent calls succeed
+            return original_create_fts_index(*args, **kwargs)
+
+        # Patch sys.platform to simulate Windows
+        with patch("sys.platform", "win32"):
+            store._table.create_fts_index = mock_create_fts_index
+            store._fts_index_created = False
+
+            # This should retry and succeed
+            store._create_fts_index(max_retries=3)
+
+        # Verify retry happened
+        assert call_count == 2, f"Expected 2 calls (1 fail + 1 success), got {call_count}"
+        assert store._fts_index_created is True
+
+    def test_fts_retry_succeeds_on_index_writer_killed(self):
+        """Test that FTS index creation retries on Tantivy thread panic errors."""
+        from unittest.mock import patch
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = "def hello(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        call_count = 0
+        original_create_fts_index = store._table.create_fts_index
+
+        def mock_create_fts_index(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call fails with Tantivy thread panic
+                raise RuntimeError(
+                    "An error occurred in a thread: 'An index writer was killed.. "
+                    "A worker thread encountered an error (io::Error most likely) or panicked.'"
+                )
+            return original_create_fts_index(*args, **kwargs)
+
+        with patch("sys.platform", "win32"):
+            store._table.create_fts_index = mock_create_fts_index
+            store._fts_index_created = False
+
+            store._create_fts_index(max_retries=3)
+
+        assert call_count == 2, f"Expected 2 calls (1 fail + 1 success), got {call_count}"
+        assert store._fts_index_created is True
+
+    def test_fts_gives_up_after_max_retries(self):
+        """Test that FTS index creation gives up after max retries."""
+        from unittest.mock import patch
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = "def hello(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        call_count = 0
+
+        def always_fail(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("PermissionDenied: Access is denied.")
+
+        with patch("sys.platform", "win32"):
+            store._table.create_fts_index = always_fail
+            store._fts_index_created = False
+
+            # Should try max_retries times and then give up
+            store._create_fts_index(max_retries=3)
+
+        assert call_count == 3, f"Expected 3 retry attempts, got {call_count}"
+        assert store._fts_index_created is False
+
+    def test_fts_no_retry_on_non_permission_errors(self):
+        """Test that non-permission errors don't trigger retry."""
+        from unittest.mock import patch
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = "def hello(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        call_count = 0
+
+        def fail_with_other_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("Some other error unrelated to permissions")
+
+        with patch("sys.platform", "win32"):
+            store._table.create_fts_index = fail_with_other_error
+            store._fts_index_created = False
+
+            store._create_fts_index(max_retries=3)
+
+        # Should only try once since it's not a permission error
+        assert call_count == 1, f"Expected 1 call (no retry for non-permission error), got {call_count}"
+        assert store._fts_index_created is False
+
+    def test_fts_no_retry_on_non_windows(self):
+        """Test that permission errors don't trigger retry on non-Windows."""
+        from unittest.mock import patch
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+        code = "def hello(): pass"
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+
+        store = VectorStore(db_path=":memory:")
+        store.add_symbols(result.symbols, vectors)
+
+        call_count = 0
+
+        def fail_with_permission_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("PermissionDenied: Access is denied.")
+
+        # On Linux/macOS, permission errors are likely real issues, not race conditions
+        with patch("sys.platform", "linux"):
+            store._table.create_fts_index = fail_with_permission_error
+            store._fts_index_created = False
+
+            store._create_fts_index(max_retries=3)
+
+        # Should only try once on non-Windows
+        assert call_count == 1, f"Expected 1 call (no retry on Linux), got {call_count}"
+        assert store._fts_index_created is False
