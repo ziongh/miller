@@ -744,6 +744,28 @@ class VectorStore:
         else:
             logger.warning("FTS index rebuild failed - text search may be degraded")
 
+    def delete_files_batch(self, file_paths: list[str]) -> int:
+        """
+        Delete all vectors for a batch of files.
+
+        Use this before add_symbols when updating files to prevent stale vectors.
+
+        Args:
+            file_paths: List of file paths to delete vectors for
+
+        Returns:
+            Number of files processed (not individual vectors deleted)
+        """
+        if self._table is None or not file_paths:
+            return 0
+
+        # Build OR condition for all file paths
+        # LanceDB delete uses SQL-like WHERE syntax
+        conditions = " OR ".join(f"file_path = '{fp}'" for fp in file_paths)
+        self._table.delete(conditions)
+
+        return len(file_paths)
+
     def close(self):
         """Close database and cleanup temp directories."""
         if self._temp_dir:

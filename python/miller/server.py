@@ -158,12 +158,15 @@ async def lifespan(_app):
                 )
 
                 # Compute transitive closure for fast impact analysis
+                # Run in thread pool to avoid blocking the event loop (O(V·E) BFS)
                 import time
                 from miller.closure import compute_transitive_closure
 
                 logger.info("🔗 Computing transitive closure for impact analysis...")
                 closure_start = time.time()
-                closure_count = compute_transitive_closure(storage, max_depth=10)
+                closure_count = await asyncio.to_thread(
+                    compute_transitive_closure, storage, max_depth=10
+                )
                 closure_time = (time.time() - closure_start) * 1000
                 logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
             else:
@@ -229,6 +232,26 @@ from miller.tools.explore_wrapper import fast_explore as fast_explore_impl
 
 
 # MCP Tool wrappers (register with @mcp.tool() and delegate to implementations)
+
+# Readiness check message for tools called before initialization completes
+_NOT_READY_MSG = "⏳ Miller is still initializing. Please wait a moment and try again."
+
+
+def _check_ready(require_vectors: bool = True) -> str | None:
+    """
+    Check if server components are ready for use.
+
+    Args:
+        require_vectors: Whether vector_store is required (some tools don't need it)
+
+    Returns:
+        Error message string if not ready, None if ready
+    """
+    if storage is None:
+        return _NOT_READY_MSG
+    if require_vectors and vector_store is None:
+        return _NOT_READY_MSG
+    return None
 
 
 async def fast_search(
@@ -307,6 +330,8 @@ async def fast_search(
 
     Note: Results are complete and accurate. Trust them - no need to verify with file reads!
     """
+    if err := _check_ready():
+        return err
     return await fast_search_impl(
         query=query,
         method=method,
@@ -347,6 +372,8 @@ async def fast_goto(
     Note: For exploring unknown code, use fast_search first. Use fast_goto when
     you already know the symbol name from search results or references.
     """
+    if err := _check_ready(require_vectors=False):
+        return err
     return await fast_goto_impl(
         symbol_name=symbol_name,
         workspace=workspace,
@@ -416,6 +443,8 @@ async def get_symbols(
     Workflow: get_symbols(mode="structure") → identify what you need → get_symbols(target="X", mode="full")
     This two-step approach reads ONLY the code you need. Much better than reading entire files!
     """
+    if err := _check_ready(require_vectors=False):
+        return err
     return await get_symbols_impl(
         file_path=file_path,
         mode=mode,
@@ -489,6 +518,8 @@ async def fast_refs(
 
     Note: Shows where symbols are USED (not where defined). Use fast_goto for definitions.
     """
+    if err := _check_ready(require_vectors=False):
+        return err
     return await fast_refs_impl(
         symbol_name=symbol_name,
         kind_filter=kind_filter,
@@ -561,6 +592,8 @@ async def trace_call_path(
         - C# UserDto → Python User → TypeScript userService
         - Rust user_service → TypeScript UserService
     """
+    if err := _check_ready(require_vectors=False):
+        return err
     return await trace_call_path_impl(
         symbol_name=symbol_name,
         direction=direction,
@@ -626,6 +659,9 @@ async def fast_explore(
     Note: Similar mode uses an optimized similarity threshold internally.
     Results are ranked by relevance - trust the top matches.
     """
+    # Similar mode needs vector_store, other modes only need storage
+    if err := _check_ready(require_vectors=(mode == "similar")):
+        return err
     return await fast_explore_impl(
         mode=mode,
         type_name=type_name,

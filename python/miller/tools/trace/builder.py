@@ -5,7 +5,7 @@ Trace node building functions.
 from collections import defaultdict
 from typing import Any, Optional
 from miller.storage import StorageManager
-from miller.tools.trace_types import TraceNode
+from miller.tools.trace_types import TraceDirection, TraceNode
 from miller.tools.naming import generate_variants
 from .search import _find_variant_matches, _compute_semantic_similarity
 

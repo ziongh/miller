@@ -94,6 +94,10 @@ async def fast_search(
     # Track which storage to use for expansion (workspace-specific or injected)
     active_storage = storage
 
+    # Track workspace-specific resources for cleanup
+    workspace_vector_store = None
+    workspace_storage = None
+
     if workspace_id and workspace_id != "primary":
         from miller.workspace_paths import get_workspace_vector_path
         from miller.workspace_registry import WorkspaceRegistry
@@ -172,14 +176,25 @@ async def fast_search(
             entry["context"] = r["context"]
         formatted.append(entry)
 
+    # Cleanup workspace-specific resources before returning
+    # These are only created for non-primary workspace searches
+    def _cleanup():
+        if workspace_storage is not None:
+            workspace_storage.close()
+        if workspace_vector_store is not None:
+            workspace_vector_store.close()
+
     # Apply output format
     if output_format == "text":
-        return _format_search_as_text(formatted, query=query)
+        result = _format_search_as_text(formatted, query=query)
     elif output_format == "toon":
         from miller.toon_types import encode_toon
-        return encode_toon(formatted)
+        result = encode_toon(formatted)
     else:  # json
-        return formatted
+        result = formatted
+
+    _cleanup()
+    return result
 
 
 def _hydrate_search_results(

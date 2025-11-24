@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import Any, Optional
 from miller.storage import StorageManager
 from miller.tools.naming import generate_variants
+from miller.tools.trace_types import TraceDirection
 
 
 def _find_symbols(

@@ -54,6 +54,9 @@ class WorkspaceRegistry:
         """
         Add or update workspace entry.
 
+        Preserves existing stats (created_at, last_indexed, counts) if workspace
+        is already registered. Only updates name, path, and type.
+
         Args:
             path: Workspace root path
             name: Display name for workspace
@@ -64,12 +67,20 @@ class WorkspaceRegistry:
         """
         workspace_id = self._generate_workspace_id(path, name)
 
+        # Preserve existing stats if workspace already registered
+        existing = self.workspaces.get(workspace_id)
+
         entry = WorkspaceEntry(
             workspace_id=workspace_id,
             name=name,
             path=str(Path(path).resolve()) if Path(path).exists() else path,
             workspace_type=workspace_type,
-            created_at=int(datetime.now().timestamp()),
+            # Preserve original creation time, or set new one
+            created_at=existing.created_at if existing else int(datetime.now().timestamp()),
+            # Preserve indexing stats
+            last_indexed=existing.last_indexed if existing else None,
+            symbol_count=existing.symbol_count if existing else 0,
+            file_count=existing.file_count if existing else 0,
         )
 
         self.workspaces[workspace_id] = entry

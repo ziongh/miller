@@ -416,3 +416,90 @@ class TestIncrementalIndexing:
         # Verify symbols were removed (CASCADE)
         files = storage_manager.get_all_files()
         assert not any(f["path"] == str(deleted_file) for f in files)
+
+
+class TestSingleFileIndexing:
+    """Test single file indexing via _index_file method."""
+
+    @pytest.mark.asyncio
+    async def test_index_file_method_exists(self, test_workspace, storage_manager, vector_store):
+        """Test that WorkspaceScanner has _index_file method for real-time re-indexing."""
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+
+        embeddings = EmbeddingManager(device="cpu")
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+
+        # Method should exist
+        assert hasattr(scanner, "_index_file"), "WorkspaceScanner must have _index_file method"
+        assert callable(scanner._index_file), "_index_file must be callable"
+
+    @pytest.mark.asyncio
+    async def test_index_file_indexes_single_file(self, test_workspace, storage_manager, vector_store):
+        """Test that _index_file correctly indexes a single file."""
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+
+        embeddings = EmbeddingManager(device="cpu")
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+
+        # Create a new file
+        new_file = test_workspace / "src" / "single.py"
+        new_file.write_text("def single_function(): pass")
+
+        # Index just this file
+        result = await scanner._index_file(new_file)
+
+        # Should succeed
+        assert result is True
+
+        # File should be in database
+        files = storage_manager.get_all_files()
+        file_paths = [f["path"] for f in files]
+        assert "src/single.py" in file_paths
+
+    @pytest.mark.asyncio
+    async def test_index_file_updates_existing_file(self, test_workspace, storage_manager, vector_store):
+        """Test that _index_file properly updates an already-indexed file."""
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+
+        embeddings = EmbeddingManager(device="cpu")
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+
+        # Create and index a file
+        test_file = test_workspace / "src" / "updatable.py"
+        test_file.write_text("def original(): pass")
+        await scanner._index_file(test_file)
+
+        # Get original symbol count
+        cursor = storage_manager.conn.execute(
+            "SELECT COUNT(*) FROM symbols WHERE file_path = ?", ("src/updatable.py",)
+        )
+        original_count = cursor.fetchone()[0]
+
+        # Modify file with more functions
+        test_file.write_text("def updated(): pass\ndef another(): pass")
+        await scanner._index_file(test_file)
+
+        # Should have updated symbols (not duplicated)
+        cursor = storage_manager.conn.execute(
+            "SELECT COUNT(*) FROM symbols WHERE file_path = ?", ("src/updatable.py",)
+        )
+        new_count = cursor.fetchone()[0]
+
+        # Should have 2 functions now, not original + 2
+        assert new_count == 2
+
+    @pytest.mark.asyncio
+    async def test_index_file_returns_false_for_invalid(self, test_workspace, storage_manager, vector_store):
+        """Test that _index_file returns False for non-existent or non-indexable files."""
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+
+        embeddings = EmbeddingManager(device="cpu")
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+
+        # Non-existent file
+        result = await scanner._index_file(test_workspace / "nonexistent.py")
+        assert result is False

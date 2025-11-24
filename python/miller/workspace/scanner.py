@@ -72,6 +72,31 @@ class WorkspaceScanner:
         self.ignore_spec = load_all_ignores(self.workspace_root)
         self._millerignore_checked = False  # Track if we've done vendor detection
 
+    async def _index_file(self, file_path: Path) -> bool:
+        """
+        Index a single file (for real-time re-indexing via file watcher).
+
+        Delegates to indexer.index_file which properly handles:
+        - Symbol extraction via tree-sitter
+        - SQLite storage (file, symbols, identifiers, relationships)
+        - Vector store updates (deletes old embeddings, adds new ones)
+
+        Args:
+            file_path: Absolute path to file to index
+
+        Returns:
+            True if successful, False if error or file doesn't exist
+        """
+        from .indexer import index_file
+
+        return await index_file(
+            file_path=file_path,
+            workspace_root=self.workspace_root,
+            storage=self.storage,
+            embeddings=self.embeddings,
+            vector_store=self.vector_store,
+        )
+
     def _walk_directory(self) -> list[Path]:
         """
         Walk workspace directory and find indexable files.
@@ -472,6 +497,10 @@ class WorkspaceScanner:
             # This is MUCH faster than 50 individual writes (was 73% of time, now <10%)
             if all_symbols and all_vectors is not None:
                 vector_start = time.time()
+                # Delete old vectors for updated files BEFORE adding new ones
+                # This prevents stale/duplicate vectors in the search index
+                if files_to_clean:
+                    self.vector_store.delete_files_batch(files_to_clean)
                 # Bulk add all symbols+vectors for this batch in one operation
                 self.vector_store.add_symbols(all_symbols, all_vectors)
                 total_vector_time += time.time() - vector_start
