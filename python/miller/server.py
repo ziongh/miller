@@ -238,6 +238,8 @@ async def fast_search(
     workspace_id: Optional[str] = None,
     output_format: Literal["text", "json", "toon"] = "text",
     rerank: bool = True,
+    expand: bool = False,
+    expand_limit: int = 5,
 ) -> Union[list[dict[str, Any]], str]:
     """
     Search indexed code using text, semantic, or hybrid methods.
@@ -281,6 +283,9 @@ async def fast_search(
         # Workspace-specific search
         fast_search("auth", workspace_id="my-lib_abc123")
 
+        # With graph expansion (includes callers/callees)
+        fast_search("authenticate", expand=True)
+
     Args:
         query: Search query (code patterns, keywords, or natural language)
         method: Search method (auto-detects by default)
@@ -289,8 +294,12 @@ async def fast_search(
                      Get workspace IDs from manage_workspace(operation="list")
         output_format: Output format - "text" (default), "json", or "toon"
         rerank: Enable cross-encoder re-ranking for improved relevance (default: True).
-                Adds ~50-100ms latency but improves result quality 15-30%.
+                Adds ~20-50ms latency but improves result quality 15-30%.
                 Automatically disabled for pattern search.
+        expand: Include caller/callee context for each result (default: False).
+                When True, each result includes a 'context' field with direct callers
+                and callees. Enables "understanding, not just locations".
+        expand_limit: Maximum callers/callees to include per result (default: 5).
 
     Returns:
         - text mode: Clean scannable format (name, kind, location, signature)
@@ -306,6 +315,8 @@ async def fast_search(
         workspace_id=workspace_id,
         output_format=output_format,
         rerank=rerank,
+        expand=expand,
+        expand_limit=expand_limit,
         vector_store=vector_store,
         storage=storage,
         embeddings=embeddings,

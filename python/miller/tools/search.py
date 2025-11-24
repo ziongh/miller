@@ -14,6 +14,8 @@ async def fast_search(
     workspace_id: Optional[str] = None,
     output_format: Literal["text", "json", "toon"] = "text",
     rerank: bool = True,
+    expand: bool = False,
+    expand_limit: int = 5,
     # These are injected by server.py
     vector_store=None,
     storage=None,
@@ -71,6 +73,10 @@ async def fast_search(
         rerank: Enable cross-encoder re-ranking for improved relevance (default: True).
                 Adds ~20-50ms latency but improves result quality 15-30%.
                 Automatically disabled for pattern search.
+        expand: Include caller/callee context for each result (default: False).
+                When True, each result includes a 'context' field with direct callers
+                and callees. Enables "understanding, not just locations".
+        expand_limit: Maximum callers/callees to include per result (default: 5).
         vector_store: VectorStore instance (injected by server)
         storage: StorageManager instance (injected by server)
         embeddings: EmbeddingManager instance (injected by server)
@@ -130,21 +136,28 @@ async def fast_search(
 
         results = rerank_search_results(query, results, enabled=rerank)
 
+    # Expand results with caller/callee context if requested
+    if expand and storage is not None and results:
+        results = _expand_search_results(results, storage, expand_limit=expand_limit)
+
     # Format results for MCP
     formatted = []
     for r in results:
-        formatted.append(
-            {
-                "name": r.get("name", ""),
-                "kind": r.get("kind", ""),
-                "file_path": r.get("file_path", ""),
-                "signature": r.get("signature"),
-                "doc_comment": r.get("doc_comment"),
-                "start_line": r.get("start_line", 0),
-                "score": r.get("score", 0.0),
-                "code_context": r.get("code_context"),  # For grep-style output
-            }
-        )
+        entry = {
+            "id": r.get("id"),  # Needed for tools that work with symbol IDs
+            "name": r.get("name", ""),
+            "kind": r.get("kind", ""),
+            "file_path": r.get("file_path", ""),
+            "signature": r.get("signature"),
+            "doc_comment": r.get("doc_comment"),
+            "start_line": r.get("start_line", 0),
+            "score": r.get("score", 0.0),
+            "code_context": r.get("code_context"),  # For grep-style output
+        }
+        # Include context if expansion was enabled
+        if expand and "context" in r:
+            entry["context"] = r["context"]
+        formatted.append(entry)
 
     # Apply output format
     if output_format == "text":
@@ -191,6 +204,95 @@ def _hydrate_search_results(
         hydrated.append(result)
 
     return hydrated
+
+
+def _expand_search_results(
+    results: list[dict[str, Any]],
+    storage: "StorageManager",
+    expand_limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Expand search results with caller/callee context.
+
+    For each search result, adds a 'context' field containing:
+    - callers: Direct callers of this symbol (distance=1 from reachability)
+    - callees: Direct callees of this symbol (distance=1)
+    - caller_count: Total number of callers (may be > len(callers) due to limit)
+    - callee_count: Total number of callees
+
+    This enables "understanding, not just locations" - when you find a symbol,
+    you immediately see who uses it and what it depends on.
+
+    Args:
+        results: List of search result dicts (must have 'id' field)
+        storage: StorageManager instance for lookups
+        expand_limit: Max callers/callees to include per symbol (default 5)
+
+    Returns:
+        Results with added 'context' field for each entry.
+    """
+    expanded = []
+
+    for result in results:
+        symbol_id = result.get("id")
+        if not symbol_id:
+            # Can't expand without ID - keep original
+            result["context"] = {
+                "callers": [],
+                "callees": [],
+                "caller_count": 0,
+                "callee_count": 0,
+            }
+            expanded.append(result)
+            continue
+
+        # Get callers (upstream) - symbols that can reach this one with distance=1
+        all_callers = storage.get_reachability_for_target(symbol_id)
+        direct_callers = [c for c in all_callers if c.get("min_distance") == 1]
+
+        # Get callees (downstream) - symbols this one can reach with distance=1
+        all_callees = storage.get_reachability_from_source(symbol_id)
+        direct_callees = [c for c in all_callees if c.get("min_distance") == 1]
+
+        # Hydrate caller symbols with metadata
+        caller_details = []
+        for caller in direct_callers[:expand_limit]:
+            caller_id = caller.get("source_id")
+            if caller_id:
+                sym = storage.get_symbol_by_id(caller_id)
+                if sym:
+                    caller_details.append({
+                        "id": caller_id,
+                        "name": sym.get("name", "?"),
+                        "kind": sym.get("kind", "?"),
+                        "file_path": sym.get("file_path", "?"),
+                        "line": sym.get("start_line", 0),
+                    })
+
+        # Hydrate callee symbols with metadata
+        callee_details = []
+        for callee in direct_callees[:expand_limit]:
+            callee_id = callee.get("target_id")
+            if callee_id:
+                sym = storage.get_symbol_by_id(callee_id)
+                if sym:
+                    callee_details.append({
+                        "id": callee_id,
+                        "name": sym.get("name", "?"),
+                        "kind": sym.get("kind", "?"),
+                        "file_path": sym.get("file_path", "?"),
+                        "line": sym.get("start_line", 0),
+                    })
+
+        # Add context to result
+        result["context"] = {
+            "callers": caller_details,
+            "callees": callee_details,
+            "caller_count": len(direct_callers),
+            "callee_count": len(direct_callees),
+        }
+        expanded.append(result)
+
+    return expanded
 
 
 def _format_search_as_text(results: list[dict[str, Any]], query: str = "") -> str:
@@ -254,6 +356,24 @@ def _format_search_as_text(results: list[dict[str, Any]], query: str = "") -> st
         elif signature:
             # Fallback to signature if no code_context
             output.append(f"  {signature}")
+
+        # Context information (when expand=True)
+        context = r.get("context")
+        if context:
+            callers = context.get("callers", [])
+            callees = context.get("callees", [])
+            caller_count = context.get("caller_count", 0)
+            callee_count = context.get("callee_count", 0)
+
+            if caller_count > 0:
+                caller_strs = [f"{c['name']} ({c['file_path']}:{c['line']})" for c in callers]
+                more = f" +{caller_count - len(callers)} more" if caller_count > len(callers) else ""
+                output.append(f"  ← Callers ({caller_count}): {', '.join(caller_strs)}{more}")
+
+            if callee_count > 0:
+                callee_strs = [f"{c['name']} ({c['file_path']}:{c['line']})" for c in callees]
+                more = f" +{callee_count - len(callees)} more" if callee_count > len(callees) else ""
+                output.append(f"  → Callees ({callee_count}): {', '.join(callee_strs)}{more}")
 
         output.append("")  # Blank line between results
 

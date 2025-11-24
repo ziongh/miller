@@ -1,0 +1,26 @@
+{
+  "description": "Completed graph expansion feature for fast_search. Added expand=True parameter that enriches search results with direct callers/callees using reachability table (distance=1). Text format shows \u2190 Callers and \u2192 Callees with counts. All Tier 1 Game Changers now complete: re-ranker, transitive closure, graph expansion. 11 new tests, 672 total passing.",
+  "git": {
+    "branch": "main",
+    "commit": "6018eea",
+    "dirty": true,
+    "files_changed": [
+      ".claude/settings.local.json",
+      ".memories/plans/plan_implement-transitive-closure-for-fast-impact-analysis.json",
+      "TODO.md",
+      "python/miller/server.py",
+      "python/miller/tools/search.py",
+      ".memories/2025-11-23/154505_9ad0.json",
+      "python/tests/test_graph_expansion.py"
+    ]
+  },
+  "id": "checkpoint_bab7e6ac_b25cf0",
+  "tags": [
+    "graph-expansion",
+    "fast-search",
+    "tier-1-complete",
+    "tdd"
+  ],
+  "timestamp": 1763943052,
+  "type": "checkpoint"
+}

@@ -44,7 +44,7 @@ async def manage_workspace(
         operation: Operation to perform
         path: Workspace path (for index, add)
         name: Workspace display name (for add)
-        workspace_id: Workspace ID (for stats, remove, refresh)
+        workspace_id: Workspace ID (for stats, remove, refresh). Defaults to primary workspace.
         force: Force re-indexing even if up-to-date (for index, refresh)
         detailed: Include detailed per-workspace info (for health)
         output_format: Output format - "text" (default, lean) or "json"
@@ -62,13 +62,23 @@ async def manage_workspace(
         # Add reference workspace
         manage_workspace(operation="add", path="/path/to/lib", name="MyLibrary")
 
-        # Refresh workspace to detect changes
-        manage_workspace(operation="refresh", workspace_id="mylib_abc123")
+        # Get stats for primary workspace (workspace_id defaults to primary)
+        manage_workspace(operation="stats")
+
+        # Refresh workspace to detect changes (defaults to primary)
+        manage_workspace(operation="refresh")
 
         # System health check
         manage_workspace(operation="health", detailed=True)
     """
     registry = WorkspaceRegistry()
+
+    # Default to primary workspace when workspace_id not provided
+    if workspace_id is None and operation in ("stats", "remove", "refresh"):
+        workspaces = registry.list_workspaces()
+        primary = next((w for w in workspaces if w.get("workspace_type") == "primary"), None)
+        if primary:
+            workspace_id = primary.get("workspace_id")
 
     if operation == "list":
         return handle_list(registry, output_format)

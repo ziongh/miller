@@ -51,7 +51,7 @@
 
 We could also create a small script for Finetunning an Embedding model like "jinaai/jina-code-embeddings-0.5b" using LoRa. It has a context window of 32K tokens, which would allow larger methods/classes/ etc to be better indexed (I know that in a good code base this shouldn't exsit). And by using something like LoRa (Fine-tuning) it would allow companies to embed some of their specific framework knowledge. For instance, on a company there may exist a specific way to access DB in C# that is not simple Dapper or simple EfCore, but a in-house framework. And with fine-tuning the embeddings, we could improve the understanding and parsing of existing code.
 
-9. manage_workspace tool should always default to the primary workspace and the workspace parameter should be optional. All tools should have smart defaults and optional parameters where possible so that the agent only needs the minimum to call a tool
+9. ~~manage_workspace tool should always default to the primary workspace and the workspace parameter should be optional.~~ ✅ **DONE** - `workspace_id` now defaults to primary workspace for `stats`, `remove`, `refresh` operations
 
 ---
 
@@ -65,7 +65,7 @@ We could also create a small script for Finetunning an Embedding model like "jin
 |------|---------|--------|
 | **#1** | ~~**Re-ranker (cross-encoder)**~~ ✅ **DONE** | Implemented! `rerank=True` by default in `fast_search`. Uses `ms-marco-MiniLM-L6-v2` (~33ms for 50 results). See `python/miller/reranker.py`. |
 | **#2** | ~~**Transitive closure table**~~ ✅ **DONE** | Implemented! `reachability` table with BFS closure computation. `can_reach()`, `get_distance()` for O(1) lookups. Computed after indexing. See `python/miller/closure.py`. |
-| **#3** | **Graph expansion on search** | When finding a symbol, auto-include callers, callees, parent class, related tests. Return *understanding*, not just locations. |
+| **#3** | ~~**Graph expansion on search**~~ ✅ **DONE** | Implemented! `expand=True` in `fast_search` includes direct callers/callees. Uses reachability table (distance=1) for O(1) lookups. Text format shows ← Callers and → Callees. |
 
 ### Tier 2: Significant Improvements 🎯
 
@@ -94,9 +94,9 @@ We could also create a small script for Finetunning an Embedding model like "jin
 
 ### Key Insight
 
-The top 3 share a theme: **returning understanding, not just locations**.
-- Re-ranker → return the *right* results
-- Transitive closure → return *impact*, not just direct calls
-- Graph expansion → return *context*, not just the symbol
+The top 3 share a theme: **returning understanding, not just locations**. ✅ **ALL COMPLETE!**
+- Re-ranker → return the *right* results ✅
+- Transitive closure → return *impact*, not just direct calls ✅
+- Graph expansion → return *context*, not just the symbol ✅
 
-Current search answers "where is X?" — these upgrades answer "what do I need to know about X?"
+Miller now answers "what do I need to know about X?" not just "where is X?"
