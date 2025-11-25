@@ -1,7 +1,7 @@
 """
-Code navigation tools - go to definition and find references.
+Code navigation tools - find references.
 
-Provides fast_goto for definition lookup and fast_refs for finding usages.
+Provides fast_refs for finding symbol usages. fast_goto is kept for internal use.
 """
 
 from typing import Any, Literal, Optional, Union
@@ -189,7 +189,7 @@ async def fast_refs(
         3. Make changes
         4. fast_refs("symbol") again → Verify all usages updated
 
-    Note: Shows where symbols are USED (not where defined). Use fast_goto for definitions.
+    Note: Shows where symbols are USED (not where defined). Use get_symbols with target parameter to find definitions.
     """
     from miller.tools.refs import find_references
     from miller.workspace_paths import get_workspace_db_path

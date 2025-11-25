@@ -143,8 +143,9 @@ def find_references(
     # Group references by file, combining both sources
     files_dict: Dict[str, Dict[str, Any]] = {}
 
-    # Track seen (file, line, kind) to avoid duplicates
-    seen_refs: set[tuple[str, int, str]] = set()
+    # Track seen (file, line) to avoid duplicates - ignore kind for deduplication
+    # because relationships table uses "calls" while identifiers uses "call"
+    seen_refs: set[tuple[str, int]] = set()
 
     # Process relationship rows first
     for row in relationship_rows:
@@ -152,7 +153,7 @@ def find_references(
         line_number = row[4]
         kind = row[2]
 
-        ref_key = (file_path, line_number, kind)
+        ref_key = (file_path, line_number)
         if ref_key in seen_refs:
             continue
         seen_refs.add(ref_key)
@@ -178,7 +179,7 @@ def find_references(
         line_number = row[4]
         kind = row[2]
 
-        ref_key = (file_path, line_number, kind)
+        ref_key = (file_path, line_number)
         if ref_key in seen_refs:
             continue
         seen_refs.add(ref_key)

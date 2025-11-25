@@ -13,7 +13,7 @@ from typing import Any, Literal, Optional, Union
 
 from miller import server_state
 from miller.tools.search import fast_search as fast_search_impl
-from miller.tools.goto_refs_wrapper import fast_refs as fast_refs_impl
+from miller.tools.navigation import fast_refs as fast_refs_impl
 from miller.tools.symbols_wrapper import get_symbols as get_symbols_impl
 from miller.tools.trace_wrapper import trace_call_path as trace_call_path_impl
 from miller.tools.explore_wrapper import fast_explore as fast_explore_impl
@@ -287,7 +287,7 @@ async def fast_refs(
         3. Make changes
         4. fast_refs("symbol") again → Verify all usages updated
 
-    Note: Shows where symbols are USED (not where defined). Use fast_goto for definitions.
+    Note: Shows where symbols are USED (not where defined). Use get_symbols with target parameter to find definitions.
     """
     if err := _check_ready(require_vectors=False):
         return err
