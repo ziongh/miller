@@ -23,6 +23,7 @@ from ..storage import StorageManager
 from . import hash_tracking
 from .index_stats import IndexStats
 from . import discovery
+from .indexer import compute_code_context
 
 # Get logger instance
 logger = logging.getLogger("miller.workspace")
@@ -365,6 +366,7 @@ class WorkspaceScanner:
             all_symbols = []
             all_identifiers = []
             all_relationships = []
+            all_code_context_map = {}  # symbol_id -> code_context for grep-style output
             files_to_clean = []  # Files being updated (need old data deleted)
             file_data_list = []  # (path, language, content, hash, size)
 
@@ -391,6 +393,9 @@ class WorkspaceScanner:
                 if result.symbols:
                     all_symbols.extend(result.symbols)
                     stats.total_symbols += len(result.symbols)
+                    # Compute code_context for this file's symbols
+                    file_context_map = compute_code_context(content, result.symbols)
+                    all_code_context_map.update(file_context_map)
                 if result.identifiers:
                     all_identifiers.extend(result.identifiers)
                 if result.relationships:
@@ -413,6 +418,7 @@ class WorkspaceScanner:
                     symbols=all_symbols,
                     identifiers=all_identifiers,
                     relationships=all_relationships,
+                    code_context_map=all_code_context_map,
                 )
                 total_db_time += time.time() - db_start
             except Exception as e:

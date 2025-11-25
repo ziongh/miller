@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Tuple
 
 from ..embeddings import EmbeddingManager, VectorStore
 from ..storage import StorageManager
@@ -25,6 +25,53 @@ try:
 except ImportError:
     # For testing without building Rust extension
     miller_core = None
+
+
+def compute_code_context(content: str, symbols: list[Any], context_lines: int = 2) -> dict[str, str]:
+    """
+    Compute grep-style code context for each symbol.
+
+    Extracts a few lines around each symbol's start_line for display
+    in search results (like grep -C output).
+
+    Args:
+        content: Full file content as string
+        symbols: List of PySymbol objects with start_line attributes
+        context_lines: Number of lines before/after to include (default: 2)
+
+    Returns:
+        Dict mapping symbol_id to code_context string
+    """
+    if not symbols or not content:
+        return {}
+
+    lines = content.splitlines()
+    total_lines = len(lines)
+    context_map = {}
+
+    for sym in symbols:
+        # start_line is 1-indexed, convert to 0-indexed
+        line_idx = sym.start_line - 1 if sym.start_line > 0 else 0
+
+        # Calculate context range
+        start_idx = max(0, line_idx - context_lines)
+        end_idx = min(total_lines, line_idx + context_lines + 1)
+
+        # Extract context lines with line numbers
+        context_parts = []
+        for i in range(start_idx, end_idx):
+            line_num = i + 1  # 1-indexed for display
+            line_content = lines[i] if i < total_lines else ""
+
+            # Mark the symbol's line with an arrow, others with colon
+            if i == line_idx:
+                context_parts.append(f"{line_num:>4}→ {line_content}")
+            else:
+                context_parts.append(f"{line_num:>4}: {line_content}")
+
+        context_map[sym.id] = "\n".join(context_parts)
+
+    return context_map
 
 
 async def index_file(file_path: Path, workspace_root: Path, storage: StorageManager,
@@ -73,9 +120,12 @@ async def index_file(file_path: Path, workspace_root: Path, storage: StorageMana
             size=len(content),
         )
 
-        # Store symbols
+        # Compute code context for grep-style search output
+        code_context_map = compute_code_context(content, result.symbols) if result.symbols else {}
+
+        # Store symbols (with computed code_context)
         if result.symbols:
-            storage.add_symbols_batch(result.symbols)
+            storage.add_symbols_batch(result.symbols, code_context_map)
 
         # Store identifiers
         if result.identifiers:
@@ -152,9 +202,12 @@ async def index_file_timed(file_path: Path, workspace_root: Path, storage: Stora
             size=len(content),
         )
 
-        # Store symbols
+        # Compute code context for grep-style search output
+        code_context_map = compute_code_context(content, result.symbols) if result.symbols else {}
+
+        # Store symbols (with computed code_context)
         if result.symbols:
-            storage.add_symbols_batch(result.symbols)
+            storage.add_symbols_batch(result.symbols, code_context_map)
 
         # Store identifiers
         if result.identifiers:

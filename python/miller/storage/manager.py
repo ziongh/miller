@@ -83,17 +83,21 @@ class StorageManager:
 
     # Symbol operations
 
-    def add_symbols_batch(self, symbols: list[Any]) -> int:
+    def add_symbols_batch(
+        self, symbols: list[Any], code_context_map: Optional[dict[str, str]] = None
+    ) -> int:
         """
         Bulk insert symbols.
 
         Args:
             symbols: List of PySymbol objects from extraction
+            code_context_map: Optional dict mapping symbol_id to computed code_context.
+                             Used for grep-style output (computed from file content).
 
         Returns:
             Number of symbols inserted
         """
-        return mutations.add_symbols_batch(self.conn, symbols)
+        return mutations.add_symbols_batch(self.conn, symbols, code_context_map)
 
     def get_symbol_by_name(self, name: str) -> Optional[dict]:
         """
@@ -202,6 +206,7 @@ class StorageManager:
         symbols: list,
         identifiers: list,
         relationships: list,
+        code_context_map: Optional[dict[str, str]] = None,
     ) -> dict:
         """
         Perform atomic incremental update.
@@ -215,6 +220,7 @@ class StorageManager:
             symbols,
             identifiers,
             relationships,
+            code_context_map,
         )
 
     def close(self):

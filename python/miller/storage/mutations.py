@@ -65,13 +65,20 @@ def delete_file(conn: sqlite3.Connection, file_path: str) -> None:
     conn.commit()
 
 
-def add_symbols_batch(conn: sqlite3.Connection, symbols: list[Any]) -> int:
+def add_symbols_batch(
+    conn: sqlite3.Connection,
+    symbols: list[Any],
+    code_context_map: Optional[dict[str, str]] = None,
+) -> int:
     """
     Bulk insert symbols.
 
     Args:
         conn: SQLite connection
         symbols: List of PySymbol objects from extraction
+        code_context_map: Optional dict mapping symbol_id to computed code_context.
+                         If provided, overrides sym.code_context (which is typically None).
+                         This allows Python to compute grep-style context from file content.
 
     Returns:
         Number of symbols inserted
@@ -82,6 +89,11 @@ def add_symbols_batch(conn: sqlite3.Connection, symbols: list[Any]) -> int:
     # Convert PySymbol objects to tuples
     symbol_data = []
     for sym in symbols:
+        # Use computed code_context if available, otherwise fall back to extractor's value
+        code_context = (
+            code_context_map.get(sym.id) if code_context_map else None
+        ) or sym.code_context
+
         symbol_data.append(
             (
                 sym.id,
@@ -98,7 +110,7 @@ def add_symbols_batch(conn: sqlite3.Connection, symbols: list[Any]) -> int:
                 sym.end_byte,
                 sym.doc_comment,
                 sym.visibility,
-                sym.code_context,
+                code_context,
                 sym.parent_id,
                 None,  # metadata (TODO: serialize dict to JSON)
                 None,  # file_hash
@@ -285,6 +297,7 @@ def incremental_update_atomic(
     symbols: list,
     identifiers: list,
     relationships: list,
+    code_context_map: Optional[dict[str, str]] = None,
 ) -> dict:
     """
     Perform atomic incremental update - delete old data and insert new in single transaction.
@@ -299,6 +312,8 @@ def incremental_update_atomic(
         symbols: List of PySymbol objects to insert
         identifiers: List of PyIdentifier objects to insert
         relationships: List of PyRelationship objects to insert
+        code_context_map: Optional dict mapping symbol_id to computed code_context
+                         for grep-style search output
 
     Returns:
         Dict with counts: {files_cleaned, files_added, symbols_added, identifiers_added, relationships_added}
@@ -342,11 +357,15 @@ def incremental_update_atomic(
         # Step 3: Insert symbols (OR REPLACE for safety if cleanup missed any)
         for sym in symbols:
             file_path = _normalize_path(sym.file_path)
+            # Use computed code_context if available, otherwise fall back to extractor's value
+            code_context = (
+                code_context_map.get(sym.id) if code_context_map else None
+            ) or sym.code_context
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO symbols
-                (id, name, kind, signature, file_path, start_line, end_line, parent_id, language, doc_comment)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, name, kind, signature, file_path, start_line, end_line, parent_id, language, doc_comment, code_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sym.id,
@@ -359,6 +378,7 @@ def incremental_update_atomic(
                     sym.parent_id,
                     sym.language,
                     sym.doc_comment,
+                    code_context,
                 ),
             )
             counts["symbols_added"] += 1
