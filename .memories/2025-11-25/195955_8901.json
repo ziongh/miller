@@ -1,0 +1,21 @@
+{
+  "description": "Fixed stale file detection bug in check_if_indexing_needed(). The old MAX-based heuristic compared MAX(last_indexed) from all files to max(code_file_mtime), which could miss stale code files when a non-code file (.memories/*.json) was indexed more recently. New per-file approach compares each file's mtime to its own last_indexed timestamp. Added regression test, removed dead _get_max_file_mtime method. All 756 tests pass.",
+  "git": {
+    "branch": "main",
+    "commit": "e136865",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/workspace/scanner.py",
+      "python/tests/test_workspace.py"
+    ]
+  },
+  "id": "checkpoint_628df3a6_027a79",
+  "tags": [
+    "bugfix",
+    "indexing",
+    "staleness-check",
+    "file-watcher"
+  ],
+  "timestamp": 1764035995,
+  "type": "checkpoint"
+}

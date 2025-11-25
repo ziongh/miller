@@ -178,21 +178,27 @@ class WorkspaceScanner:
             logger.warning("⚠️ Database has files but 0 symbols - re-indexing needed")
             return True
 
-        # Check 3: Staleness - compare file mtimes to last index time
-        # Get max last_indexed timestamp from DB
-        cursor = self.storage.conn.execute("SELECT MAX(last_indexed) FROM files")
-        row = cursor.fetchone()
-        db_timestamp = row[0] if row and row[0] else 0
+        # Check 3: Staleness - compare each indexed file's mtime to its last_indexed
+        # Bug fix: Previous MAX-based heuristic could miss stale code files when a
+        # non-code file (like .memories/*.json) was indexed more recently.
+        # Now we check per-file: if any file's mtime > its own last_indexed, it's stale.
+        for db_file in db_files:
+            file_path = self.workspace_root / db_file["path"]
+            if not file_path.exists():
+                continue  # Will be caught by Check 5 (deleted files)
 
-        # Find max file mtime in workspace (fast scan)
-        max_file_mtime = self._get_max_file_mtime()
+            try:
+                mtime = int(file_path.stat().st_mtime)
+                last_indexed = db_file.get("last_indexed", 0) or 0
 
-        if max_file_mtime > db_timestamp:
-            logger.info(
-                f"📊 Database is stale (files modified after last index) - indexing needed"
-            )
-            logger.debug(f"   max_file_mtime={max_file_mtime}, db_timestamp={db_timestamp}")
-            return True
+                if mtime > last_indexed:
+                    logger.info(
+                        f"📊 File modified since last index: {db_file['path']} - indexing needed"
+                    )
+                    logger.debug(f"   mtime={mtime}, last_indexed={last_indexed}")
+                    return True
+            except OSError:
+                continue  # Can't stat file, skip
 
         # Check 4: New files not in database
         db_paths = {f["path"] for f in db_files}
@@ -218,15 +224,6 @@ class WorkspaceScanner:
         # Index is up-to-date
         logger.info("✅ Index is up-to-date - no indexing needed")
         return False
-
-    def _get_max_file_mtime(self) -> int:
-        """
-        Get the maximum (newest) file modification time in the workspace.
-
-        Returns:
-            Unix timestamp of the most recently modified file
-        """
-        return discovery.get_max_file_mtime(self.workspace_root, self.ignore_spec)
 
     def _has_new_files(self, db_paths: set[str]) -> bool:
         """
