@@ -1,0 +1,40 @@
+{
+  "description": "Fixed duplicate references in rename_symbol preview output. Added deduplication by (file_path, line) in _build_edit_plan and fixed reference count to show deduplicated count instead of raw fast_refs count. Output now shows 7 unique lines instead of 14 duplicates.",
+  "git": {
+    "branch": "main",
+    "commit": "730abdf",
+    "dirty": true,
+    "files_changed": [
+      ".memories/plans/plan_miller-deep-review-fixes.json",
+      "CLAUDE.md",
+      "TODO.md",
+      "python/miller/instructions.md",
+      "python/miller/lifecycle.py",
+      "python/miller/reranker.py",
+      "python/miller/server.py",
+      "python/miller/tools/navigation.py",
+      "python/miller/tools/search.py",
+      "python/miller/tools_wrappers.py",
+      "python/tests/test_fast_search_toon.py",
+      "python/tests/test_reranker.py",
+      "python/tests/test_search_filters.py",
+      "python/tests/test_server.py",
+      ".memories/2025-11-24/153258_467a.json",
+      ".memories/2025-11-24/154255_570d.json",
+      ".memories/2025-11-24/155624_53ff.json",
+      ".memories/2025-11-24/160653_3c5b.json",
+      ".memories/2025-11-25/",
+      ".memories/plans/plan_implement-renamesymbol-tool.json",
+      "python/miller/tools/refactor.py",
+      "python/tests/test_refactor.py"
+    ]
+  },
+  "id": "checkpoint_7cc732ef_2804db",
+  "tags": [
+    "rename-symbol",
+    "bugfix",
+    "deduplication"
+  ],
+  "timestamp": 1764031923,
+  "type": "checkpoint"
+}

@@ -51,11 +51,11 @@ logger.info("✓ FastMCP server created (components will initialize post-handsha
 # Import tool wrappers (thin delegating functions for FastMCP)
 from miller.tools_wrappers import (
     fast_search,
-    fast_goto,
     get_symbols,
     fast_refs,
     trace_call_path,
     fast_explore,
+    rename_symbol,
 )
 
 
@@ -63,11 +63,13 @@ from miller.tools_wrappers import (
 # output_schema=None disables structured content wrapping (avoids {"result": ...} for strings)
 # All tools that return text/TOON strings need this to render properly
 mcp.tool(output_schema=None)(fast_search)      # Returns text/TOON string (default: text)
-mcp.tool(output_schema=None)(fast_goto)        # Returns text string (default: text)
 mcp.tool(output_schema=None)(get_symbols)      # Returns text/TOON/code string
 mcp.tool(output_schema=None)(fast_refs)        # Returns text/TOON string (default: text)
 mcp.tool(output_schema=None)(trace_call_path)  # Returns tree/TOON string (default: tree)
 mcp.tool(output_schema=None)(fast_explore)     # Returns text string (default: text)
+
+# Register refactoring tools
+mcp.tool(output_schema=None)(rename_symbol)  # Returns text/JSON (default: text)
 
 # Register memory tools
 # output_schema=None ensures raw string output (not JSON wrapped)
@@ -108,10 +110,11 @@ __all__ = [
     "embeddings",
     "scanner",
     "fast_search",
-    "fast_goto",
     "get_symbols",
     "fast_refs",
+    "trace_call_path",
     "fast_explore",
+    "rename_symbol",
     "checkpoint",
     "recall",
     "plan",

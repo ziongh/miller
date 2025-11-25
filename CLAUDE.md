@@ -42,22 +42,51 @@ Every bug fix starts with a failing test that reproduces it.
 
 Check before committing: `wc -l python/miller/*.py`
 
-### 3. Don't Break Lazy Loading
+### 3. Don't Break Lazy Loading (THIS IS CRITICAL!)
 
-Heavy ML imports (torch, sentence-transformers) must happen **inside background tasks**, never at module level.
+⚠️ **THIS BUG HAS BEEN REINTRODUCED MULTIPLE TIMES. READ THIS CAREFULLY.**
+
+The MCP protocol requires servers to respond to handshake within ~100ms. Heavy ML imports (torch, sentence-transformers) take 5+ seconds. If these block the handshake, Claude Code shows "connecting..." for 15+ seconds.
+
+#### The Trap: "Lazy imports" inside async functions still block!
 
 ```python
-# ❌ WRONG - blocks MCP handshake for 5-6 seconds
-from miller.embeddings import EmbeddingManager  # At top of server.py
-
-# ✅ CORRECT - import inside async function
+# ❌ WRONG - imports BLOCK THE EVENT LOOP even inside async functions!
 async def background_initialization():
-    from miller.embeddings import EmbeddingManager  # Lazy import
+    from miller.embeddings import EmbeddingManager  # BLOCKS for 5 seconds!
+    # Event loop is frozen during import - MCP handshake hangs
+
+# ✅ CORRECT - run imports in thread pool
+async def background_initialization():
+    def _sync_imports():
+        from miller.embeddings import EmbeddingManager
+        return EmbeddingManager
+
+    EmbeddingManager = await asyncio.to_thread(_sync_imports)  # Non-blocking!
 ```
 
-**Key files** (don't add top-level heavy imports):
-- `python/miller/__init__.py` - Keep minimal
-- `python/miller/server.py` - Heavy imports only in `background_initialization_and_indexing()`
+#### Why this matters:
+1. Python imports are **synchronous** - they execute immediately and block
+2. Even inside `async def`, an import statement freezes the event loop
+3. The event loop can't process MCP messages while frozen
+4. Result: 15-second "connecting..." delay that makes users angry
+
+#### The fix pattern (in `lifecycle.py`):
+```python
+# Heavy imports run in thread pool via asyncio.to_thread()
+# This allows the event loop to continue processing MCP messages
+(StorageManager, ...) = await asyncio.to_thread(_sync_heavy_imports)
+```
+
+**Key files** (check these if startup is slow):
+- `python/miller/__init__.py` - Keep minimal, NO heavy imports
+- `python/miller/server.py` - NO heavy imports at module level
+- `python/miller/lifecycle.py` - Heavy imports MUST use `asyncio.to_thread()`
+
+**If you're debugging slow startup:**
+1. Check `asyncio.to_thread()` usage in `lifecycle.py` - has it been removed?
+2. Check for new imports at module level in `server.py`
+3. Add timing logs around imports to find the culprit
 
 ### 4. Verify Package Versions
 

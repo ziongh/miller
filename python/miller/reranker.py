@@ -188,8 +188,17 @@ class ReRanker:
             return results
 
         try:
-            # Get cross-encoder scores
+            # Get cross-encoder scores (raw logits, can be negative)
             scores = self.score(query, results)
+
+            # Normalize scores to 0.0-1.0 range using sigmoid
+            # Sigmoid maps logits to probabilities, preserving absolute quality:
+            #   -8 → 0.0003 (clearly irrelevant)
+            #    0 → 0.5    (uncertain)
+            #   +8 → 0.9997 (clearly relevant)
+            # This allows downstream filtering by score threshold
+            import math
+            scores = [1.0 / (1.0 + math.exp(-s)) for s in scores]
 
             # Update scores and create new list (don't mutate original)
             reranked = []

@@ -1,7 +1,7 @@
 """
-Code navigation tools - go to definition and find references.
+Code navigation tools - find references.
 
-Provides fast_goto for definition lookup and fast_refs for finding usages.
+Provides fast_refs for finding symbol usages. fast_goto is kept for internal use.
 """
 
 from typing import Any, Literal, Optional, Union
@@ -53,7 +53,30 @@ async def fast_goto(
                 return None
 
     # Query SQLite for exact match
-    sym = storage.get_symbol_by_name(symbol_name)
+    # Support qualified names like "ClassName.method" (consistent with fast_refs)
+    sym = None
+    if "." in symbol_name:
+        # Qualified name: Parent.Child
+        parts = symbol_name.split(".", 1)
+        parent_name, child_name = parts[0], parts[1]
+        # Query for child symbol with matching parent
+        cursor = storage.conn.execute("""
+            SELECT s.* FROM symbols s
+            JOIN symbols parent ON s.parent_id = parent.id
+            WHERE parent.name = ? AND s.name = ?
+            ORDER BY CASE s.kind
+                WHEN 'import' THEN 2
+                WHEN 'reference' THEN 2
+                ELSE 1
+            END
+            LIMIT 1
+        """, (parent_name, child_name))
+        row = cursor.fetchone()
+        if row:
+            sym = dict(row)
+    else:
+        # Simple name lookup
+        sym = storage.get_symbol_by_name(symbol_name)
 
     result = None
     if sym:
@@ -166,7 +189,7 @@ async def fast_refs(
         3. Make changes
         4. fast_refs("symbol") again → Verify all usages updated
 
-    Note: Shows where symbols are USED (not where defined). Use fast_goto for definitions.
+    Note: Shows where symbols are USED (not where defined). Use get_symbols with target parameter to find definitions.
     """
     from miller.tools.refs import find_references
     from miller.workspace_paths import get_workspace_db_path

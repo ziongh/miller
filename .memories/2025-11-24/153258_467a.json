@@ -1,0 +1,23 @@
+{
+  "description": "Fixed two fast_search bugs: (1) Re-ranker now uses sigmoid normalization for cross-encoder scores (maps logits to 0-1 probabilities), (2) Semantic fallback now triggers when max score < 0.3, not just on empty results. Added 3 new tests. 727 tests passing.",
+  "git": {
+    "branch": "main",
+    "commit": "730abdf",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/reranker.py",
+      "python/miller/tools/search.py",
+      "python/tests/test_reranker.py",
+      "python/tests/test_search_filters.py"
+    ]
+  },
+  "id": "checkpoint_7fc890cd_93dfbb",
+  "tags": [
+    "bugfix",
+    "fast-search",
+    "reranker",
+    "semantic-fallback"
+  ],
+  "timestamp": 1764019978,
+  "type": "checkpoint"
+}

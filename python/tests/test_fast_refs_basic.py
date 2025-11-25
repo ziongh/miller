@@ -485,3 +485,86 @@ class TestIdentifierBasedReferences:
 
         # Should find 0 (no relationships, and identifiers are "Reference" not "Call")
         assert result["total_references"] == 0
+
+
+class TestDeduplication:
+    """Test that references are properly deduplicated.
+
+    Bug: When the same reference appears in both relationships table (as "calls")
+    and identifiers table (as "call"), it shows up twice because deduplication
+    uses (file, line, kind) as key but the kinds differ.
+    """
+
+    @pytest.fixture
+    def storage_with_duplicates(self, tmp_path):
+        """Create storage with same reference in both tables (different kinds)."""
+        storage = StorageManager(":memory:")
+
+        # Add test file
+        storage.add_file(
+            file_path="main.py",
+            language="python",
+            content="def helper(): pass\n\ndef caller():\n    helper()\n",
+            hash="abc123",
+            size=50,
+        )
+
+        # Add symbols
+        helper_id = "symbol_helper"
+        caller_id = "symbol_caller"
+
+        storage.conn.execute(
+            """
+            INSERT INTO symbols (id, name, kind, language, file_path, start_line, end_line, signature)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (helper_id, "helper", "Function", "python", "main.py", 1, 1, "def helper()"),
+        )
+        storage.conn.execute(
+            """
+            INSERT INTO symbols (id, name, kind, language, file_path, start_line, end_line, signature)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (caller_id, "caller", "Function", "python", "main.py", 3, 4, "def caller()"),
+        )
+
+        # Add relationship entry (kind="calls")
+        storage.conn.execute(
+            """
+            INSERT INTO relationships (from_symbol_id, to_symbol_id, kind, file_path, line_number)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (caller_id, helper_id, "calls", "main.py", 4),
+        )
+
+        # Add identifier entry for SAME line (kind="call")
+        storage.conn.execute(
+            """
+            INSERT INTO identifiers (
+                id, name, kind, language, file_path,
+                start_line, start_col, end_line, end_col,
+                containing_symbol_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("ident_call", "helper", "call", "python", "main.py", 4, 4, 4, 10, caller_id),
+        )
+
+        storage.conn.commit()
+        return storage
+
+    def test_same_line_not_duplicated(self, storage_with_duplicates):
+        """References on same line should not appear twice even with different kinds."""
+        from miller.tools.refs import find_references
+
+        result = find_references(storage_with_duplicates, symbol_name="helper")
+
+        # Should find exactly 1 reference, not 2
+        assert result["total_references"] == 1, (
+            f"Expected 1 reference but got {result['total_references']}. "
+            "Same line appears duplicated due to different 'kind' values."
+        )
+
+        # Verify it's at line 4
+        refs = result["files"][0]["references"]
+        assert len(refs) == 1
+        assert refs[0]["line"] == 4

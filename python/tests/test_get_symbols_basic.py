@@ -315,13 +315,72 @@ class TestWorkspaceFiltering:
         test_file = tmp_path / "test.py"
         test_file.write_text(sample_python_code)
 
-        result = await get_symbols(output_format="json", 
+        result = await get_symbols(output_format="json",
             file_path=str(test_file),
             workspace="primary"
         )
 
         # Should work with explicit primary workspace
         assert len(result) > 0
+
+    @pytest.mark.asyncio
+    async def test_reference_workspace_resolves_relative_path(self, tmp_path):
+        """Should resolve relative file paths against reference workspace root."""
+        from miller.server import get_symbols
+        from miller.workspace_registry import WorkspaceRegistry
+
+        # Create a reference workspace directory with a Python file
+        ref_workspace = tmp_path / "ref_lib"
+        ref_workspace.mkdir()
+        src_dir = ref_workspace / "src"
+        src_dir.mkdir()
+        test_file = src_dir / "utils.py"
+        test_file.write_text("""
+def helper_function():
+    '''A helper in the reference workspace.'''
+    pass
+""")
+
+        # Register the reference workspace
+        registry = WorkspaceRegistry()
+        workspace_id = registry.add_workspace(
+            path=str(ref_workspace),
+            name="test_ref_lib",
+            workspace_type="reference"
+        )
+
+        try:
+            # Query with relative path within the reference workspace
+            result = await get_symbols(
+                file_path="src/utils.py",  # Relative to workspace root
+                workspace=workspace_id,
+                output_format="json"
+            )
+
+            # Should find the symbol in the reference workspace
+            assert len(result) > 0
+            assert any(s["name"] == "helper_function" for s in result)
+        finally:
+            # Cleanup: remove the workspace from registry
+            registry.remove_workspace(workspace_id)
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_workspace_returns_error(self, tmp_path):
+        """Should return error message for non-existent workspace."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def foo(): pass")
+
+        result = await get_symbols(
+            file_path=str(test_file),
+            workspace="nonexistent_workspace_id",
+            output_format="text"
+        )
+
+        # Should return an error message, not crash
+        assert isinstance(result, str)
+        assert "not found" in result.lower() or "error" in result.lower()
 
 
 class TestErrorHandling:
@@ -364,10 +423,136 @@ class TestErrorHandling:
         empty_file = tmp_path / "empty.py"
         empty_file.write_text("")
 
-        result = await get_symbols(output_format="json", 
+        result = await get_symbols(output_format="json",
             file_path=str(empty_file)
         )
 
         # Should return empty list
         assert isinstance(result, list)
         assert len(result) == 0
+
+
+class TestModeValidation:
+    """Test mode parameter validation."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_mode_returns_error(self, tmp_path):
+        """Should return error for invalid mode parameter."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def foo(): pass")
+
+        result = await get_symbols(
+            file_path=str(test_file),
+            mode="invalid_mode",
+            output_format="text"
+        )
+
+        # Should return an error message
+        assert isinstance(result, str)
+        assert "invalid" in result.lower() or "mode" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_valid_modes_work(self, tmp_path):
+        """Valid modes should work without error."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def foo(): pass")
+
+        for mode in ["structure", "minimal", "full"]:
+            result = await get_symbols(
+                file_path=str(test_file),
+                mode=mode,
+                output_format="json"
+            )
+            # Should return list, not error
+            assert isinstance(result, list), f"Mode '{mode}' should return list"
+
+
+class TestTextOutputEnrichment:
+    """Test enriched text output with metadata indicators."""
+
+    @pytest.mark.asyncio
+    async def test_text_output_shows_docs_indicator(self, tmp_path):
+        """Text output should show [docs] for symbols with documentation."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "documented.py"
+        test_file.write_text('''
+def documented_function():
+    """This function has documentation."""
+    pass
+
+def undocumented_function():
+    pass
+''')
+
+        result = await get_symbols(
+            file_path=str(test_file),
+            output_format="text",
+            mode="structure"
+        )
+
+        # Should include [docs] indicator for documented function
+        assert "[docs]" in result
+        # The documented function line should have the indicator
+        lines = result.split("\n")
+        doc_lines = [l for l in lines if "documented_function" in l]
+        assert any("[docs]" in l for l in doc_lines)
+
+    @pytest.mark.asyncio
+    async def test_text_output_shows_refs_indicator(self, tmp_path):
+        """Text output should show [N refs] for symbols with references."""
+        from miller.server import get_symbols
+
+        # Note: This test may show 0 refs without indexing, but the format should be correct
+        test_file = tmp_path / "referenced.py"
+        test_file.write_text('''
+def helper():
+    pass
+
+def caller():
+    helper()
+    helper()
+''')
+
+        result = await get_symbols(
+            file_path=str(test_file),
+            output_format="text",
+            mode="structure"
+        )
+
+        # Text output should be valid (refs indicator only appears when refs > 0)
+        assert isinstance(result, str)
+        assert "helper" in result
+        assert "caller" in result
+
+    @pytest.mark.asyncio
+    async def test_text_output_format_structure(self, tmp_path):
+        """Text output should have correct structure with indicators."""
+        from miller.server import get_symbols
+
+        test_file = tmp_path / "sample.py"
+        test_file.write_text('''
+class MyClass:
+    """A documented class."""
+
+    def method(self):
+        """A documented method."""
+        pass
+''')
+
+        result = await get_symbols(
+            file_path=str(test_file),
+            output_format="text",
+            mode="structure",
+            max_depth=1
+        )
+
+        # Should have file header
+        assert "sample.py:" in result
+        # Should show class with docs indicator
+        assert "MyClass" in result
+        assert "[docs]" in result

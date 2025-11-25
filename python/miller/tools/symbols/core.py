@@ -26,18 +26,20 @@ async def get_symbols_enhanced(
     max_depth: int = 1,
     target: Optional[str] = None,
     limit: Optional[int] = None,
-    workspace: str = "primary"
+    workspace: str = "primary",
+    workspace_storage: Optional[Any] = None
 ) -> list[dict[str, Any]]:
     """
     Get file structure with enhanced filtering and modes.
 
     Args:
-        file_path: Path to file (relative or absolute)
+        file_path: Path to file (relative or absolute, resolved by caller)
         mode: Reading mode - "structure" (default), "minimal", or "full"
         max_depth: Maximum nesting depth (0=top-level only, 1=include direct children, etc.)
         target: Filter to symbols matching this name (case-insensitive partial match)
         limit: Maximum number of symbols to return
         workspace: Workspace to query ("primary" or workspace_id)
+        workspace_storage: Optional workspace-specific StorageManager for metadata lookups
 
     Returns:
         List of symbol dictionaries with metadata based on mode
@@ -100,12 +102,14 @@ async def get_symbols_enhanced(
         # 4. Extract code bodies based on mode (returns dict: id -> code_body)
         code_bodies = extract_code_bodies(symbols, str(path), mode)
 
+        # Use workspace-specific storage if provided, otherwise fall back to global
+        active_storage = workspace_storage if workspace_storage is not None else server.storage
+
         # 5. Get reference counts from relationships table (Task 2.2)
         reference_counts = {}
         try:
-            storage_mgr = server.storage
-            if storage_mgr is not None:
-                reference_counts = get_reference_counts(symbols, storage_mgr)
+            if active_storage is not None:
+                reference_counts = get_reference_counts(symbols, active_storage)
         except Exception:
             # If storage unavailable, continue without reference counts
             pass
@@ -123,9 +127,8 @@ async def get_symbols_enhanced(
         # 7. Find cross-language variants (Task 2.5)
         cross_language_map = {}
         try:
-            storage_mgr = server.storage
-            if storage_mgr is not None:
-                cross_language_map = find_cross_language_variants(symbols, storage_mgr, language)
+            if active_storage is not None:
+                cross_language_map = find_cross_language_variants(symbols, active_storage, language)
         except Exception:
             # If storage unavailable, continue without cross-language hints
             pass
@@ -134,9 +137,8 @@ async def get_symbols_enhanced(
         importance_scores = {}
         entry_points = {}
         try:
-            storage_mgr = server.storage
-            if storage_mgr is not None:
-                importance_scores, entry_points = calculate_importance_scores(symbols, storage_mgr)
+            if active_storage is not None:
+                importance_scores, entry_points = calculate_importance_scores(symbols, active_storage)
         except Exception:
             # If calculation fails, use defaults
             pass
@@ -184,8 +186,7 @@ async def get_symbols_enhanced(
         return result_dicts
 
     except Exception as e:
-        # Debug: print the exception
-        import traceback
-        traceback.print_exc()
-        print(f"Exception in get_symbols_enhanced: {e}")
+        import logging
+        logger = logging.getLogger("miller.tools.symbols")
+        logger.exception(f"Error in get_symbols_enhanced: {e}")
         return []

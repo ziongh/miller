@@ -148,20 +148,6 @@ fast_refs(
 
 Finds ALL references in <20ms. **The results are complete** - you don't need to search again.
 
-### fast_goto - Jump to Definition
-**Use for:** Finding where a symbol is defined (exact file + line)
-
-**Never:**
-- Scroll through files manually
-- Use grep to find definitions
-
-Miller knows EXACTLY where every symbol is (<5ms).
-
-```javascript
-fast_goto(symbol_name="UserService")
-// → python/miller/services/user.py:45
-```
-
 ### trace_call_path - Cross-Language Execution Flow
 **Use for:** Understanding execution flow, finding all callers/callees
 
@@ -201,6 +187,32 @@ fast_explore(mode="similar", symbol="getUserData", limit=10)
 // Analyze dependencies
 fast_explore(mode="dependencies", symbol="PaymentService", depth=3)
 ```
+
+### rename_symbol - Safe Symbol Renaming (New!)
+**Use for:** Renaming symbols across the entire codebase safely
+
+Miller's **SAFE REFACTORING** tool. Uses `fast_refs` internally to find ALL references, then applies changes atomically with word-boundary safety.
+
+```javascript
+// Preview a rename (default: dry_run=true, NO changes made)
+rename_symbol(old_name="getUserData", new_name="fetchUserData")
+// → Shows all files/lines that would change
+
+// Apply after reviewing preview
+rename_symbol(old_name="getUserData", new_name="fetchUserData", dry_run=false)
+// → Actually renames across codebase
+```
+
+**Safety Features:**
+- **Word-boundary matching** - renaming "get" won't affect "get_user" or "forget"
+- **Name collision detection** - warns if new_name already exists
+- **Identifier validation** - ensures new_name is syntactically valid
+- **Preview mode** - default dry_run=true lets you review before committing
+
+**Workflow:**
+1. `rename_symbol("old", "new")` → Review preview
+2. `rename_symbol("old", "new", dry_run=false)` → Apply changes
+3. Run tests to verify no breakage
 
 ### checkpoint, recall, plan - Session Memory
 **Critical for continuity across sessions.**
@@ -265,9 +277,11 @@ manage_workspace(operation="index")
 1. `fast_refs(symbol_name="...")` - **REQUIRED before changes** (see all usages)
 2. `trace_call_path` - Understand upstream/downstream impact
 3. Plan changes based on complete impact analysis
-4. Make changes (with confidence - you've checked everything)
-5. `fast_refs` again - Verify all usages updated
-6. `checkpoint({ description: "Refactored [what] - [why]" })` - Document decision
+4. **For renames:** Use `rename_symbol(old, new)` for safe atomic renames
+   - Preview first (dry_run=true by default)
+5. For other changes: Make changes manually (with confidence - you've checked everything)
+6. `fast_refs` again - Verify all usages updated
+7. `checkpoint({ description: "Refactored [what] - [why]" })` - Document decision
 
 ### 4. Understanding New Codebase
 1. `recall()` - Check for previous exploration notes

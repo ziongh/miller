@@ -7,6 +7,29 @@ Provides get_symbols for exploring file structure with minimal token overhead.
 from typing import Any, Literal, Optional, Union
 
 
+def _build_indicators(sym: dict[str, Any]) -> str:
+    """Build metadata indicator string for a symbol.
+
+    Returns string like "[docs] [5 refs] [entry]" or empty string.
+    """
+    indicators = []
+
+    # Documentation indicator
+    if sym.get("has_docs"):
+        indicators.append("[docs]")
+
+    # Reference count indicator (only if > 0)
+    refs = sym.get("references_count", 0)
+    if refs > 0:
+        indicators.append(f"[{refs} refs]")
+
+    # Entry point indicator
+    if sym.get("is_entry_point"):
+        indicators.append("[entry]")
+
+    return " ".join(indicators)
+
+
 def _format_symbols_as_text(file_path: str, symbols: list[dict[str, Any]]) -> str:
     """Format symbols as lean text output - grep-style for quick scanning.
 
@@ -14,14 +37,19 @@ def _format_symbols_as_text(file_path: str, symbols: list[dict[str, Any]]) -> st
     ```
     src/user.py: 5 symbols
 
-    Class UserService (lines 10-50)
+    Class UserService (lines 10-50) [docs] [12 refs]
       def __init__(self, db: Database)
       def get_user(self, id: int) -> User
       def save_user(self, user: User) -> bool
 
-    Function validate_email (lines 52-60)
+    Function validate_email (lines 52-60) [docs]
       def validate_email(email: str) -> bool
     ```
+
+    Indicators:
+    - [docs]: Symbol has documentation
+    - [N refs]: Symbol has N references (only shown if > 0)
+    - [entry]: Symbol is an entry point
     """
     from pathlib import Path
 
@@ -45,9 +73,13 @@ def _format_symbols_as_text(file_path: str, symbols: list[dict[str, Any]]) -> st
         end = sym.get("end_line", start)
         signature = sym.get("signature", "")
 
-        # Header: Kind Name (lines X-Y)
+        # Header: Kind Name (lines X-Y) [indicators]
         line_info = f"line {start}" if start == end else f"lines {start}-{end}"
-        output.append(f"{kind} {name} ({line_info})")
+        indicators = _build_indicators(sym)
+        if indicators:
+            output.append(f"{kind} {name} ({line_info}) {indicators}")
+        else:
+            output.append(f"{kind} {name} ({line_info})")
 
         # Signature (truncated)
         if signature:
@@ -186,16 +218,51 @@ async def get_symbols(
     Workflow: get_symbols(mode="structure") → identify what you need → get_symbols(target="X", mode="full")
     This two-step approach reads ONLY the code you need. Much better than reading entire files!
     """
+    from pathlib import Path
     from miller.tools.symbols import get_symbols_enhanced
     from miller.toon_types import encode_toon, should_use_toon
 
+    # Validate mode parameter
+    valid_modes = {"structure", "minimal", "full"}
+    if mode not in valid_modes:
+        return f"Error: Invalid mode '{mode}'. Must be one of: {', '.join(sorted(valid_modes))}"
+
+    # Resolve workspace and file path
+    resolved_file_path = file_path
+    workspace_storage = None
+
+    if workspace != "primary":
+        from miller.workspace_registry import WorkspaceRegistry
+        from miller.workspace_paths import get_workspace_db_path
+        from miller.storage import StorageManager
+
+        registry = WorkspaceRegistry()
+        workspace_entry = registry.get_workspace(workspace)
+
+        if workspace_entry is None:
+            return f"Error: Workspace '{workspace}' not found"
+
+        # Resolve relative paths against workspace root
+        path = Path(file_path)
+        if not path.is_absolute():
+            resolved_file_path = str(Path(workspace_entry.path) / file_path)
+
+        # Get workspace-specific storage for metadata lookups
+        try:
+            db_path = get_workspace_db_path(workspace)
+            workspace_storage = StorageManager(db_path=str(db_path))
+        except Exception:
+            # If workspace storage unavailable, continue without it
+            pass
+
     result = await get_symbols_enhanced(
-        file_path=file_path,
+        file_path=resolved_file_path,
         mode=mode,
         max_depth=max_depth,
         target=target,
         limit=limit,
-        workspace=workspace
+        workspace=workspace,
+        workspace_storage=workspace_storage
     )
 
     # Handle special output formats

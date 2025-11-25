@@ -171,3 +171,60 @@ class TestReRankerFallback:
 
             with pytest.raises(Exception, match="Model failed"):
                 reranker.rerank_results("query", results, fallback_on_error=False)
+
+
+class TestReRankerScoreNormalization:
+    """Tests for score normalization after re-ranking."""
+
+    def test_rerank_scores_are_normalized_to_0_1_range(self):
+        """Re-ranked scores should be normalized to 0.0-1.0 range.
+
+        Cross-encoder models return raw logits which can be negative.
+        These need to be normalized so they're usable as quality indicators
+        and compatible with filtering thresholds.
+        """
+        from miller.reranker import ReRanker
+
+        reranker = ReRanker()
+        if not reranker.is_available():
+            pytest.skip("Re-ranker model not available")
+
+        # Use a query that will produce varied scores
+        query = "user authentication login"
+        results = [
+            {"name": "authenticate", "signature": "def authenticate(user, password)", "score": 0.9},
+            {"name": "login", "signature": "def login(username)", "score": 0.8},
+            {"name": "random_func", "signature": "def random_func()", "score": 0.7},
+            {"name": "xyz_unrelated", "signature": "def xyz_unrelated()", "score": 0.6},
+        ]
+
+        reranked = reranker.rerank_results(query, results)
+
+        # All scores should be in 0.0-1.0 range (not raw logits which can be negative)
+        for r in reranked:
+            score = r.get("score", 0.0)
+            assert 0.0 <= score <= 1.0, f"Score {score} is outside 0.0-1.0 range for {r['name']}"
+
+    def test_rerank_scores_preserve_relative_ordering(self):
+        """Normalized scores should preserve the relative ordering from cross-encoder.
+
+        Even after normalization, better matches should have higher scores.
+        """
+        from miller.reranker import ReRanker
+
+        reranker = ReRanker()
+        if not reranker.is_available():
+            pytest.skip("Re-ranker model not available")
+
+        query = "database connection pool"
+        results = [
+            {"name": "get_pool", "signature": "def get_pool() -> ConnectionPool", "score": 0.5},
+            {"name": "connect_db", "signature": "def connect_db(host, port)", "score": 0.5},
+            {"name": "unrelated", "signature": "def unrelated()", "score": 0.5},
+        ]
+
+        reranked = reranker.rerank_results(query, results)
+
+        # Results should be sorted by score descending
+        scores = [r["score"] for r in reranked]
+        assert scores == sorted(scores, reverse=True), "Scores should be in descending order"

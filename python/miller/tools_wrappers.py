@@ -13,10 +13,11 @@ from typing import Any, Literal, Optional, Union
 
 from miller import server_state
 from miller.tools.search import fast_search as fast_search_impl
-from miller.tools.goto_refs_wrapper import fast_goto as fast_goto_impl, fast_refs as fast_refs_impl
+from miller.tools.navigation import fast_refs as fast_refs_impl
 from miller.tools.symbols_wrapper import get_symbols as get_symbols_impl
 from miller.tools.trace_wrapper import trace_call_path as trace_call_path_impl
 from miller.tools.explore_wrapper import fast_explore as fast_explore_impl
+from miller.tools.refactor import rename_symbol as rename_symbol_impl
 
 
 # Readiness check message for tools called before initialization completes
@@ -149,41 +150,6 @@ async def fast_search(
         vector_store=server_state.vector_store,
         storage=server_state.storage,
         embeddings=server_state.embeddings,
-    )
-
-
-async def fast_goto(
-    symbol_name: str,
-    workspace: str = "primary",
-    output_format: Literal["text", "json"] = "text"
-) -> Union[str, Optional[dict[str, Any]]]:
-    """
-    Find symbol definition location - jump directly to where a symbol is defined.
-
-    Use this when you know the symbol name and need to find its definition.
-    Returns exact file path and line number - you can navigate there directly.
-
-    Args:
-        symbol_name: Name of symbol to find
-        workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "text" (default) or "json"
-                      - "text": Lean formatted string - DEFAULT
-                      - "json": Dict with full metadata
-
-    Returns:
-        - Text mode: Formatted string with location
-        - JSON mode: Symbol location dict (file, line, signature), or None if not found
-
-    Note: For exploring unknown code, use fast_search first. Use fast_goto when
-    you already know the symbol name from search results or references.
-    """
-    if err := _check_ready(require_vectors=False):
-        return err
-    return await fast_goto_impl(
-        symbol_name=symbol_name,
-        workspace=workspace,
-        output_format=output_format,
-        storage=server_state.storage,
     )
 
 
@@ -321,7 +287,7 @@ async def fast_refs(
         3. Make changes
         4. fast_refs("symbol") again → Verify all usages updated
 
-    Note: Shows where symbols are USED (not where defined). Use fast_goto for definitions.
+    Note: Shows where symbols are USED (not where defined). Use get_symbols with target parameter to find definitions.
     """
     if err := _check_ready(require_vectors=False):
         return err
@@ -473,6 +439,75 @@ async def fast_explore(
         symbol=symbol,
         depth=depth,
         limit=limit,
+        workspace=workspace,
+        output_format=output_format,
+        storage=server_state.storage,
+        vector_store=server_state.vector_store,
+    )
+
+
+async def rename_symbol(
+    old_name: str,
+    new_name: str,
+    scope: str = "workspace",
+    dry_run: bool = True,
+    update_imports: bool = True,
+    workspace: str = "primary",
+    output_format: Literal["text", "json"] = "text",
+) -> Union[str, dict[str, Any]]:
+    """
+    Safely rename a symbol across the codebase with reference checking.
+
+    This is Miller's SAFE REFACTORING tool. It uses fast_refs to find ALL references
+    (definition + usages), then applies changes atomically with word-boundary safety.
+
+    IMPORTANT: Default dry_run=True shows a preview WITHOUT modifying files.
+    Set dry_run=False only after reviewing the preview.
+
+    Args:
+        old_name: Current symbol name to rename (e.g., "getUserData", "User.save")
+                  Supports qualified names for method disambiguation
+        new_name: New name for the symbol (must be valid identifier)
+        scope: Rename scope - "workspace" (default) or "file" (future)
+        dry_run: If True (default), show preview only. If False, apply changes.
+        update_imports: Whether to update import statements (default True)
+        workspace: Workspace to operate on ("primary" or workspace_id)
+        output_format: Output format - "text" (default) or "json"
+
+    Returns:
+        - dry_run=True: Preview showing all files/lines that would change
+        - dry_run=False: Summary of applied changes
+
+    Safety Features:
+        - Word-boundary matching prevents renaming substrings
+          (renaming "get" won't affect "get_user" or "forget")
+        - Name collision detection warns if new_name already exists
+        - Identifier validation ensures new_name is syntactically valid
+        - Preview mode lets you review before committing
+
+    Examples:
+        # Preview a rename (safe, no changes)
+        await rename_symbol("getUserData", "fetchUserData")
+
+        # Apply after reviewing preview
+        await rename_symbol("getUserData", "fetchUserData", dry_run=False)
+
+        # Rename a method specifically
+        await rename_symbol("User.save", "User.persist", dry_run=False)
+
+    Workflow:
+        1. rename_symbol("old", "new") → Review preview
+        2. rename_symbol("old", "new", dry_run=False) → Apply changes
+        3. Run tests to verify no breakage
+    """
+    if err := _check_ready(require_vectors=False):
+        return err
+    return await rename_symbol_impl(
+        old_name=old_name,
+        new_name=new_name,
+        scope=scope,
+        dry_run=dry_run,
+        update_imports=update_imports,
         workspace=workspace,
         output_format=output_format,
         storage=server_state.storage,

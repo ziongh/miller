@@ -128,16 +128,54 @@ async def _background_initialization_and_indexing():
 
         logger.info("🔧 Initializing Miller components in background...")
 
-        # Lazy imports - only load heavy ML libraries in background task
-        # WorkspaceScanner transitively imports embeddings (torch, sentence-transformers)
-        # which takes ~6s on first load. This is expected and doesn't block MCP handshake.
+        # ╔══════════════════════════════════════════════════════════════════════════════╗
+        # ║  CRITICAL: IMPORTS MUST RUN IN THREAD POOL - NOT IN EVENT LOOP!              ║
+        # ║                                                                               ║
+        # ║  Python imports are SYNCHRONOUS and BLOCK THE EVENT LOOP even inside async   ║
+        # ║  functions! This causes the MCP handshake to hang for 5-15 seconds.          ║
+        # ║                                                                               ║
+        # ║  The imports below load heavy ML libraries (torch, sentence-transformers)    ║
+        # ║  which take ~5s. If we import them directly, the event loop blocks and       ║
+        # ║  Claude Code can't complete the MCP handshake until imports finish.          ║
+        # ║                                                                               ║
+        # ║  SOLUTION: Run imports in asyncio.to_thread() so they execute in the         ║
+        # ║  thread pool, allowing the event loop to continue processing MCP messages.   ║
+        # ║                                                                               ║
+        # ║  DO NOT REMOVE THIS! This fix has been reverted multiple times causing       ║
+        # ║  15-second startup delays. The "lazy import" pattern is NOT enough -         ║
+        # ║  imports block even inside async functions!                                   ║
+        # ╚══════════════════════════════════════════════════════════════════════════════╝
         init_phase = "imports"
         t0 = time.time()
-        from miller.storage import StorageManager
-        from miller.workspace import WorkspaceScanner
-        from miller.workspace_registry import WorkspaceRegistry
-        from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
-        from miller.embeddings import EmbeddingManager, VectorStore
+
+        def _sync_heavy_imports():
+            """Run heavy imports in thread pool to avoid blocking event loop."""
+            from miller.storage import StorageManager
+            from miller.workspace import WorkspaceScanner
+            from miller.workspace_registry import WorkspaceRegistry
+            from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
+            from miller.embeddings import EmbeddingManager, VectorStore
+            return (
+                StorageManager,
+                WorkspaceScanner,
+                WorkspaceRegistry,
+                get_workspace_db_path,
+                get_workspace_vector_path,
+                EmbeddingManager,
+                VectorStore,
+            )
+
+        # Run imports in thread pool - this is THE critical fix for fast startup
+        (
+            StorageManager,
+            WorkspaceScanner,
+            WorkspaceRegistry,
+            get_workspace_db_path,
+            get_workspace_vector_path,
+            EmbeddingManager,
+            VectorStore,
+        ) = await asyncio.to_thread(_sync_heavy_imports)
+
         logger.info(f"✅ Imports complete ({time.time()-t0:.1f}s)")
 
         init_phase = "workspace_setup"
@@ -224,25 +262,43 @@ async def lifespan(_app):
     """
     FastMCP lifespan handler - startup and shutdown hooks.
 
+    ╔══════════════════════════════════════════════════════════════════════════════╗
+    ║  CRITICAL: THIS FUNCTION MUST YIELD IMMEDIATELY!                             ║
+    ║                                                                               ║
+    ║  The MCP protocol requires the server to respond to handshake within ~100ms. ║
+    ║  If we do ANY heavy work before yielding, Claude Code will timeout or show   ║
+    ║  "connecting..." for 15+ seconds.                                            ║
+    ║                                                                               ║
+    ║  Pattern:                                                                     ║
+    ║    1. Spawn background task (asyncio.create_task - non-blocking)             ║
+    ║    2. IMMEDIATELY yield (server becomes ready for MCP handshake)             ║
+    ║    3. Background task runs heavy init AFTER handshake completes              ║
+    ║                                                                               ║
+    ║  The background task must also avoid blocking the event loop - see the       ║
+    ║  asyncio.to_thread() usage in _background_initialization_and_indexing().     ║
+    ╚══════════════════════════════════════════════════════════════════════════════╝
+
     Startup:
-      1. Server becomes ready instantly (MCP handshake completes)
-      2. Background task initializes components (non-blocking)
+      1. Server becomes ready instantly (MCP handshake completes in <100ms)
+      2. Background task initializes components (non-blocking via thread pool)
       3. Background task checks if indexing needed and runs if stale
       4. File watcher starts for real-time updates
 
     Shutdown: Stop file watcher and cleanup
-
-    This matches Julie's pattern: instant handshake, background initialization + indexing.
     """
     # File watcher reference (initialized by background task)
     file_watcher = None
 
-    # Spawn background task immediately (server becomes ready without waiting)
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # SPAWN BACKGROUND TASK - DO NOT ADD ANY CODE BEFORE yield!
+    # The yield MUST happen within milliseconds of this function being called.
+    # Any delay here = delay in MCP handshake = angry users waiting 15 seconds.
+    # ═══════════════════════════════════════════════════════════════════════════════
     logger.info("🚀 Spawning background initialization task...")
     init_task = asyncio.create_task(_background_initialization_and_indexing())
     logger.info("✅ Server ready for MCP handshake (initialization running in background)")
 
-    yield  # Server runs here - client sees "Connected" immediately
+    yield  # ← SERVER IS NOW READY! Client sees "Connected" immediately after this.
 
     # SHUTDOWN: Stop file watcher and wait for background task
     logger.info("🛑 Miller server shutting down...")
