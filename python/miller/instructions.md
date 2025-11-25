@@ -173,19 +173,18 @@ Results are **complete** - you see the entire call graph without manual tracing.
 **Use for:** Understanding unfamiliar codebases, finding patterns
 
 **Modes:**
-- `"types"` - Type intelligence (implementations, hierarchy)
-- `"similar"` - Find semantically similar code (duplicate detection)
-- `"dependencies"` - Trace transitive dependencies (impact analysis)
+- `"types"` - Type intelligence (implementations, hierarchy, returns, parameters)
+- `"similar"` - Find semantically similar code using TRUE vector embedding similarity
+
+**Note:** For dependency tracing, use `trace_call_path(direction="downstream")` instead.
 
 ```javascript
 // Find implementations of an interface
 fast_explore(mode="types", type_name="IUserService")
 
-// Find duplicate code
+// Find semantically similar code - works across naming conventions and languages!
+// e.g., getUserData ↔ fetch_user_info, authenticate ↔ verifyCredentials
 fast_explore(mode="similar", symbol="getUserData", limit=10)
-
-// Analyze dependencies
-fast_explore(mode="dependencies", symbol="PaymentService", depth=3)
 ```
 
 ### rename_symbol - Safe Symbol Renaming (New!)

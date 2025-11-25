@@ -32,9 +32,9 @@ class TestManageWorkspaceRefresh:
             try:
                 result = await manage_workspace(operation="refresh")
 
-                # Should return error message
-                assert "error" in result.lower() or "required" in result.lower()
-                assert "workspace_id" in result.lower()
+                # Should return error message indicating workspace parameter is required
+                assert "error" in result.lower()
+                assert "'workspace' parameter required" in result.lower()
 
             finally:
                 os.chdir(original_dir)

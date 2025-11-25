@@ -84,9 +84,12 @@ async def handle_remove(registry: WorkspaceRegistry, workspace_id: Optional[str]
     Returns:
         Success or error message
     """
-    # Validate parameter
+    # Validate parameter - workspace_id is REQUIRED
     if not workspace_id:
-        return "Error: 'workspace_id' parameter required for remove operation"
+        return (
+            "Error: 'workspace' parameter required for remove operation.\n"
+            "Use manage_workspace(operation='list') to see available workspace IDs."
+        )
 
     # Get workspace before removing (to show name in confirmation)
     workspace = registry.get_workspace(workspace_id)
@@ -133,9 +136,12 @@ async def handle_refresh(registry: WorkspaceRegistry, workspace_id: Optional[str
     Returns:
         Success message with statistics
     """
-    # Validate parameter
+    # Validate parameter - workspace_id is REQUIRED (aligned with Julie)
     if not workspace_id:
-        return "Error: 'workspace_id' parameter required for refresh operation"
+        return (
+            "Error: 'workspace' parameter required for refresh operation.\n"
+            "Use manage_workspace(operation='list') to see available workspace IDs."
+        )
 
     # Get workspace
     workspace = registry.get_workspace(workspace_id)

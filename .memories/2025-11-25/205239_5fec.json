@@ -1,0 +1,33 @@
+{
+  "description": "Refactored fast_explore tool: (1) Fixed similar mode to use TRUE semantic similarity via semantic_neighbors() instead of broken text search - now finds similar code patterns across naming conventions and languages; (2) Removed redundant dependencies mode - use trace_call_path(direction='downstream') instead; (3) Fixed workspace handling for primary workspace to properly resolve workspace-specific paths. 744 tests pass.",
+  "git": {
+    "branch": "main",
+    "commit": "802cb00",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/tools/explore.py",
+      "python/miller/tools/explore_wrapper.py",
+      "python/miller/tools/trace/builder.py",
+      "python/miller/tools/trace/core.py",
+      "python/miller/tools/trace/search.py",
+      "python/miller/tools/trace_types.py",
+      "python/miller/tools/trace_wrapper.py",
+      "python/miller/tools_wrappers.py",
+      "python/tests/test_explore_dependencies.py",
+      "python/tests/test_fast_explore.py",
+      "python/tests/test_trace_advanced.py",
+      ".memories/2025-11-25/202312_fccd.json",
+      ".memories/2025-11-25/202940_f231.json",
+      "python/tests/test_semantic_discovery.py"
+    ]
+  },
+  "id": "checkpoint_d5117144_012349",
+  "tags": [
+    "fast-explore",
+    "semantic-similarity",
+    "refactor",
+    "bugfix"
+  ],
+  "timestamp": 1764039159,
+  "type": "checkpoint"
+}

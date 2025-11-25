@@ -89,6 +89,11 @@ async def trace_call_path(
     else:
         workspace_storage = storage
 
+    # Get embeddings and vector_store from server state for semantic discovery
+    from miller import server_state
+    embeddings = server_state.embeddings
+    vector_store = server_state.vector_store
+
     try:
         # For tree format, return directly (it's already a formatted string)
         if output_format == "tree":
@@ -100,6 +105,8 @@ async def trace_call_path(
                 context_file=context_file,
                 output_format="tree",
                 workspace=workspace,
+                embeddings=embeddings,
+                vector_store=vector_store,
             )
 
         # For TOON/auto modes, get JSON first then encode
@@ -111,6 +118,8 @@ async def trace_call_path(
             context_file=context_file,
             output_format="json",
             workspace=workspace,
+            embeddings=embeddings,
+            vector_store=vector_store,
         )
 
         # Use Julie's simple pattern: TOON handles nested structures natively

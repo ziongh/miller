@@ -377,10 +377,9 @@ async def trace_call_path(
 
 
 async def fast_explore(
-    mode: Literal["types", "similar", "dependencies"] = "types",
+    mode: Literal["types", "similar"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
-    depth: int = 3,
     limit: int = 10,
     workspace: str = "primary",
     output_format: Literal["text", "json", "toon", "auto"] = "text",
@@ -395,14 +394,15 @@ async def fast_explore(
 
     Modes:
     - types: Type intelligence (implementations, hierarchy, return/parameter types)
-    - similar: Find semantically similar code (for duplicate detection)
-    - dependencies: Trace transitive dependencies (for impact analysis)
+    - similar: Find semantically similar code using TRUE vector embedding similarity
+
+    Note: For dependency tracing, use trace_call_path(direction="downstream") instead,
+    which provides richer features including semantic cross-language discovery.
 
     Args:
-        mode: Exploration mode
+        mode: Exploration mode ("types" or "similar")
         type_name: Name of type to explore (required for types mode)
-        symbol: Symbol name to explore (required for similar/dependencies modes)
-        depth: Maximum traversal depth for dependencies mode (1-10, default 3)
+        symbol: Symbol name to explore (required for similar mode)
         limit: Maximum results (default: 10)
         workspace: Workspace to query ("primary" or workspace_id)
         output_format: Output format - "text" (default), "json", "toon", or "auto"
@@ -421,28 +421,26 @@ async def fast_explore(
         # Type intelligence - find implementations and usages
         await fast_explore(mode="types", type_name="IUserService")
 
-        # Find similar code - duplicate detection
+        # Find semantically similar code - duplicate/pattern detection
         await fast_explore(mode="similar", symbol="getUserData")
 
-        # Trace dependencies - impact analysis before refactoring
-        await fast_explore(mode="dependencies", symbol="PaymentService", depth=3)
-
-    Note: Similar mode uses an optimized similarity threshold internally.
-    Results are ranked by relevance - trust the top matches.
+    Note: Similar mode uses TRUE semantic similarity - it finds code with similar
+    meaning/patterns, not just matching text. This works across naming conventions
+    and even different languages (e.g., getUserData ↔ fetch_user_info).
     """
-    # Similar mode needs vector_store, other modes only need storage
+    # Similar mode needs vector_store and embeddings, types mode only needs storage
     if err := _check_ready(require_vectors=(mode == "similar")):
         return err
     return await fast_explore_impl(
         mode=mode,
         type_name=type_name,
         symbol=symbol,
-        depth=depth,
         limit=limit,
         workspace=workspace,
         output_format=output_format,
         storage=server_state.storage,
         vector_store=server_state.vector_store,
+        embeddings=server_state.embeddings,
     )
 
 

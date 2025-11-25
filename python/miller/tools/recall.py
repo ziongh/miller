@@ -115,6 +115,7 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
         "decision": "🎯",
         "learning": "💡",
         "observation": "👁️",
+        "plan": "📋",
     }
 
     count = len(results)
@@ -130,7 +131,8 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
         mem_type = mem.get("type", "checkpoint")
         icon = icons.get(mem_type, "•")
         mem_id = mem.get("id", "?")
-        description = mem.get("description", "")
+        # Checkpoints have "description", plans have "title" (with optional "content")
+        description = mem.get("description") or mem.get("title", "")
         tags = mem.get("tags", [])
         timestamp = mem.get("timestamp", 0)
         git = mem.get("git", {})

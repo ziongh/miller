@@ -1,10 +1,18 @@
 ---
-allowed-tools: recall
+allowed-tools: recall, plan
 argument-hint: [time|topic] [--type type] [--since time]
 description: Retrieve development memories (user)
 ---
 
 IMMEDIATELY retrieve development memories based on the provided query. DO NOT wait or ask for confirmation.
+
+**FIRST: Check for active plan**
+1. Call plan(action="list", status="active") to check for active plan
+2. If found, show it at the TOP of output:
+   ```
+   📋 Active: <title> [completed/total]
+   ```
+3. Then proceed with recall query below
 
 Determine query mode from $ARGUMENTS and execute the appropriate tool NOW:
 
@@ -29,7 +37,7 @@ Determine query mode from $ARGUMENTS and execute the appropriate tool NOW:
    - query=$ARGUMENTS (enables semantic search using indexed embeddings)
    - limit=20 (get more results for topic searches)
 
-💡 NEW: Semantic search uses Miller's hybrid text+semantic engine for intelligent topic matching!
+💡 Semantic search uses Miller's hybrid text+semantic engine to find BOTH checkpoints AND plans!
 
 **Filtered query** (e.g., "--type decision", "--since 2d"):
 1. Parse the flags (--type, --since)
@@ -46,8 +54,8 @@ Determine query mode from $ARGUMENTS and execute the appropriate tool NOW:
 1. IMMEDIATELY call recall tool with limit=10 to get the last 10 memories
 
 After retrieving results, present them formatted with:
-- Type icon (✓ checkpoint, 🎯 decision, 💡 learning, 👁️ observation)
-- Description
+- Type icon (✓ checkpoint, 🎯 decision, 💡 learning, 👁️ observation, 📋 plan)
+- Description (or title for plans)
 - Relative time and git branch
 - Tags (if present)
 - Keep output scannable (newest first)

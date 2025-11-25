@@ -145,6 +145,14 @@ class StorageManager:
         """Clear all reachability data."""
         mutations.clear_reachability(self.conn)
 
+    def clear_all(self) -> None:
+        """
+        Clear all data from all tables (for force re-indexing).
+
+        Use this before a complete rebuild of the index.
+        """
+        mutations.clear_all(self.conn)
+
     def get_reachability_for_target(self, target_id: str) -> list[dict]:
         """Get all symbols that can reach the target (upstream/callers)."""
         return queries.get_reachability_for_target(self.conn, target_id)

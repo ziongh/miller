@@ -13,13 +13,13 @@ from miller.storage import StorageManager
 
 
 async def fast_explore(
-    mode: Literal["types", "similar", "dependencies"] = "types",
+    mode: Literal["types", "similar"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
     threshold: float = 0.7,
-    depth: int = 3,
     storage: Optional[StorageManager] = None,
     vector_store: Optional[Any] = None,  # VectorStore for similar mode
+    embeddings: Optional[Any] = None,  # EmbeddingManager for similar mode
     limit: int = 10,
 ) -> dict[str, Any]:
     """
@@ -27,16 +27,19 @@ async def fast_explore(
 
     Supported modes:
     - types: Type intelligence (implementations, hierarchy, returns, parameters)
-    - similar: Find semantically similar code (for duplicate detection)
-    - dependencies: Trace transitive dependencies (for impact analysis)
+    - similar: Find semantically similar code using vector embeddings
+
+    Note: For dependency tracing, use trace_call_path(direction="downstream") instead,
+    which provides richer features including semantic cross-language discovery.
 
     Args:
-        mode: Exploration mode
+        mode: Exploration mode ("types" or "similar")
         type_name: Name of type to explore (required for types mode)
-        symbol: Symbol name to explore (required for similar/dependencies modes)
+        symbol: Symbol name to explore (required for similar mode)
         threshold: Minimum similarity score for similar mode (0.0-1.0, default 0.7)
-        depth: Maximum traversal depth for dependencies mode (1-10, default 3)
         storage: StorageManager instance (uses global if not provided)
+        vector_store: VectorStore instance (for similar mode)
+        embeddings: EmbeddingManager instance (for similar mode)
         limit: Maximum results (default: 10)
 
     Returns:
@@ -45,11 +48,9 @@ async def fast_explore(
     if mode == "types":
         return await _explore_types(type_name, storage, limit)
     elif mode == "similar":
-        return await _explore_similar(symbol, threshold, storage, vector_store, limit)
-    elif mode == "dependencies":
-        return await _explore_dependencies(symbol, depth, storage, limit)
+        return await _explore_similar(symbol, threshold, storage, vector_store, embeddings, limit)
     else:
-        raise ValueError(f"Unknown exploration mode: {mode}")
+        raise ValueError(f"Unknown exploration mode: {mode}. Valid modes: 'types', 'similar'")
 
 
 async def _explore_types(
@@ -118,9 +119,20 @@ async def _explore_similar(
     threshold: float,
     storage: Optional[StorageManager],
     vector_store: Optional[Any],
+    embeddings: Optional[Any],
     limit: int,
 ) -> dict[str, Any]:
-    """Find semantically similar symbols using vector embeddings."""
+    """
+    Find semantically similar symbols using TRUE vector embedding similarity.
+
+    Unlike a text search, this:
+    1. Looks up the actual symbol from the database
+    2. Builds an embedding from its name + signature + docstring
+    3. Searches for other symbols with similar embeddings
+
+    This enables finding similar code patterns across different naming conventions
+    and even different languages (e.g., getUserData ↔ fetch_user_info).
+    """
     if not symbol:
         return {"symbol": None, "error": "symbol parameter is required", "similar": [], "total_found": 0}
 
@@ -131,12 +143,12 @@ async def _explore_similar(
         if storage is None:
             return {"symbol": symbol, "error": "Storage not available", "similar": [], "total_found": 0}
 
-    # Find the target symbol
+    # Find the target symbol in the database
     target = storage.get_symbol_by_name(symbol)
     if not target:
         return {"symbol": symbol, "error": "Symbol not found", "similar": [], "total_found": 0}
 
-    # Get vector store for similarity search (use passed param or fall back to server global)
+    # Get vector store and embeddings for similarity search
     try:
         if vector_store is None:
             import miller.server as server
@@ -144,106 +156,46 @@ async def _explore_similar(
         if vector_store is None:
             return {"symbol": symbol, "error": "Vector store not available", "similar": [], "total_found": 0}
 
-        # Search for similar symbols using semantic search
-        results = vector_store.search(symbol, method="semantic", limit=limit + 1)
+        if embeddings is None:
+            import miller.server as server
+            embeddings = getattr(server, 'embeddings', None)
+            if embeddings is None:
+                # Try server_state as fallback
+                from miller import server_state
+                embeddings = server_state.embeddings
+        if embeddings is None:
+            return {"symbol": symbol, "error": "Embeddings not available", "similar": [], "total_found": 0}
 
-        # Filter by threshold and exclude self
+        # Use semantic_neighbors for TRUE semantic similarity search
+        from miller.tools.trace.search import semantic_neighbors
+
+        matches = semantic_neighbors(
+            storage=storage,
+            vector_store=vector_store,
+            embeddings=embeddings,
+            symbol=target,
+            limit=limit,
+            threshold=threshold,
+            cross_language_only=False,  # Include same-language matches for similar mode
+        )
+
+        # Format results to match expected output structure
         similar = []
-        target_id = target.get("id")
-        for r in results:
-            if r.get("id") == target_id:
-                continue  # Exclude self
-            score = r.get("score", 0)
-            if score >= threshold:
-                similar.append({
-                    "name": r.get("name"),
-                    "kind": r.get("kind"),
-                    "file_path": r.get("file_path"),
-                    "start_line": r.get("start_line"),
-                    "signature": r.get("signature"),
-                    "similarity": round(score, 3),
-                })
-
-        # Sort by similarity descending
-        similar.sort(key=lambda x: x["similarity"], reverse=True)
-        similar = similar[:limit]
+        for match in matches:
+            similar.append({
+                "name": match.get("name"),
+                "kind": match.get("kind"),
+                "file_path": match.get("file_path"),
+                "start_line": match.get("line", match.get("start_line", 0)),
+                "signature": match.get("signature"),
+                "similarity": round(match.get("similarity", 0), 3),
+                "language": match.get("language"),
+            })
 
         return {"symbol": symbol, "similar": similar, "total_found": len(similar)}
 
     except Exception as e:
         return {"symbol": symbol, "error": str(e), "similar": [], "total_found": 0}
-
-
-async def _explore_dependencies(
-    symbol: Optional[str],
-    depth: int,
-    storage: Optional[StorageManager],
-    limit: int,
-) -> dict[str, Any]:
-    """Trace transitive dependencies for a symbol."""
-    if not symbol:
-        return {"symbol": None, "error": "symbol parameter is required", "dependencies": [], "total_found": 0}
-
-    # Clamp depth
-    depth = max(1, min(10, depth))
-
-    # Get storage
-    if storage is None:
-        import miller.server as server
-        storage = server.storage
-        if storage is None:
-            return {"symbol": symbol, "error": "Storage not available", "dependencies": [], "total_found": 0}
-
-    # Find the target symbol
-    target = storage.get_symbol_by_name(symbol)
-    if not target:
-        return {"symbol": symbol, "error": "Symbol not found", "dependencies": [], "total_found": 0}
-
-    # BFS to find dependencies
-    dependencies = []
-    visited = {target.get("id")}
-    queue = [(target.get("id"), 0)]  # (symbol_id, current_depth)
-    has_cycles = False
-    max_depth_reached = 0
-
-    while queue and len(dependencies) < limit:
-        current_id, current_depth = queue.pop(0)
-        if current_depth >= depth:
-            continue
-
-        max_depth_reached = max(max_depth_reached, current_depth)
-
-        # Get relationships for this symbol
-        rels = storage.get_relationships_from_symbol(current_id)
-        for rel in rels:
-            target_id = rel.get("target_id")
-            if target_id in visited:
-                has_cycles = True
-                continue
-
-            visited.add(target_id)
-            dep_symbol = storage.get_symbol_by_id(target_id)
-            if dep_symbol:
-                dependencies.append({
-                    "name": dep_symbol.get("name"),
-                    "kind": dep_symbol.get("kind"),
-                    "file_path": dep_symbol.get("file_path"),
-                    "start_line": dep_symbol.get("start_line"),
-                    "depth": current_depth + 1,
-                    "relationship": rel.get("kind", "unknown").lower(),
-                })
-                queue.append((target_id, current_depth + 1))
-
-            if len(dependencies) >= limit:
-                break
-
-    return {
-        "symbol": symbol,
-        "dependencies": dependencies,
-        "total_found": len(dependencies),
-        "max_depth_reached": max_depth_reached,
-        "has_cycles": has_cycles,
-    }
 
 
 def _format_explore_as_text(result: dict[str, Any]) -> str:
@@ -370,49 +322,5 @@ def _format_similar_as_text(result: dict[str, Any]) -> str:
         # Show as percentage
         pct = int(similarity * 100)
         output.append(f"  {pct}% {file_path}:{line} → {sig}")
-
-    return "\n".join(output)
-
-
-def _format_dependencies_as_text(result: dict[str, Any]) -> str:
-    """Format dependencies mode result as lean text output."""
-    symbol = result.get("symbol", "?")
-    total = result.get("total_found", 0)
-    error = result.get("error")
-    has_cycles = result.get("has_cycles", False)
-    max_depth = result.get("max_depth_reached", 0)
-
-    if error:
-        return f'Dependencies of "{symbol}": Error - {error}'
-
-    if total == 0:
-        return f'Dependencies of "{symbol}": No dependencies found (0 matches).'
-
-    header = f'Dependencies of "{symbol}" ({total} found, depth {max_depth})'
-    if has_cycles:
-        header += " ⚠ cycles detected"
-    output = [header + ":", ""]
-
-    # Group by depth
-    deps_by_depth: dict[int, list] = {}
-    for dep in result.get("dependencies", []):
-        d = dep.get("depth", 1)
-        if d not in deps_by_depth:
-            deps_by_depth[d] = []
-        deps_by_depth[d].append(dep)
-
-    for depth_level in sorted(deps_by_depth.keys()):
-        output.append(f"  Depth {depth_level}:")
-        for dep in deps_by_depth[depth_level]:
-            name = dep.get("name", "?")
-            file_path = dep.get("file_path", "?")
-            line = dep.get("start_line", 0)
-            rel = dep.get("relationship", "?")
-            output.append(f"    {file_path}:{line} → {name} ({rel})")
-        output.append("")
-
-    # Remove trailing empty lines
-    while output and output[-1] == "":
-        output.pop()
 
     return "\n".join(output)

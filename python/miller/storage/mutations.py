@@ -259,6 +259,25 @@ def clear_reachability(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def clear_all(conn: sqlite3.Connection) -> None:
+    """
+    Clear all data from all tables (for force re-indexing).
+
+    Deletes from tables in correct order to respect foreign key constraints,
+    even though CASCADE should handle it. This is more explicit and safer.
+
+    Args:
+        conn: SQLite connection
+    """
+    # Delete in reverse dependency order (children before parents)
+    conn.execute("DELETE FROM reachability")
+    conn.execute("DELETE FROM relationships")
+    conn.execute("DELETE FROM identifiers")
+    conn.execute("DELETE FROM symbols")
+    conn.execute("DELETE FROM files")
+    conn.commit()
+
+
 def incremental_update_atomic(
     conn: sqlite3.Connection,
     files_to_clean: list[str],
