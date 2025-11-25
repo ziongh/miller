@@ -30,6 +30,9 @@ async def checkpoint(
     IMPORTANT: Don't wait to be asked - checkpoint important findings, decisions,
     and learnings as you go. This builds a knowledge base that makes future work faster.
 
+    NEVER ask "should I checkpoint this?" - the answer is ALWAYS YES. Checkpoints are cheap
+    (<50ms), context is expensive (hours of work). When in doubt, checkpoint it.
+
     Checkpoints are stored in `.memories/YYYY-MM-DD/` (UTC timezone) with
     automatic git context capture (branch, commit, dirty status, changed files).
 

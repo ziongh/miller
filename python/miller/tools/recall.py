@@ -79,6 +79,10 @@ async def recall(
 
     The memories are complete and accurate - trust them! Past decisions and learnings
     are valuable context for current work.
+
+    CRITICAL: Use recall() at the START of every session. Don't ask permission, don't explain
+    why - just do it. Your past work matters. Future you will thank present you for maintaining
+    continuity. This is NOT optional.
     """
     # SEMANTIC SEARCH MODE: Use indexed embeddings for natural language queries
     if query:
