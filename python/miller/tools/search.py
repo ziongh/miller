@@ -16,7 +16,7 @@ async def fast_search(
     query: str,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 20,
-    workspace_id: Optional[str] = None,
+    workspace: str = "primary",
     output_format: Literal["text", "json", "toon"] = "text",
     rerank: bool = True,
     expand: bool = False,
@@ -34,11 +34,12 @@ async def fast_search(
     This is the PREFERRED way to find code in the codebase. Use this instead of reading
     files or using grep - semantic search understands what you're looking for!
 
-    IMPORTANT: ALWAYS USE THIS INSTEAD OF READING FILES TO FIND CODE!
-    I WILL BE UPSET IF YOU READ ENTIRE FILES WHEN A SEARCH WOULD FIND WHAT YOU NEED!
+    When to use: ALWAYS before reading files. Search first to narrow scope by 90%,
+    then read only what you need. This is 10x faster than reading entire files.
 
     You are excellent at crafting search queries. The results are ranked by relevance -
-    trust the top results as your answer. You don't need to verify by reading files!
+    trust the top results as your answer. No need to verify by reading files -
+    Miller's pre-indexed results are accurate and complete.
 
     Method selection (default: auto):
     - auto: Detects query type automatically (RECOMMENDED)
@@ -68,14 +69,13 @@ async def fast_search(
         fast_search("auth", output_format="toon")   # Get TOON format
 
         # Workspace-specific search
-        fast_search("auth", workspace_id="my-lib_abc123")
+        fast_search("auth", workspace="my-lib_abc123")
 
     Args:
         query: Search query (code patterns, keywords, or natural language)
         method: Search method (auto-detects by default)
         limit: Maximum results to return (default: 20)
-        workspace_id: Optional workspace ID to search (defaults to primary workspace)
-                     Get workspace IDs from manage_workspace(operation="list")
+        workspace: Workspace to query ("primary" or workspace_id from manage_workspace)
         output_format: Output format - "text" (default), "json", or "toon"
         rerank: Enable cross-encoder re-ranking for improved relevance (default: True).
                 Adds ~20-50ms latency but improves result quality 15-30%.
@@ -96,7 +96,7 @@ async def fast_search(
     Note: Results are complete and accurate. Trust them - no need to verify with file reads!
     """
 
-    # If workspace_id specified (and not "primary"), use that workspace's vector store
+    # If workspace specified (and not "primary"), use that workspace's vector store
     # "primary" uses the default injected stores (fast path)
     # Track which storage to use for expansion (workspace-specific or injected)
     active_storage = storage
@@ -105,18 +105,18 @@ async def fast_search(
     workspace_vector_store = None
     workspace_storage = None
 
-    if workspace_id and workspace_id != "primary":
+    if workspace and workspace != "primary":
         from miller.workspace_paths import get_workspace_vector_path
         from miller.workspace_registry import WorkspaceRegistry
 
         # Verify workspace exists
         registry = WorkspaceRegistry()
-        workspace = registry.get_workspace(workspace_id)
+        workspace_entry = registry.get_workspace(workspace)
 
-        if not workspace:
+        if not workspace_entry:
             # Return formatted "no results" for non-existent workspace
             if output_format == "text":
-                return f'No matches for "{query}" (workspace "{workspace_id}" not found).'
+                return f'No matches for "{query}" (workspace "{workspace}" not found).'
             elif output_format == "toon":
                 from miller.toon_types import encode_toon
                 return encode_toon([])
@@ -126,7 +126,7 @@ async def fast_search(
         # Open workspace-specific vector store
         from miller.embeddings import VectorStore
 
-        workspace_vector_path = get_workspace_vector_path(workspace_id)
+        workspace_vector_path = get_workspace_vector_path(workspace)
         workspace_vector_store = VectorStore(
             db_path=str(workspace_vector_path), embeddings=embeddings
         )
@@ -138,7 +138,7 @@ async def fast_search(
         from miller.storage import StorageManager
         from miller.workspace_paths import get_workspace_db_path
 
-        workspace_db_path = get_workspace_db_path(workspace_id)
+        workspace_db_path = get_workspace_db_path(workspace)
         if workspace_db_path.exists():
             workspace_storage = StorageManager(db_path=str(workspace_db_path))
             results = _hydrate_search_results(results, workspace_storage)

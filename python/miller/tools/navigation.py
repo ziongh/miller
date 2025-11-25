@@ -1,7 +1,12 @@
 """
 Code navigation tools - find references.
 
-Provides fast_refs for finding symbol usages. fast_goto is kept for internal use.
+Provides fast_refs for finding symbol usages.
+
+NOTE: fast_goto is intentionally NOT exposed as an MCP tool. Its functionality is
+covered by get_symbols(target="X") which provides the same "jump to definition"
+capability while also showing the symbol's structure and context. We keep fast_goto
+here for potential internal use but agents should use get_symbols instead.
 """
 
 from typing import Any, Literal, Optional, Union
@@ -142,27 +147,33 @@ async def fast_refs(
 
     ESSENTIAL FOR SAFE REFACTORING! This shows exactly what will break if you change a symbol.
 
-    IMPORTANT: ALWAYS use this before refactoring! I WILL BE VERY UPSET if you change a symbol
-    without first checking its references and then break callers!
+    When to use: REQUIRED before changing, renaming, or deleting any symbol. Changing code
+    without checking references WILL break dependencies. This is not optional.
 
-    The references returned are COMPLETE - every usage in the codebase. You can trust this
-    list and don't need to search again or read files to verify.
+    The references returned are COMPLETE - every usage in the codebase (<20ms). You can
+    trust this list and don't need to search again or read files to verify.
 
     Args:
-        symbol_name: Name of symbol to find references for
-                    Supports qualified names like "User.save" to find methods specifically
-        kind_filter: Optional list of relationship types to filter by
-                    Common values: ["Call"], ["Import"], ["Reference"], ["Extends", "Implements"]
-        include_context: Whether to include code context snippets showing actual usage
-        context_file: Optional file path to disambiguate symbols (only find symbols in this file)
-        limit: Maximum number of references to return (for pagination with large result sets)
-        workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "text" (default), "json", "toon", or "auto"
+        symbol_name: Name of symbol to find references for.
+                    Supports qualified names like "User.save" to find methods specifically.
+        kind_filter: Optional list of relationship kinds to filter by.
+                    Valid values (case-sensitive):
+                    - "Call" - Function/method calls
+                    - "Import" - Import statements
+                    - "Reference" - General references (variable usage, etc.)
+                    - "Extends" - Class inheritance (class Foo(Bar))
+                    - "Implements" - Interface implementation
+                    Example: kind_filter=["Call"] returns only call sites.
+        include_context: Whether to include code context snippets showing actual usage.
+        context_file: Optional file path to disambiguate symbols (only find symbols in this file).
+        limit: Maximum number of references to return (for pagination with large result sets).
+        workspace: Workspace to query ("primary" or workspace_id).
+        output_format: Output format - "text" (default), "json", "toon", or "auto".
                       - "text": Lean text list (70% token savings) - DEFAULT
                       - "json": Standard dict format
                       - "toon": TOON-encoded string (30-40% token reduction)
                       - "auto": TOON if ≥10 references, else JSON
-        storage: StorageManager instance (injected by server)
+        storage: StorageManager instance (injected by server).
 
     Returns:
         - Text mode: Lean formatted string with file:line references

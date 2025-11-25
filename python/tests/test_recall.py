@@ -69,6 +69,31 @@ async def test_recall_filters_by_type(temp_memories_dir, mock_git_context, mock_
 
 
 @pytest.mark.asyncio
+async def test_recall_filters_by_tags(temp_memories_dir, mock_git_context, mock_context):
+    """Verify recall filters by tags (ANY match)."""
+    from miller.tools.checkpoint import checkpoint
+    from miller.tools.recall import recall
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create checkpoints with various tags
+        await checkpoint(ctx, "Auth bug fix", tags=["auth", "bugfix"])
+        await checkpoint(ctx, "DB optimization", tags=["database", "performance"])
+        await checkpoint(ctx, "Auth refactor", tags=["auth", "refactor"])
+        await checkpoint(ctx, "No tags")  # No tags at all
+
+        # Filter for auth-related (should match 2)
+        auth_results = await recall(ctx, output_format="json", tags=["auth"], limit=10)
+        assert len(auth_results) == 2, f"Should get 2 results with 'auth' tag, got {len(auth_results)}"
+        for result in auth_results:
+            assert "auth" in result.get("tags", [])
+
+        # Filter for ANY of multiple tags (should match 3)
+        multi_results = await recall(ctx, output_format="json", tags=["auth", "database"], limit=10)
+        assert len(multi_results) == 3, f"Should get 3 results with 'auth' OR 'database' tag, got {len(multi_results)}"
+
+
+@pytest.mark.asyncio
 async def test_recall_filters_by_since_date(temp_memories_dir, mock_git_context, mock_context):
     """Verify recall respects 'since' date filter."""
     from miller.tools.recall import recall

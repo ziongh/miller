@@ -1,0 +1,26 @@
+{
+  "description": "Toolkit consistency review: (1) Added tags parameter to recall for filtering by checkpoint tags; (2) Documented kind_filter valid values in fast_refs; (3) Standardized parameter naming to use 'workspace' everywhere; (4) Documented fast_goto as intentionally hidden in favor of get_symbols(target=X); (5) Adjusted docstring tone - removed 'I WILL BE UPSET' language, replaced with 'When to use:' guidance. All 747 tests pass.",
+  "git": {
+    "branch": "main",
+    "commit": "16535cd",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/tools/navigation.py",
+      "python/miller/tools/recall.py",
+      "python/miller/tools/search.py",
+      "python/miller/tools/symbols_wrapper.py",
+      "python/miller/tools_wrappers.py",
+      "python/tests/test_recall.py"
+    ]
+  },
+  "id": "checkpoint_080c7e94_4ec2e3",
+  "tags": [
+    "toolkit-review",
+    "consistency",
+    "recall-tags",
+    "docstring-tone",
+    "api-polish"
+  ],
+  "timestamp": 1764082433,
+  "type": "checkpoint"
+}

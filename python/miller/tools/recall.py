@@ -17,6 +17,7 @@ async def recall(
     _ctx: Context,
     query: Optional[str] = None,
     type: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
@@ -39,6 +40,7 @@ async def recall(
         query: Optional natural language search query (enables semantic search mode)
                Example: "authentication bug", "PostgreSQL decision", "indexing performance"
         type: Filter by memory type ("checkpoint", "decision", "learning", "observation")
+        tags: Filter by tags (matches if ANY tag matches). Example: ["auth", "bugfix"]
         since: Memories since this date (ISO 8601: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS")
                Uses local timezone - automatically converted to UTC for filtering
         until: Memories until this date (ISO 8601, same format as since)
@@ -68,6 +70,9 @@ async def recall(
         # What decisions did we make?
         >>> decisions = await recall(ctx, type="decision", limit=20)
 
+        # Filter by tags
+        >>> auth_work = await recall(ctx, tags=["auth", "security"])
+
         # Semantic search - find related work
         >>> auth_bugs = await recall(ctx, query="authentication bug we fixed")
         >>> db_choices = await recall(ctx, query="why PostgreSQL", type="decision")
@@ -77,10 +82,10 @@ async def recall(
     """
     # SEMANTIC SEARCH MODE: Use indexed embeddings for natural language queries
     if query:
-        results = await _recall_semantic(query, type, since, until, limit)
+        results = await _recall_semantic(query, type, tags, since, until, limit)
     else:
         # FILESYSTEM SCAN MODE: Fast time-based filtering (original implementation)
-        results = await _recall_filesystem(type, since, until, limit)
+        results = await _recall_filesystem(type, tags, since, until, limit)
 
     # Apply output format
     if output_format == "json":
@@ -171,6 +176,7 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
 async def _recall_semantic(
     query: str,
     type: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
@@ -237,6 +243,12 @@ async def _recall_semantic(
             if type and data.get("type") != type:
                 continue
 
+            # Apply tags filter (match if ANY tag matches)
+            if tags:
+                memory_tags = set(data.get("tags", []))
+                if not memory_tags.intersection(tags):
+                    continue
+
             # Apply time filters
             checkpoint_timestamp = data.get("timestamp", 0)
 
@@ -260,6 +272,7 @@ async def _recall_semantic(
 
 async def _recall_filesystem(
     type: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
@@ -312,6 +325,12 @@ async def _recall_filesystem(
                 # Apply filters
                 if type and data.get("type") != type:
                     continue
+
+                # Apply tags filter (match if ANY tag matches)
+                if tags:
+                    memory_tags = set(data.get("tags", []))
+                    if not memory_tags.intersection(tags):
+                        continue
 
                 checkpoint_timestamp = data.get("timestamp", 0)
 

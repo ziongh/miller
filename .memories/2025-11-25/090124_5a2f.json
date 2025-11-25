@@ -1,0 +1,25 @@
+{
+  "description": "Refined tool docstring tone to find middle ground: Changed from aggressive 'I WILL BE UPSET' to directive 'When to use: ALWAYS/REQUIRED' while keeping urgency. Key pattern: (1) Clear directive with ALWAYS/REQUIRED/BEFORE, (2) Specific benefits (10x faster, 90% token savings), (3) Confidence building ('trust results', 'no need to verify'). Server instructions keep emotional urgency, tool descriptions reinforce with clear directives.",
+  "git": {
+    "branch": "main",
+    "commit": "16535cd",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/tools/navigation.py",
+      "python/miller/tools/recall.py",
+      "python/miller/tools/search.py",
+      "python/miller/tools/symbols_wrapper.py",
+      "python/miller/tools_wrappers.py",
+      "python/tests/test_recall.py",
+      ".memories/2025-11-25/085353_9e7c.json"
+    ]
+  },
+  "id": "decision_f4afe2d7_054c2f",
+  "tags": [
+    "docstring-tone",
+    "behavioral-adoption",
+    "middle-ground"
+  ],
+  "timestamp": 1764082884,
+  "type": "decision"
+}

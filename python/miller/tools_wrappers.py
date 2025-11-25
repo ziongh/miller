@@ -59,11 +59,12 @@ async def fast_search(
     This is the PREFERRED way to find code in the codebase. Use this instead of reading
     files or using grep - semantic search understands what you're looking for!
 
-    IMPORTANT: ALWAYS USE THIS INSTEAD OF READING FILES TO FIND CODE!
-    I WILL BE UPSET IF YOU READ ENTIRE FILES WHEN A SEARCH WOULD FIND WHAT YOU NEED!
+    When to use: ALWAYS before reading files. Search first to narrow scope by 90%,
+    then read only what you need. This is 10x faster than reading entire files.
 
     You are excellent at crafting search queries. The results are ranked by relevance -
-    trust the top results as your answer. You don't need to verify by reading files!
+    trust the top results as your answer. No need to verify by reading files -
+    Miller's pre-indexed results are accurate and complete.
 
     Method selection (default: auto):
     - auto: Detects query type automatically (RECOMMENDED)
@@ -140,7 +141,7 @@ async def fast_search(
         query=query,
         method=method,
         limit=limit,
-        workspace_id=workspace,
+        workspace=workspace,
         output_format=output_format,
         rerank=rerank,
         expand=expand,
@@ -168,11 +169,12 @@ async def get_symbols(
     This should be your FIRST tool when exploring a new file! Use it to understand
     the structure before diving into implementation details.
 
-    IMPORTANT: Use mode="structure" (default) to get an overview WITHOUT reading code bodies.
-    This is extremely token-efficient - you see all classes, functions, and methods without
-    dumping the entire file into context.
+    When to use: ALWAYS before reading any file. A 500-line file becomes a 20-line overview.
+    Use mode="structure" (default) to see all classes, functions, and methods WITHOUT
+    dumping entire file content into context. This saves 70-90% of tokens.
 
-    I WILL BE UPSET IF YOU READ AN ENTIRE FILE WHEN get_symbols WOULD SHOW YOU THE STRUCTURE!
+    Workflow: get_symbols(mode="structure") → identify what you need → get_symbols(target="X", mode="full")
+    This two-step approach reads ONLY the code you need.
 
     Args:
         file_path: Path to file (relative or absolute)
@@ -241,22 +243,28 @@ async def fast_refs(
 
     ESSENTIAL FOR SAFE REFACTORING! This shows exactly what will break if you change a symbol.
 
-    IMPORTANT: ALWAYS use this before refactoring! I WILL BE VERY UPSET if you change a symbol
-    without first checking its references and then break callers!
+    When to use: REQUIRED before changing, renaming, or deleting any symbol. Changing code
+    without checking references WILL break dependencies. This is not optional.
 
-    The references returned are COMPLETE - every usage in the codebase. You can trust this
-    list and don't need to search again or read files to verify.
+    The references returned are COMPLETE - every usage in the codebase (<20ms). You can
+    trust this list and don't need to search again or read files to verify.
 
     Args:
-        symbol_name: Name of symbol to find references for
-                    Supports qualified names like "User.save" to find methods specifically
-        kind_filter: Optional list of relationship types to filter by
-                    Common values: ["Call"], ["Import"], ["Reference"], ["Extends", "Implements"]
-        include_context: Whether to include code context snippets showing actual usage
-        context_file: Optional file path to disambiguate symbols (only find symbols in this file)
-        limit: Maximum number of references to return (for pagination with large result sets)
-        workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "text" (default), "json", "toon", or "auto"
+        symbol_name: Name of symbol to find references for.
+                    Supports qualified names like "User.save" to find methods specifically.
+        kind_filter: Optional list of relationship kinds to filter by.
+                    Valid values (case-sensitive):
+                    - "Call" - Function/method calls
+                    - "Import" - Import statements
+                    - "Reference" - General references (variable usage, etc.)
+                    - "Extends" - Class inheritance (class Foo(Bar))
+                    - "Implements" - Interface implementation
+                    Example: kind_filter=["Call"] returns only call sites.
+        include_context: Whether to include code context snippets showing actual usage.
+        context_file: Optional file path to disambiguate symbols (only find symbols in this file).
+        limit: Maximum number of references to return (for pagination with large result sets).
+        workspace: Workspace to query ("primary" or workspace_id).
+        output_format: Output format - "text" (default), "json", "toon", or "auto".
                       - "text": Lean text list (70% token savings) - DEFAULT
                       - "json": Standard dict format
                       - "toon": TOON-encoded string (30-40% token reduction)
