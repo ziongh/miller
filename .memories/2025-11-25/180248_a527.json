@@ -1,0 +1,36 @@
+{
+  "description": "Key insight: Use semantic embeddings for cross-language symbol correlation. Connect TypeScript IUser \u2194 C# UserDto \u2194 SQL Users table via embedding similarity. Can power polyglot trace_call_path, fast_refs across language boundaries, and multi-language rename cascades.",
+  "git": {
+    "branch": "main",
+    "commit": "730abdf",
+    "dirty": true,
+    "files_changed": [
+      ".memories/plans/plan_miller-deep-review-fixes.json",
+      "CLAUDE.md",
+      "python/miller/lifecycle.py",
+      "python/miller/reranker.py",
+      "python/miller/tools/navigation.py",
+      "python/miller/tools/search.py",
+      "python/tests/test_fast_search_toon.py",
+      "python/tests/test_reranker.py",
+      "python/tests/test_search_filters.py",
+      "python/tests/test_server.py",
+      ".memories/2025-11-24/153258_467a.json",
+      ".memories/2025-11-24/154255_570d.json",
+      ".memories/2025-11-24/155624_53ff.json",
+      ".memories/2025-11-24/160653_3c5b.json",
+      ".memories/plans/plan_implement-renamesymbol-tool.json",
+      "python/miller/tools/refactor.py",
+      "python/tests/test_refactor.py"
+    ]
+  },
+  "id": "learning_f775d03c_cfc492",
+  "tags": [
+    "architecture",
+    "semantic-search",
+    "polyglot",
+    "cross-language"
+  ],
+  "timestamp": 1764028968,
+  "type": "learning"
+}

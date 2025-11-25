@@ -53,7 +53,30 @@ async def fast_goto(
                 return None
 
     # Query SQLite for exact match
-    sym = storage.get_symbol_by_name(symbol_name)
+    # Support qualified names like "ClassName.method" (consistent with fast_refs)
+    sym = None
+    if "." in symbol_name:
+        # Qualified name: Parent.Child
+        parts = symbol_name.split(".", 1)
+        parent_name, child_name = parts[0], parts[1]
+        # Query for child symbol with matching parent
+        cursor = storage.conn.execute("""
+            SELECT s.* FROM symbols s
+            JOIN symbols parent ON s.parent_id = parent.id
+            WHERE parent.name = ? AND s.name = ?
+            ORDER BY CASE s.kind
+                WHEN 'import' THEN 2
+                WHEN 'reference' THEN 2
+                ELSE 1
+            END
+            LIMIT 1
+        """, (parent_name, child_name))
+        row = cursor.fetchone()
+        if row:
+            sym = dict(row)
+    else:
+        # Simple name lookup
+        sym = storage.get_symbol_by_name(symbol_name)
 
     result = None
     if sym:

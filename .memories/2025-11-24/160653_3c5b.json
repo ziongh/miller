@@ -1,0 +1,31 @@
+{
+  "description": "Fixed MCP startup delay FOR GOOD - heavy imports now run in asyncio.to_thread() so they don't block the event loop. Added extensive comments and documentation to prevent regression. The key insight: Python imports are synchronous and block even inside async functions!",
+  "git": {
+    "branch": "main",
+    "commit": "730abdf",
+    "dirty": true,
+    "files_changed": [
+      "CLAUDE.md",
+      "python/miller/lifecycle.py",
+      "python/miller/reranker.py",
+      "python/miller/tools/navigation.py",
+      "python/miller/tools/search.py",
+      "python/tests/test_fast_search_toon.py",
+      "python/tests/test_reranker.py",
+      "python/tests/test_search_filters.py",
+      "python/tests/test_server.py",
+      ".memories/2025-11-24/153258_467a.json",
+      ".memories/2025-11-24/154255_570d.json",
+      ".memories/2025-11-24/155624_53ff.json"
+    ]
+  },
+  "id": "decision_e7e2f0e0_e2193c",
+  "tags": [
+    "critical-fix",
+    "startup",
+    "mcp",
+    "performance"
+  ],
+  "timestamp": 1764022013,
+  "type": "decision"
+}

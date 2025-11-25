@@ -407,6 +407,51 @@ class TestFastSearchEdgeCases:
         # Should fall back to signature
         assert "missing_context" in output
 
+    def test_fallback_to_name_kind_when_both_context_and_signature_missing(self):
+        """When both code_context and signature are missing, should show name (kind).
+
+        This prevents empty/useless output like:
+            README.md:251
+            (nothing here)
+
+        Instead it should show:
+            README.md:251
+              Project Status (module)
+        """
+        from miller.tools.search import _format_search_as_text
+
+        results = [
+            {
+                "name": "Project Status",
+                "kind": "module",
+                "file_path": "README.md",
+                "start_line": 251,
+                "code_context": None,  # Missing
+                "signature": None,      # Also missing
+            },
+            {
+                "name": "<lambda:128>",
+                "kind": "function",
+                "file_path": "src/debouncer.py",
+                "start_line": 129,
+                "code_context": None,
+                "signature": "",  # Empty string (equally useless)
+            }
+        ]
+
+        output = _format_search_as_text(results, query="test")
+        lines = output.split("\n")
+
+        # Should show file:line
+        assert "README.md:251" in output
+        assert "src/debouncer.py:129" in output
+
+        # Should show name and kind as fallback (not just empty)
+        assert "Project Status" in output
+        assert "module" in output.lower()
+        assert "<lambda:128>" in output or "lambda" in output
+        assert "function" in output.lower()
+
     @pytest.mark.asyncio
     async def test_unicode_in_code_context(self, index_file_helper):
         """Unicode characters in code should not break formatting."""

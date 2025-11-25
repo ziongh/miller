@@ -167,11 +167,19 @@ async def fast_search(
     if file_pattern is not None:
         results = apply_file_pattern_filter(results, file_pattern)
 
-    # Semantic fallback: when text search returns 0 results, try semantic
+    # Semantic fallback: when text search returns poor results, try semantic
+    # Triggers when: (1) no results, OR (2) all scores below quality threshold
+    # This catches garbage results from searches like "xyznonexistent123"
     original_method = method
     semantic_fallback_used = False
-    if not results and method == "text":
-        logger.info("🔄 Text search returned 0 results, attempting semantic fallback")
+    LOW_SCORE_THRESHOLD = 0.3  # Below this, results are likely irrelevant
+    max_score = max((r.get("score", 0.0) for r in results), default=0.0) if results else 0.0
+    should_fallback = method == "text" and (not results or max_score < LOW_SCORE_THRESHOLD)
+    if should_fallback:
+        if not results:
+            logger.info("🔄 Text search returned 0 results, attempting semantic fallback")
+        else:
+            logger.info(f"🔄 Text search max score ({max_score:.2f}) below threshold ({LOW_SCORE_THRESHOLD}), attempting semantic fallback")
         # Try semantic search as fallback
         if workspace_vector_store is not None:
             results = workspace_vector_store.search(query, method="semantic", limit=limit)
@@ -424,13 +432,18 @@ def _format_search_as_text(results: list[dict[str, Any]], query: str = "") -> st
         # File:line header
         output.append(f"{file_path}:{start_line}")
 
-        # Indented code context (preferred) or signature (fallback)
+        # Indented code context (preferred) or signature (fallback) or name (last resort)
         if code_context:
             for line in code_context.split("\n"):
                 output.append(f"  {line}")
         elif signature:
             # Fallback to signature if no code_context
             output.append(f"  {signature}")
+        else:
+            # Last resort: show name (kind) so result isn't empty/useless
+            name = r.get("name", "?")
+            kind = r.get("kind", "symbol")
+            output.append(f"  {name} ({kind})")
 
         # Context information (when expand=True)
         context = r.get("context")

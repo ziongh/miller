@@ -96,6 +96,8 @@ We could also create a small script for Finetunning an Embedding model like "jin
 
 9. ~~manage_workspace tool should always default to the primary workspace and the workspace parameter should be optional.~~ ✅ **DONE** - `workspace_id` now defaults to primary workspace for `stats`, `remove`, `refresh` operations
 
+10. Using our existing embeddings tools we can use semantic similarity to help power tools like our rename_symbol, fast_refs, etc. Let's discuss and make a plan to leverage this even more and we should probably build a set of utilities to make it even easier to integrate into more tools to further power our cross language intelligence.
+
 ---
 
 ## Future Enhancements (Ranked by Impact)

@@ -225,6 +225,49 @@ class TestSemanticFallback:
         # Result should mention semantic fallback
         assert "semantic" in result.lower() or "fallback" in result.lower()
 
+    @pytest.mark.asyncio
+    async def test_semantic_fallback_triggered_when_scores_are_low(self):
+        """When text search returns results but with very low scores, semantic fallback should trigger.
+
+        This catches garbage results from searches like "xyznonexistent123" where
+        text search returns partial matches with scores below the quality threshold.
+        """
+        from miller.tools.search import fast_search
+
+        mock_vector_store = MagicMock()
+        mock_vector_store.search = MagicMock(side_effect=[
+            # Text search returns results but with LOW scores (below 0.3 threshold)
+            [
+                {"id": "1", "name": "xyz_func", "score": 0.1, "language": "python", "file_path": "src/a.py"},
+                {"id": "2", "name": "test_xyz", "score": 0.05, "language": "python", "file_path": "src/b.py"},
+            ],
+            # Semantic search returns better matches
+            [{"id": "3", "name": "real_match", "score": 0.8, "language": "python", "file_path": "src/c.py"}],
+        ])
+
+        mock_storage = MagicMock()
+        mock_storage.get_symbol_by_id = MagicMock(side_effect=lambda id: {
+            "1": {"id": "1", "name": "xyz_func", "kind": "function", "file_path": "src/a.py", "start_line": 10, "language": "python"},
+            "2": {"id": "2", "name": "test_xyz", "kind": "function", "file_path": "src/b.py", "start_line": 20, "language": "python"},
+            "3": {"id": "3", "name": "real_match", "kind": "function", "file_path": "src/c.py", "start_line": 30, "language": "python"},
+        }.get(id))
+
+        result = await fast_search(
+            query="xyznonexistent123",
+            method="text",
+            vector_store=mock_vector_store,
+            storage=mock_storage,
+            rerank=False,  # Disable reranking to test raw score behavior
+            output_format="json",
+        )
+
+        # Semantic fallback should have been triggered due to low scores
+        # Search should have been called twice (text then semantic)
+        assert mock_vector_store.search.call_count == 2
+        # Second call should be semantic
+        second_call_args = mock_vector_store.search.call_args_list[1]
+        assert second_call_args[1].get("method") == "semantic"
+
 
 class TestSearchWithFilters:
     """Integration tests for search with filters."""

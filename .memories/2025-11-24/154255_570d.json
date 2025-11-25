@@ -1,0 +1,24 @@
+{
+  "description": "Fixed text format fallback - now shows 'name (kind)' when both code_context and signature are missing. Prevents empty/useless output lines. 728 tests passing.",
+  "git": {
+    "branch": "main",
+    "commit": "730abdf",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/reranker.py",
+      "python/miller/tools/search.py",
+      "python/tests/test_fast_search_toon.py",
+      "python/tests/test_reranker.py",
+      "python/tests/test_search_filters.py",
+      ".memories/2025-11-24/153258_467a.json"
+    ]
+  },
+  "id": "checkpoint_ff7f95af_e1c529",
+  "tags": [
+    "bugfix",
+    "fast-search",
+    "text-format"
+  ],
+  "timestamp": 1764020575,
+  "type": "checkpoint"
+}
