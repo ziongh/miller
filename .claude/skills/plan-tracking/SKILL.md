@@ -6,6 +6,17 @@ allowed-tools: mcp__miller__plan, mcp__miller__fast_search
 
 # Plan Tracking Skill
 
+## Activation Announcement
+
+**IMPORTANT**: When this skill activates, ALWAYS start your response with:
+
+```
+📋 **Plan Tracking Active**
+Managing working memory with Miller's mutable plan system...
+```
+
+This provides a visual indicator to the user that the skill is running.
+
 ## Purpose
 Use Miller's **mutable plan system** for working memory - track current tasks, update progress, manage active work.
 

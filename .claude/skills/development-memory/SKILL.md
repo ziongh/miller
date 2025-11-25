@@ -6,6 +6,17 @@ allowed-tools: mcp__miller__checkpoint, mcp__miller__recall, mcp__miller__fast_s
 
 # Development Memory Skill
 
+## Activation Announcement
+
+**IMPORTANT**: When this skill activates, ALWAYS start your response with:
+
+```
+📝 **Development Memory Active**
+Building persistent knowledge through checkpoint/recall...
+```
+
+This provides a visual indicator to the user that the skill is running.
+
 ## Purpose
 Build **persistent project knowledge** by systematically checkpointing significant moments and recalling past learnings.
 

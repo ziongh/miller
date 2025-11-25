@@ -6,6 +6,17 @@ allowed-tools: mcp__miller__fast_search, mcp__miller__fast_explore, mcp__miller_
 
 # Semantic Intelligence Skill
 
+## Activation Announcement
+
+**IMPORTANT**: When this skill activates, ALWAYS start your response with:
+
+```
+🧠 **Semantic Intelligence Active**
+Using conceptual code understanding for cross-language discovery...
+```
+
+This provides a visual indicator to the user that the skill is running.
+
 ## Purpose
 Leverage Miller's **semantic understanding** to find code by concept, not just keywords. Goes beyond text matching to understand what code does.
 

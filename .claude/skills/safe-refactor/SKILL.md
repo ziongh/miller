@@ -6,6 +6,17 @@ allowed-tools: mcp__miller__rename_symbol, mcp__miller__fast_refs, mcp__miller__
 
 # Safe Refactor Skill
 
+## Activation Announcement
+
+**IMPORTANT**: When this skill activates, ALWAYS start your response with:
+
+```
+🛡️ **Safe Refactor Mode Active**
+Using Miller's reference checking and rename_symbol for validated changes...
+```
+
+This provides a visual indicator to the user that the skill is running.
+
 ## Purpose
 Perform **safe, validated code refactoring** using Miller's intelligence to prevent breaking changes. This skill combines **reference checking**, **workspace-wide renames**, and **impact analysis** to modify code confidently.
 

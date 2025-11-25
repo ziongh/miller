@@ -6,6 +6,17 @@ allowed-tools: mcp__miller__fast_search, mcp__miller__get_symbols, mcp__miller__
 
 # Explore Codebase Skill
 
+## Activation Announcement
+
+**IMPORTANT**: When this skill activates, ALWAYS start your response with:
+
+```
+🗺️ **Codebase Exploration Active**
+Using Miller's code intelligence to explore and understand this codebase...
+```
+
+This provides a visual indicator to the user that the skill is running.
+
 ## Purpose
 Understand unfamiliar codebases **efficiently** using Miller's code intelligence without reading entire files. This skill uses **semantic search**, **symbol navigation**, and **execution flow tracing** to build a mental model of the code.
 

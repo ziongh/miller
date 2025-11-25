@@ -90,6 +90,8 @@ def find_cross_language_variants(
     For each symbol, generates naming variants (snake_case, camelCase, etc.)
     and queries the database for symbols with those names in OTHER languages.
 
+    Uses a single batch query instead of N queries (one per symbol).
+
     Args:
         symbols: List of symbol objects
         storage_manager: StorageManager instance to query database
@@ -102,74 +104,77 @@ def find_cross_language_variants(
             - variants_count: int
             - languages: list[str] (languages where variants are found, excluding current)
     """
-    if not storage_manager or not symbols:
-        # Return empty hints for all symbols
-        return {
-            getattr(sym, "id", ""): {
-                "has_variants": False,
-                "variants_count": 0,
-                "languages": []
-            }
-            for sym in symbols
-        }
+    # Build empty result for all symbols first
+    empty_hints = {
+        "has_variants": False,
+        "variants_count": 0,
+        "languages": []
+    }
 
-    variants_map = {}
+    if not storage_manager or not symbols:
+        return {getattr(sym, "id", ""): empty_hints.copy() for sym in symbols}
 
     try:
+        # Phase 1: Collect all variants and build reverse mapping
+        # variant_name -> set of symbol_ids that generated this variant
+        all_variants: set[str] = set()
+        variant_to_symbols: dict[str, set[str]] = {}
+        symbol_languages: dict[str, set[str]] = {}  # symbol_id -> found languages
+
         for symbol in symbols:
             symbol_id = getattr(symbol, "id", "")
             symbol_name = getattr(symbol, "name", "")
+            symbol_languages[symbol_id] = set()
 
             if not symbol_name:
-                variants_map[symbol_id] = {
-                    "has_variants": False,
-                    "variants_count": 0,
-                    "languages": []
-                }
                 continue
 
-            # Generate naming variants
+            # Generate naming variants for this symbol
             variants = generate_naming_variants(symbol_name)
+            for variant in variants:
+                all_variants.add(variant)
+                if variant not in variant_to_symbols:
+                    variant_to_symbols[variant] = set()
+                variant_to_symbols[variant].add(symbol_id)
 
-            # Query database for symbols with variant names
-            # Exclude current language
-            found_languages = set()
+        # Phase 2: Single batch query for ALL variants
+        if all_variants:
+            placeholders = ",".join("?" * len(all_variants))
+            query = f"""
+                SELECT name, language
+                FROM symbols
+                WHERE name IN ({placeholders})
+                AND language != ?
+            """
 
-            if variants:
-                # Build query to find symbols with any of the variant names
-                placeholders = ",".join("?" * len(variants))
-                query = f"""
-                    SELECT DISTINCT language
-                    FROM symbols
-                    WHERE name IN ({placeholders})
-                    AND language != ?
-                """
+            cursor = storage_manager.conn.cursor()
+            cursor.execute(query, list(all_variants) + [current_language])
+            rows = cursor.fetchall()
 
-                cursor = storage_manager.conn.cursor()
-                cursor.execute(query, list(variants) + [current_language])
-                rows = cursor.fetchall()
+            # Phase 3: Map results back to original symbols
+            for row in rows:
+                variant_name, language = row[0], row[1]
+                # Find all symbols that generated this variant
+                if variant_name in variant_to_symbols:
+                    for symbol_id in variant_to_symbols[variant_name]:
+                        symbol_languages[symbol_id].add(language)
 
-                for row in rows:
-                    found_languages.add(row[0])
-
+        # Phase 4: Build final result
+        variants_map = {}
+        for symbol in symbols:
+            symbol_id = getattr(symbol, "id", "")
+            found_languages = symbol_languages.get(symbol_id, set())
             variants_map[symbol_id] = {
                 "has_variants": len(found_languages) > 0,
                 "variants_count": len(found_languages),
                 "languages": sorted(list(found_languages))
             }
 
+        return variants_map
+
     except Exception:
         # If query fails, return empty hints for all symbols
-        return {
-            getattr(sym, "id", ""): {
-                "has_variants": False,
-                "variants_count": 0,
-                "languages": []
-            }
-            for sym in symbols
-        }
-
-    return variants_map
+        return {getattr(sym, "id", ""): empty_hints.copy() for sym in symbols}
 
 
 def calculate_importance_scores(symbols: list, storage_manager) -> tuple[dict[str, float], dict[str, bool]]:

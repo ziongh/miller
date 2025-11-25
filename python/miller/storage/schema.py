@@ -83,6 +83,10 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         # Reachability indexes (transitive closure)
         "CREATE INDEX IF NOT EXISTS idx_reach_source ON reachability(source_id)",
         "CREATE INDEX IF NOT EXISTS idx_reach_target ON reachability(target_id)",
+        # Composite indexes for batch reachability queries with distance filtering
+        # These optimize queries like: WHERE target_id IN (...) AND min_distance = 1
+        "CREATE INDEX IF NOT EXISTS idx_reach_target_dist ON reachability(target_id, min_distance)",
+        "CREATE INDEX IF NOT EXISTS idx_reach_source_dist ON reachability(source_id, min_distance)",
     ]
 
     for index_sql in indexes:

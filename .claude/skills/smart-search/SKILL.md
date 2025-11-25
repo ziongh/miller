@@ -6,6 +6,17 @@ allowed-tools: mcp__miller__fast_search, mcp__miller__get_symbols, Read
 
 # Smart Search Skill
 
+## Activation Announcement
+
+**IMPORTANT**: When this skill activates, ALWAYS start your response with:
+
+```
+🔍 **Smart Search Active**
+Selecting optimal search strategy based on query intent...
+```
+
+This provides a visual indicator to the user that the skill is running.
+
 ## Purpose
 **Automatically select the best search strategy** based on query intent. This skill understands when to use semantic search (concepts), text search (exact terms), or symbol search (definitions) and presents results effectively.
 

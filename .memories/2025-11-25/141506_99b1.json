@@ -1,0 +1,37 @@
+{
+  "description": "Created 3 pattern detection skills: detect-n-plus-one.md (finds loop+query patterns), detect-empty-catch.md (finds swallowed exceptions), detect-hardcoded-secrets.md (security scan for exposed credentials). Skills are language-agnostic using Miller's semantic search. Each includes activation announcement for visual feedback, structured output format, and language-specific hints.",
+  "git": {
+    "branch": "main",
+    "commit": "a663127",
+    "dirty": true,
+    "files_changed": [
+      ".memories/plans/plan_implement-renamesymbol-tool.json",
+      "python/miller/storage/manager.py",
+      "python/miller/storage/mutations.py",
+      "python/miller/storage/queries.py",
+      "python/miller/storage/schema.py",
+      "python/miller/tools/search.py",
+      "python/miller/tools/symbols/analysis.py",
+      "python/miller/workspace/discovery.py",
+      "python/miller/workspace/scanner.py",
+      "python/tests/test_fast_search_toon.py",
+      ".claude/skills/detect-empty-catch.md",
+      ".claude/skills/detect-hardcoded-secrets.md",
+      ".claude/skills/detect-n-plus-one.md",
+      ".memories/2025-11-25/134016_bad2.json",
+      ".memories/2025-11-25/134941_ce72.json",
+      ".memories/2025-11-25/140132_06c9.json",
+      ".memories/plans/plan_miller-performance-optimization-sprint.json"
+    ]
+  },
+  "id": "checkpoint_bc15c876_dbcafe",
+  "tags": [
+    "skills",
+    "pattern-detection",
+    "security",
+    "performance",
+    "language-agnostic"
+  ],
+  "timestamp": 1764101705,
+  "type": "checkpoint"
+}

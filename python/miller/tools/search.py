@@ -257,6 +257,9 @@ def _hydrate_search_results(
 ) -> list[dict[str, Any]]:
     """Hydrate search results with full symbol data from SQLite.
 
+    OPTIMIZED: Uses single batch query instead of N individual queries.
+    This reduces ~20 queries to 1 for typical search results.
+
     Vector search returns lean results (id, name, kind, score).
     This function enriches them with full data from SQLite,
     including code_context for grep-style output.
@@ -269,22 +272,34 @@ def _hydrate_search_results(
         Hydrated results with code_context and other fields from SQLite.
         Preserves search score (not storage score).
     """
+    if not search_results:
+        return []
+
+    # Collect all symbol IDs and their scores in one pass
+    symbol_ids = []
+    score_map = {}  # id -> search_score
+    for result in search_results:
+        symbol_id = result.get("id")
+        if symbol_id:
+            symbol_ids.append(symbol_id)
+            score_map[symbol_id] = result.get("score", 0.0)
+
+    # Single batch query instead of N queries!
+    symbols_map = storage.get_symbols_by_ids(symbol_ids) if symbol_ids else {}
+
+    # Build hydrated results, preserving order
     hydrated = []
     for result in search_results:
         symbol_id = result.get("id")
-        search_score = result.get("score", 0.0)
 
-        if symbol_id:
-            # Fetch full symbol data from SQLite
-            full_symbol = storage.get_symbol_by_id(symbol_id)
-            if full_symbol:
-                # Merge: use storage data but preserve search score
-                full_symbol["score"] = search_score
-                hydrated.append(full_symbol)
-                continue
-
-        # Fallback: keep original result if hydration fails
-        hydrated.append(result)
+        if symbol_id and symbol_id in symbols_map:
+            # Use full symbol data from batch lookup
+            full_symbol = symbols_map[symbol_id].copy()
+            full_symbol["score"] = score_map[symbol_id]
+            hydrated.append(full_symbol)
+        else:
+            # Fallback: keep original result if hydration fails
+            hydrated.append(result)
 
     return hydrated
 
@@ -295,6 +310,9 @@ def _expand_search_results(
     expand_limit: int = 5,
 ) -> list[dict[str, Any]]:
     """Expand search results with caller/callee context.
+
+    OPTIMIZED: Uses batch queries instead of N+1 pattern.
+    Reduces ~240 queries to ~3 queries for 20 results with expand=True.
 
     For each search result, adds a 'context' field containing:
     - callers: Direct callers of this symbol (distance=1 from reachability)
@@ -313,10 +331,50 @@ def _expand_search_results(
     Returns:
         Results with added 'context' field for each entry.
     """
-    expanded = []
+    if not results:
+        return []
 
+    # Collect all symbol IDs that have valid IDs
+    symbol_ids = [r.get("id") for r in results if r.get("id")]
+
+    if not symbol_ids:
+        # No valid IDs, just add empty context to all
+        for result in results:
+            result["context"] = {
+                "callers": [],
+                "callees": [],
+                "caller_count": 0,
+                "callee_count": 0,
+            }
+        return results
+
+    # BATCH QUERY 1: Get all callers for all symbols (single query!)
+    callers_map = storage.get_reachability_for_targets_batch(symbol_ids, min_distance=1)
+
+    # BATCH QUERY 2: Get all callees for all symbols (single query!)
+    callees_map = storage.get_reachability_from_sources_batch(symbol_ids, min_distance=1)
+
+    # Collect all unique caller/callee IDs that need hydration
+    all_related_ids: set[str] = set()
+    for symbol_id in symbol_ids:
+        callers = callers_map.get(symbol_id, [])
+        callees = callees_map.get(symbol_id, [])
+        # Only collect IDs we'll actually use (up to expand_limit per symbol)
+        for c in callers[:expand_limit]:
+            if c.get("source_id"):
+                all_related_ids.add(c["source_id"])
+        for c in callees[:expand_limit]:
+            if c.get("target_id"):
+                all_related_ids.add(c["target_id"])
+
+    # BATCH QUERY 3: Hydrate all caller/callee symbols (single query!)
+    symbols_map = storage.get_symbols_by_ids(list(all_related_ids)) if all_related_ids else {}
+
+    # Build expanded results
+    expanded = []
     for result in results:
         symbol_id = result.get("id")
+
         if not symbol_id:
             # Can't expand without ID - keep original
             result["context"] = {
@@ -328,43 +386,37 @@ def _expand_search_results(
             expanded.append(result)
             continue
 
-        # Get callers (upstream) - symbols that can reach this one with distance=1
-        all_callers = storage.get_reachability_for_target(symbol_id)
-        direct_callers = [c for c in all_callers if c.get("min_distance") == 1]
+        # Get callers and callees from batch results
+        direct_callers = callers_map.get(symbol_id, [])
+        direct_callees = callees_map.get(symbol_id, [])
 
-        # Get callees (downstream) - symbols this one can reach with distance=1
-        all_callees = storage.get_reachability_from_source(symbol_id)
-        direct_callees = [c for c in all_callees if c.get("min_distance") == 1]
-
-        # Hydrate caller symbols with metadata
+        # Build caller details from pre-fetched symbols
         caller_details = []
         for caller in direct_callers[:expand_limit]:
             caller_id = caller.get("source_id")
-            if caller_id:
-                sym = storage.get_symbol_by_id(caller_id)
-                if sym:
-                    caller_details.append({
-                        "id": caller_id,
-                        "name": sym.get("name", "?"),
-                        "kind": sym.get("kind", "?"),
-                        "file_path": sym.get("file_path", "?"),
-                        "line": sym.get("start_line", 0),
-                    })
+            if caller_id and caller_id in symbols_map:
+                sym = symbols_map[caller_id]
+                caller_details.append({
+                    "id": caller_id,
+                    "name": sym.get("name", "?"),
+                    "kind": sym.get("kind", "?"),
+                    "file_path": sym.get("file_path", "?"),
+                    "line": sym.get("start_line", 0),
+                })
 
-        # Hydrate callee symbols with metadata
+        # Build callee details from pre-fetched symbols
         callee_details = []
         for callee in direct_callees[:expand_limit]:
             callee_id = callee.get("target_id")
-            if callee_id:
-                sym = storage.get_symbol_by_id(callee_id)
-                if sym:
-                    callee_details.append({
-                        "id": callee_id,
-                        "name": sym.get("name", "?"),
-                        "kind": sym.get("kind", "?"),
-                        "file_path": sym.get("file_path", "?"),
-                        "line": sym.get("start_line", 0),
-                    })
+            if callee_id and callee_id in symbols_map:
+                sym = symbols_map[callee_id]
+                callee_details.append({
+                    "id": callee_id,
+                    "name": sym.get("name", "?"),
+                    "kind": sym.get("kind", "?"),
+                    "file_path": sym.get("file_path", "?"),
+                    "line": sym.get("start_line", 0),
+                })
 
         # Add context to result
         result["context"] = {

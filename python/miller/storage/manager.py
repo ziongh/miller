@@ -81,6 +81,10 @@ class StorageManager:
         """
         mutations.delete_file(self.conn, file_path)
 
+    def delete_files_batch(self, file_paths: list[str]) -> int:
+        """Delete multiple files in single transaction (batch version)."""
+        return mutations.delete_files_batch(self.conn, file_paths)
+
     # Symbol operations
 
     def add_symbols_batch(
@@ -114,6 +118,10 @@ class StorageManager:
     def get_symbol_by_id(self, symbol_id: str) -> Optional[dict]:
         """Get symbol by ID."""
         return queries.get_symbol_by_id(self.conn, symbol_id)
+
+    def get_symbols_by_ids(self, symbol_ids: list[str]) -> dict[str, dict]:
+        """Get multiple symbols by ID in single query (batch version)."""
+        return queries.get_symbols_by_ids(self.conn, symbol_ids)
 
     # Identifier operations
 
@@ -164,6 +172,22 @@ class StorageManager:
     def get_reachability_from_source(self, source_id: str) -> list[dict]:
         """Get all symbols reachable from source (downstream/callees)."""
         return queries.get_reachability_from_source(self.conn, source_id)
+
+    def get_reachability_for_targets_batch(
+        self, target_ids: list[str], min_distance: int = 1
+    ) -> dict[str, list[dict]]:
+        """Get callers for multiple targets in single query (batch version)."""
+        return queries.get_reachability_for_targets_batch(
+            self.conn, target_ids, min_distance
+        )
+
+    def get_reachability_from_sources_batch(
+        self, source_ids: list[str], min_distance: int = 1
+    ) -> dict[str, list[dict]]:
+        """Get callees for multiple sources in single query (batch version)."""
+        return queries.get_reachability_from_sources_batch(
+            self.conn, source_ids, min_distance
+        )
 
     def can_reach(self, source_id: str, target_id: str) -> bool:
         """Check if source can reach target (O(1) lookup)."""

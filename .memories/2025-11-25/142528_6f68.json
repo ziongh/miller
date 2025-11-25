@@ -1,0 +1,52 @@
+{
+  "description": "Reviewed all 9 skills for correct tool references. All use mcp__miller__* tools correctly. No Julie references remain. Key differences: Miller doesn't have fast_goto (use get_symbols with target) or fuzzy_replace (use Edit tool).",
+  "git": {
+    "branch": "main",
+    "commit": "a663127",
+    "dirty": true,
+    "files_changed": [
+      ".claude/skills/development-memory.md",
+      ".claude/skills/explore-codebase.md",
+      ".claude/skills/plan-tracking.md",
+      ".claude/skills/safe-refactor.md",
+      ".claude/skills/semantic-intelligence.md",
+      ".claude/skills/smart-search.md",
+      ".memories/plans/plan_implement-renamesymbol-tool.json",
+      "python/miller/storage/manager.py",
+      "python/miller/storage/mutations.py",
+      "python/miller/storage/queries.py",
+      "python/miller/storage/schema.py",
+      "python/miller/tools/search.py",
+      "python/miller/tools/symbols/analysis.py",
+      "python/miller/workspace/discovery.py",
+      "python/miller/workspace/scanner.py",
+      "python/tests/test_fast_search_toon.py",
+      ".claude/skills/detect-empty-catch/",
+      ".claude/skills/detect-hardcoded-secrets/",
+      ".claude/skills/detect-n-plus-one/",
+      ".claude/skills/development-memory/",
+      ".claude/skills/explore-codebase/",
+      ".claude/skills/plan-tracking/",
+      ".claude/skills/safe-refactor/",
+      ".claude/skills/semantic-intelligence/",
+      ".claude/skills/smart-search/",
+      ".memories/2025-11-25/134016_bad2.json",
+      ".memories/2025-11-25/134941_ce72.json",
+      ".memories/2025-11-25/140132_06c9.json",
+      ".memories/2025-11-25/141506_99b1.json",
+      ".memories/2025-11-25/141632_f294.json",
+      ".memories/2025-11-25/142255_47c7.json",
+      ".memories/2025-11-25/142347_cf4a.json",
+      ".memories/plans/plan_miller-performance-optimization-sprint.json"
+    ]
+  },
+  "id": "checkpoint_06dceef5_ffb03c",
+  "tags": [
+    "skills",
+    "review",
+    "tools",
+    "miller"
+  ],
+  "timestamp": 1764102328,
+  "type": "checkpoint"
+}

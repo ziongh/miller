@@ -102,6 +102,8 @@ class WorkspaceScanner:
         """
         Walk workspace directory and find indexable files.
 
+        OPTIMIZED: Uses single-pass scan_workspace() internally.
+
         On first run (no .millerignore exists), performs smart vendor detection
         to auto-generate exclusion patterns for vendor/third-party directories.
 
@@ -111,15 +113,17 @@ class WorkspaceScanner:
         if miller_core is None:
             return []  # Can't detect languages without Rust core
 
-        # Perform vendor detection on first run if .millerignore doesn't exist
-        indexable_files, has_files = discovery.walk_directory(
+        # Use optimized single-pass scan
+        scan_result = discovery.scan_workspace(
             self.workspace_root,
             self.ignore_spec,
             perform_vendor_detection=not self._millerignore_checked,
         )
 
+        indexable_files = scan_result.indexable_files
+
         # Smart vendor detection on first run
-        if has_files and not self._millerignore_checked:
+        if scan_result.vendor_detection_needed and not self._millerignore_checked:
             self._millerignore_checked = True
             if not (self.workspace_root / ".millerignore").exists():
                 detected_patterns = analyze_vendor_patterns(indexable_files, self.workspace_root)
@@ -155,11 +159,14 @@ class WorkspaceScanner:
         """
         Check if workspace needs indexing.
 
+        OPTIMIZED: Uses single-pass scan_workspace() instead of multiple rglob() walks.
+        Previous implementation did 3 separate filesystem walks; now does 1.
+
         Performs these checks (in order of cost):
         1. DB empty? (O(1)) → needs full indexing
         2. DB corrupted? (O(1)) → needs re-indexing
-        3. DB stale? (O(n) but fast) → compare file mtimes to DB timestamp
-        4. New files? (O(n)) → files on disk not in DB
+        3. Single filesystem scan (O(n)) → collects all file info in one pass
+        4. Compare scan results vs DB → detect stale, new, or deleted files
 
         Returns:
             True if indexing needed, False if index is up-to-date
@@ -179,44 +186,46 @@ class WorkspaceScanner:
             logger.warning("⚠️ Database has files but 0 symbols - re-indexing needed")
             return True
 
-        # Check 3: Staleness - compare each indexed file's mtime to its last_indexed
-        # Bug fix: Previous MAX-based heuristic could miss stale code files when a
-        # non-code file (like .memories/*.json) was indexed more recently.
-        # Now we check per-file: if any file's mtime > its own last_indexed, it's stale.
-        for db_file in db_files:
-            file_path = self.workspace_root / db_file["path"]
-            if not file_path.exists():
-                continue  # Will be caught by Check 5 (deleted files)
-
-            try:
-                mtime = int(file_path.stat().st_mtime)
-                last_indexed = db_file.get("last_indexed", 0) or 0
-
-                if mtime > last_indexed:
-                    logger.info(
-                        f"📊 File modified since last index: {db_file['path']} - indexing needed"
-                    )
-                    logger.debug(f"   mtime={mtime}, last_indexed={last_indexed}")
-                    return True
-            except OSError:
-                continue  # Can't stat file, skip
-
-        # Check 4: New files not in database
+        # Build lookup structures from DB
         db_paths = {f["path"] for f in db_files}
-        new_files_found = self._has_new_files(db_paths)
+        db_files_map = {f["path"]: f for f in db_files}
 
-        if new_files_found:
-            logger.info("📊 Found new files not in database - indexing needed")
+        # SINGLE filesystem scan - replaces 3 separate rglob() walks!
+        scan_result = discovery.scan_workspace(
+            self.workspace_root,
+            self.ignore_spec,
+            perform_vendor_detection=False,  # Don't do vendor detection during check
+        )
+
+        # Check 3: Staleness - compare each indexed file's mtime to its last_indexed
+        # We already have mtime from scan, so we just need to compare with DB's last_indexed
+        for rel_path in scan_result.all_paths:
+            if rel_path in db_files_map:
+                db_file = db_files_map[rel_path]
+                file_path = self.workspace_root / rel_path
+
+                try:
+                    mtime = int(file_path.stat().st_mtime)
+                    last_indexed = db_file.get("last_indexed", 0) or 0
+
+                    if mtime > last_indexed:
+                        logger.info(
+                            f"📊 File modified since last index: {rel_path} - indexing needed"
+                        )
+                        logger.debug(f"   mtime={mtime}, last_indexed={last_indexed}")
+                        return True
+                except OSError:
+                    continue  # Can't stat file, skip
+
+        # Check 4: New files not in database (set difference is O(1) per element)
+        new_files = scan_result.all_paths - db_paths
+        if new_files:
+            logger.info(f"📊 Found {len(new_files)} new files not in database - indexing needed")
+            logger.debug(f"   New files: {list(new_files)[:5]}")
             return True
 
-        # Check 5: Deleted files still in database (files in DB that no longer exist on disk)
-        disk_files = self._walk_directory()
-        disk_paths = {
-            str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
-            for file_path in disk_files
-        }
-
-        deleted_files = db_paths - disk_paths
+        # Check 5: Deleted files still in database
+        deleted_files = db_paths - scan_result.all_paths
         if deleted_files:
             logger.info(f"📊 Found {len(deleted_files)} deleted files still in database - indexing needed")
             logger.debug(f"   Deleted files: {list(deleted_files)[:5]}")
@@ -462,9 +471,9 @@ class WorkspaceScanner:
                 deleted_files.append(db_file_path)
 
         if deleted_files:
-            # Remove from both SQLite and LanceDB vector store
-            for db_file_path in deleted_files:
-                self.storage.delete_file(db_file_path)
+            # OPTIMIZED: Batch delete from SQLite (single transaction)
+            self.storage.delete_files_batch(deleted_files)
+            # Batch delete from LanceDB vector store
             self.vector_store.delete_files_batch(deleted_files)
             stats.deleted = len(deleted_files)
             logger.debug(f"🗑️ Cleaned up {len(deleted_files)} deleted files from both SQLite and vector store")
