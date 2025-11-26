@@ -8,7 +8,15 @@
 
 1. Need to make sure github workflow still building properly and prepare for a 1.0 release
 
+2. We need to review the toolkit as a whole and decide if fast_refs needs to be removed and replaced with a better tool or if we just need to make it better and keep it.
 
+3. We've got to do another deep review of the indexing process for sqlite and lancedb, apparently we have duplicates happening.
+
+4. WTF IS THIS SHIT: ⏺ miller - fast_search (MCP)(query: "test vector_store search file_filter", file_pattern: "python/tests/**/*.py", limit: 10)
+  ⎿  Error: Error calling tool 'fast_search': lance error: LanceError(IO): External error: Not found:
+     Users/murphy/source/miller/.miller/indexes/miller_816288f4/vectors.lance/symbols.lance/data/1010000101111000100110117538ea4021a8a9206158af6da6.lance,
+     /Users/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lance-io-0.39.0/src/local.rs:122:31,
+     /Users/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lance-0.39.0/src/dataset/scanner.rs:3677:83
 ---
 
 ## Future Enhancements (Ranked by Impact)

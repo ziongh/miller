@@ -258,6 +258,14 @@ async def _background_initialization_and_indexing():
         else:
             logger.info("✅ Workspace already indexed - ready for search")
 
+        # Always update registry stats (ensures consistency after manual DB changes)
+        cursor = server_state.storage.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM symbols")
+        final_symbol_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM symbols")
+        final_file_count = cursor.fetchone()[0]
+        registry.update_workspace_stats(workspace_id, final_symbol_count, final_file_count)
+
         # PHASE 3: Start file watcher for real-time updates
         init_phase = "file_watcher"
         logger.info("👁️  Starting file watcher for real-time indexing...")

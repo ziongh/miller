@@ -388,3 +388,60 @@ class TestRecallTextFormat:
             # Should be text (string), not JSON (list)
             assert isinstance(result, str)
             assert "memory found" in result
+
+
+# ============================================================================
+# Semantic Search Tests
+# ============================================================================
+
+
+class TestRecallSemanticSearch:
+    """Tests for recall with query parameter (semantic search)."""
+
+    @pytest.mark.asyncio
+    async def test_semantic_search_uses_file_path_filter(self, temp_memories_dir, mock_context):
+        """Semantic search must filter to .memories/ files DURING search, not after.
+
+        This is the critical bug fix: the WHERE clause must be applied during
+        the LanceDB search to prevent code files from crowding out memories.
+        """
+        from unittest.mock import MagicMock, patch
+        import numpy as np
+        from miller.tools.recall import _recall_semantic
+
+        # Create mock vector_store with proper structure
+        mock_vs = MagicMock()
+        mock_table = MagicMock()
+        mock_vs._table = mock_table
+        mock_vs._embeddings = MagicMock()
+        mock_vs._embeddings.embed_query = MagicMock(return_value=np.zeros(384))
+
+        # Set up the search chain to return empty results
+        mock_search = mock_table.search.return_value
+        mock_where = mock_search.where.return_value
+        mock_where.limit.return_value.to_list.return_value = []
+
+        with patch('miller.server.vector_store', mock_vs):
+            await _recall_semantic("test query", limit=10)
+
+        # Verify .where() was called with file_path filter
+        mock_search.where.assert_called_once()
+        filter_arg = mock_search.where.call_args[0][0]
+        assert ".memories" in filter_arg, f"Expected .memories filter, got: {filter_arg}"
+
+    @pytest.mark.asyncio
+    async def test_semantic_search_fallback_when_no_vector_store(
+        self, temp_memories_dir, mock_git_context, mock_context
+    ):
+        """When vector_store is None, semantic search falls back to filesystem."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Test checkpoint for fallback")
+
+        with patch('miller.server.vector_store', None):
+            results = await recall(mock_context, query="test", output_format="json", limit=10)
+
+        # Should return results via filesystem fallback (returns all memories)
+        assert isinstance(results, list)

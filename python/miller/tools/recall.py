@@ -139,8 +139,18 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
         mem_type = mem.get("type", "checkpoint")
         icon = icons.get(mem_type, "•")
         mem_id = mem.get("id", "?")
-        # Checkpoints have "description", plans have "title" (with optional "content")
-        description = mem.get("description") or mem.get("title", "")
+        # Plans: show title only (content is too large)
+        # Checkpoints: show description, truncated for readability
+        if mem_type == "plan":
+            # Plans have title in metadata, content in description - only show title
+            display_text = mem.get("title", mem_id)
+        else:
+            # Checkpoints/decisions/learnings: show description, truncated
+            description = mem.get("description", "")
+            if len(description) > 200:
+                display_text = description[:197] + "..."
+            else:
+                display_text = description
         tags = mem.get("tags", [])
         timestamp = mem.get("timestamp", 0)
         git = mem.get("git", {})
@@ -162,7 +172,7 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
 
         # Format: icon id (time) [branch]
         output.append(f"{icon} {mem_id} ({rel_time}) [{branch}]")
-        output.append(f"  {description}")
+        output.append(f"  {display_text}")
 
         if tags:
             output.append(f"  Tags: {', '.join(tags)}")
@@ -185,14 +195,16 @@ async def _recall_semantic(
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """
-    Semantic search over indexed memories using hybrid text+semantic search.
+    Semantic search over indexed memories using vector similarity.
 
     Flow:
-    1. Search vector store with query (get more results for filtering)
-    2. Filter to only .memories/ paths
-    3. Load memory files (markdown or legacy JSON)
-    4. Apply time/type filters
-    5. Return top results by relevance score
+    1. Search vector store with file_path filter to ONLY search .memories/ files
+    2. Load memory files (markdown or legacy JSON)
+    3. Apply time/type/tag filters
+    4. Return top results by relevance score
+
+    IMPORTANT: We filter to .memories/ DURING search (not after) to prevent
+    code files from crowding out memory files in search results.
     """
     # Import server globals for vector_store access
     from miller.server import vector_store
@@ -201,16 +213,41 @@ async def _recall_semantic(
         # Indexing not complete yet - fall back to filesystem scan
         return await _recall_filesystem(type, tags, since, until, limit)
 
-    # Search with higher limit since we'll filter by path
-    # Use hybrid search for best results (combines text + semantic)
-    search_results = vector_store.search(query, method="hybrid", limit=limit * 5)
+    # Access LanceDB table and embeddings directly for filtered search
+    table = vector_store._table
+    embeddings = vector_store._embeddings
 
-    # Filter to only memory files (.memories/ paths) - both .md and legacy .json
-    memory_paths = set()
+    if table is None:
+        return await _recall_filesystem(type, tags, since, until, limit)
+
+    # Generate query embedding
+    if embeddings is None:
+        from miller.embeddings.manager import EmbeddingManager
+        embeddings = EmbeddingManager()
+
+    query_vec = embeddings.embed_query(query)
+
+    # Search with file_path filter - search ONLY .memories/ files
+    # This is critical: without this filter, memory files get crowded out
+    # by code files that may have higher similarity scores for technical queries
+    search_results = (
+        table.search(query_vec.tolist())
+        .where("file_path LIKE '.memories%'", prefilter=True)
+        .limit(limit * 3)  # Get extra for time/type/tag filtering
+        .to_list()
+    )
+
+    # Extract unique file paths with best relevance score per file
+    # Plans have multiple embeddings (one per heading), so we track the best match
+    # Lower distance = more relevant
+    file_distances: dict[str, float] = {}
     for result in search_results:
         file_path = result.get("file_path", "")
-        if file_path.startswith(".memories/") and (file_path.endswith(".md") or file_path.endswith(".json")):
-            memory_paths.add(file_path)
+        if file_path.endswith(".md") or file_path.endswith(".json"):
+            distance = result.get("_distance", float("inf"))
+            # Keep the best (lowest) distance for each file
+            if file_path not in file_distances or distance < file_distances[file_path]:
+                file_distances[file_path] = distance
 
     # Parse date filters
     since_timestamp = None
@@ -234,7 +271,7 @@ async def _recall_semantic(
 
     # Load memory files (markdown or legacy JSON) and apply filters
     all_checkpoints = []
-    for file_path in memory_paths:
+    for file_path in file_distances.keys():
         try:
             full_path = Path(file_path)
             if not full_path.exists():
@@ -243,8 +280,14 @@ async def _recall_semantic(
             # read_memory_file handles both .md and .json formats
             metadata, content = read_memory_file(full_path)
 
-            # Reconstruct data with description for consistent interface
-            data = {**metadata, "description": content}
+            # Reconstruct data with correct key based on type:
+            # - Plans use "content" (consistent with plan tool)
+            # - Checkpoints/decisions/learnings use "description"
+            mem_type = metadata.get("type", "checkpoint")
+            if mem_type == "plan":
+                data = {**metadata, "content": content}
+            else:
+                data = {**metadata, "description": content}
 
             # Apply type filter
             if type and data.get("type") != type:
@@ -265,16 +308,22 @@ async def _recall_semantic(
             if until_timestamp and checkpoint_timestamp > until_timestamp:
                 continue
 
+            # Attach relevance score for sorting (lower = more relevant)
+            data["_relevance_distance"] = file_distances.get(file_path, float("inf"))
             all_checkpoints.append(data)
 
         except (ValueError, KeyError):
             continue
 
-    # Sort by timestamp descending (most recent first)
-    all_checkpoints.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+    # Sort by relevance (lowest distance = most relevant first)
+    # This preserves semantic search ordering instead of recency
+    all_checkpoints.sort(key=lambda x: x.get("_relevance_distance", float("inf")))
 
-    # Apply limit
-    return all_checkpoints[:limit]
+    # Apply limit and clean up internal fields
+    results = all_checkpoints[:limit]
+    for r in results:
+        r.pop("_relevance_distance", None)
+    return results
 
 
 async def _recall_filesystem(
@@ -331,8 +380,14 @@ async def _recall_filesystem(
                 # read_memory_file handles both .md and .json formats
                 metadata, content = read_memory_file(checkpoint_file)
 
-                # Reconstruct data with description for consistent interface
-                data = {**metadata, "description": content}
+                # Reconstruct data with correct key based on type:
+                # - Plans use "content" (consistent with plan tool)
+                # - Checkpoints/decisions/learnings use "description"
+                mem_type = metadata.get("type", "checkpoint")
+                if mem_type == "plan":
+                    data = {**metadata, "content": content}
+                else:
+                    data = {**metadata, "description": content}
 
                 # Apply filters
                 if type and data.get("type") != type:

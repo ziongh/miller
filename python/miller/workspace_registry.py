@@ -125,14 +125,21 @@ class WorkspaceRegistry:
 
     def get_workspace(self, workspace_id: str) -> Optional[WorkspaceEntry]:
         """
-        Get specific workspace by ID.
+        Get specific workspace by ID or type.
 
         Args:
-            workspace_id: Workspace ID to retrieve
+            workspace_id: Workspace ID to retrieve, OR "primary" to get the primary workspace
 
         Returns:
             WorkspaceEntry if found, None otherwise
         """
+        # Special case: "primary" resolves to the workspace with workspace_type="primary"
+        if workspace_id == "primary":
+            for entry in self.workspaces.values():
+                if entry.workspace_type == "primary":
+                    return entry
+            return None
+
         return self.workspaces.get(workspace_id)
 
     def remove_workspace(self, workspace_id: str) -> bool:
