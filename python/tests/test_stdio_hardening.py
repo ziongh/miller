@@ -13,11 +13,9 @@ This is critical for integration with MCP clients like .NET/C# agents.
 """
 
 import io
-import os
 import sys
 import subprocess
 from pathlib import Path
-from contextlib import redirect_stdout, redirect_stderr
 
 
 class TestUtf8Enforcement:

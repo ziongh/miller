@@ -13,6 +13,7 @@ background initialization and indexing.
 """
 
 import asyncio
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -155,13 +156,48 @@ async def _background_initialization_and_indexing():
         init_phase = "imports"
         t0 = time.time()
 
-        # Import heavy ML libraries (torch, sentence-transformers ~6s on first load)
-        # These are imported here rather than at module level to allow fast MCP handshake
-        from miller.storage import StorageManager
-        from miller.workspace import WorkspaceScanner
-        from miller.workspace_registry import WorkspaceRegistry
-        from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
-        from miller.embeddings import EmbeddingManager, VectorStore
+        def _sync_heavy_imports():
+            """Import heavy ML libraries (torch, sentence-transformers ~6s on first load)."""
+            from miller.storage import StorageManager
+            from miller.workspace import WorkspaceScanner
+            from miller.workspace_registry import WorkspaceRegistry
+            from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
+            from miller.embeddings import EmbeddingManager, VectorStore
+            return (
+                StorageManager,
+                WorkspaceScanner,
+                WorkspaceRegistry,
+                get_workspace_db_path,
+                get_workspace_vector_path,
+                EmbeddingManager,
+                VectorStore,
+            )
+
+        if sys.platform == "win32":
+            # Windows: asyncio.to_thread deadlocks with MCP's pipe-based stdin/stdout.
+            # The thread pool executor interacts badly with Windows pipe I/O.
+            # Run synchronously - blocks event loop ~6s but avoids deadlock.
+            # This is okay because MCP handshake completed before this task started.
+            (
+                StorageManager,
+                WorkspaceScanner,
+                WorkspaceRegistry,
+                get_workspace_db_path,
+                get_workspace_vector_path,
+                EmbeddingManager,
+                VectorStore,
+            ) = _sync_heavy_imports()
+        else:
+            # Unix/macOS: Run in thread pool to keep event loop responsive
+            (
+                StorageManager,
+                WorkspaceScanner,
+                WorkspaceRegistry,
+                get_workspace_db_path,
+                get_workspace_vector_path,
+                EmbeddingManager,
+                VectorStore,
+            ) = await asyncio.to_thread(_sync_heavy_imports)
 
         logger.info(f"✅ Imports complete ({time.time()-t0:.1f}s)")
 
