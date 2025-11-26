@@ -330,8 +330,10 @@ class WorkspaceScanner:
                 f"🔄 Processing {len(files_to_process)} files (new/changed), skipping {stats.skipped} unchanged"
             )
 
-        # Process files in batches for optimal GPU utilization
-        BATCH_SIZE = 50  # Process 50 files at a time for better GPU batching
+        # Process files in batches - smaller batches for DirectML stability
+        # DirectML is fragile under memory pressure, so we use smaller batches
+        # to prevent OOM and memory thrashing
+        BATCH_SIZE = 10  # Smaller batches prevent memory exhaustion on DirectML
 
         for batch_idx in range(0, len(files_to_process), BATCH_SIZE):
             batch = files_to_process[batch_idx : batch_idx + BATCH_SIZE]
@@ -468,6 +470,13 @@ class WorkspaceScanner:
                 # Bulk add all symbols+vectors for this batch in one operation
                 self.vector_store.add_symbols(all_symbols, all_vectors)
                 total_vector_time += time.time() - vector_start
+
+            # Free memory after each batch to prevent accumulation
+            # Critical for DirectML which is fragile under memory pressure
+            del all_symbols, all_identifiers, all_relationships, all_code_context_map
+            del file_data_list, all_vectors
+            import gc
+            gc.collect()
 
             # Log progress after each batch
             processed = min(batch_idx + BATCH_SIZE, len(files_to_process))

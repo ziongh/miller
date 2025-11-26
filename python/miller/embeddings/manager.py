@@ -12,6 +12,40 @@ from typing import Any
 
 import numpy as np
 import torch
+
+# WORKAROUND: DirectML doesn't support torch.inference_mode() properly
+# It throws "RuntimeError: Cannot set version_counter for inference tensor"
+# Patch inference_mode BEFORE importing sentence_transformers because the decorator
+# is applied at import time. See: https://github.com/microsoft/DirectML/issues/622
+def _apply_directml_inference_mode_patch() -> bool:
+    """
+    Patch torch.inference_mode for DirectML compatibility if DirectML is available.
+    Must be called BEFORE importing sentence_transformers.
+
+    Returns:
+        True if patch was applied, False otherwise
+    """
+    try:
+        import torch_directml
+
+        if torch_directml.is_available():
+            # Store original for potential restoration
+            if not hasattr(torch, "_original_inference_mode"):
+                torch._original_inference_mode = torch.inference_mode
+
+            # Replace with no_grad-based implementation
+            torch.inference_mode = (
+                lambda mode=True: torch.no_grad() if mode else torch.enable_grad()
+            )
+            return True
+    except ImportError:
+        pass
+    return False
+
+
+_DIRECTML_PATCHED = _apply_directml_inference_mode_patch()
+
+# NOW we can safely import sentence_transformers
 from sentence_transformers import SentenceTransformer
 
 
@@ -73,6 +107,7 @@ class EmbeddingManager:
 
                 self.device = torch_directml.device()  # Returns torch.device("privateuseone:0")
                 self.device_type = "directml"
+                # Note: inference_mode patch is applied at module level (before SentenceTransformer import)
                 logger.info("🪟 Using DirectML for GPU acceleration (AMD/Intel GPU on Windows)")
             else:
                 self.device = "cpu"
@@ -218,14 +253,24 @@ class EmbeddingManager:
             text = " ".join(parts)
             texts.append(text)
 
-        # Batch encode with optimized batch size for GPU throughput
-        # Larger batches = better GPU utilization (amortize overhead)
+        # Batch encode with device-appropriate settings
+        # DirectML needs VERY conservative batching - it's fragile under memory pressure
+        # and will crash or thrash if we push too hard
+        if self.device_type == "directml":
+            # DirectML: Ultra-conservative to prevent OOM and memory thrashing
+            # Even 16GB GPUs can crash with larger batches due to DirectML overhead
+            batch_size = 8  # Very small batches for DirectML stability
+        elif self.device_type == "cuda":
+            batch_size = 256  # CUDA GPUs handle large batches well
+        else:
+            batch_size = 64  # CPU/MPS - moderate batch size
+
         embeddings = self.model.encode(
             texts,
             normalize_embeddings=True,  # L2 normalize
             convert_to_numpy=True,
             show_progress_bar=False,  # Suppress progress bar for tests
-            batch_size=256,  # Optimized for GPU (32 default is too small)
+            batch_size=batch_size,
         )
 
         return embeddings.astype(np.float32)
