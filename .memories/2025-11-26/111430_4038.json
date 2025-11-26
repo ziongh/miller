@@ -1,0 +1,18 @@
+{
+  "description": "Merged PR #1 (stdio hardening) and applied fixes: null safety for encoding checks, comments on silent excepts, removed unused imports. Also fixed platform-specific asyncio.to_thread regression - Unix uses threaded imports (non-blocking), Windows uses synchronous (avoids pipe deadlock).",
+  "git": {
+    "branch": "main",
+    "commit": "7d2fa71",
+    "dirty": false,
+    "files_changed": []
+  },
+  "id": "checkpoint_a2c35666_d326f3",
+  "tags": [
+    "pr-review",
+    "windows",
+    "stdio",
+    "bugfix"
+  ],
+  "timestamp": 1764177270,
+  "type": "checkpoint"
+}
