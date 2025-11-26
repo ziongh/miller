@@ -2,7 +2,6 @@
 MCP tool for recall management (retrieve development memories).
 """
 
-import json
 import time
 from datetime import datetime
 from pathlib import Path
@@ -10,7 +9,7 @@ from typing import Any, Optional
 
 from fastmcp import Context
 
-from miller.memory_utils import read_json_file
+from miller.memory_utils import read_memory_file
 
 
 async def recall(
@@ -206,11 +205,11 @@ async def _recall_semantic(
     # Use hybrid search for best results (combines text + semantic)
     search_results = vector_store.search(query, method="hybrid", limit=limit * 5)
 
-    # Filter to only memory files (.memories/ paths)
+    # Filter to only memory files (.memories/ paths) - both .md and legacy .json
     memory_paths = set()
     for result in search_results:
         file_path = result.get("file_path", "")
-        if file_path.startswith(".memories/") and file_path.endswith(".json"):
+        if file_path.startswith(".memories/") and (file_path.endswith(".md") or file_path.endswith(".json")):
             memory_paths.add(file_path)
 
     # Parse date filters
@@ -233,7 +232,7 @@ async def _recall_semantic(
         except ValueError:
             pass
 
-    # Load JSON files and apply filters
+    # Load memory files (markdown or legacy JSON) and apply filters
     all_checkpoints = []
     for file_path in memory_paths:
         try:
@@ -241,7 +240,11 @@ async def _recall_semantic(
             if not full_path.exists():
                 continue
 
-            data = read_json_file(full_path)
+            # read_memory_file handles both .md and .json formats
+            metadata, content = read_memory_file(full_path)
+
+            # Reconstruct data with description for consistent interface
+            data = {**metadata, "description": content}
 
             # Apply type filter
             if type and data.get("type") != type:
@@ -264,7 +267,7 @@ async def _recall_semantic(
 
             all_checkpoints.append(data)
 
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, KeyError):
             continue
 
     # Sort by timestamp descending (most recent first)
@@ -321,10 +324,15 @@ async def _recall_filesystem(
         if date_dir.name.count("-") != 2:
             continue
 
-        # Scan JSON files in this directory
-        for checkpoint_file in date_dir.glob("*.json"):
+        # Scan memory files (.md and legacy .json) in this directory
+        memory_files = list(date_dir.glob("*.md")) + list(date_dir.glob("*.json"))
+        for checkpoint_file in memory_files:
             try:
-                data = read_json_file(checkpoint_file)
+                # read_memory_file handles both .md and .json formats
+                metadata, content = read_memory_file(checkpoint_file)
+
+                # Reconstruct data with description for consistent interface
+                data = {**metadata, "description": content}
 
                 # Apply filters
                 if type and data.get("type") != type:
@@ -346,8 +354,8 @@ async def _recall_filesystem(
 
                 all_checkpoints.append(data)
 
-            except (json.JSONDecodeError, KeyError):
-                # Skip invalid JSON files
+            except (ValueError, KeyError):
+                # Skip invalid files
                 continue
 
     # Sort by timestamp descending (most recent first)

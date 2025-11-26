@@ -2,7 +2,6 @@
 MCP tool for plan management (mutable development plans).
 """
 
-import json
 import re
 import time
 from pathlib import Path
@@ -12,9 +11,9 @@ from fastmcp import Context
 
 from miller.memory_utils import (
     get_git_context,
-    read_json_file,
+    read_memory_file,
     slugify_title,
-    write_json_file,
+    write_memory_file,
 )
 
 
@@ -114,14 +113,13 @@ async def plan(
         slug = slugify_title(title)
         plan_id = f"plan_{slug}"
 
-        # Create plan data
-        plan_data = {
+        # Create plan metadata (frontmatter)
+        metadata = {
             "id": plan_id,
             "timestamp": int(time.time()),
             "type": "plan",
             "title": title,
             "status": "active" if activate else "pending",
-            "content": content or "",
             "git": get_git_context(),
         }
 
@@ -129,9 +127,9 @@ async def plan(
         if activate:
             await _deactivate_all_plans(plans_dir)
 
-        # Write plan file
-        plan_file = plans_dir / f"{plan_id}.json"
-        write_json_file(plan_file, plan_data)
+        # Write plan file as markdown with frontmatter
+        plan_file = plans_dir / f"{plan_id}.md"
+        write_memory_file(plan_file, metadata, content or "")
 
         # Return based on output_format
         if output_format == "json":
@@ -139,7 +137,7 @@ async def plan(
             return {
                 "id": plan_id,
                 "title": title,
-                "status": plan_data["status"],
+                "status": metadata["status"],
                 "message": "Plan created successfully",
             }
         return f"✓ Created plan '{title}' ({plan_id})"
@@ -148,11 +146,15 @@ async def plan(
         if not id:
             raise ValueError("id is required for get action")
 
-        plan_file = plans_dir / f"{id}.json"
+        # Try .md first, fall back to legacy .json
+        plan_file = plans_dir / f"{id}.md"
+        if not plan_file.exists():
+            plan_file = plans_dir / f"{id}.json"
         if not plan_file.exists():
             raise FileNotFoundError(f"Plan {id} not found")
 
-        plan_data = read_json_file(plan_file)
+        metadata, content = read_memory_file(plan_file)
+        plan_data = {**metadata, "content": content}
         if output_format == "json":
             return plan_data
         return _format_plan_as_text(plan_data)
@@ -160,17 +162,19 @@ async def plan(
     elif action == "list":
         all_plans = []
 
-        for plan_file in plans_dir.glob("plan_*.json"):
+        # Scan both .md and legacy .json files
+        plan_files = list(plans_dir.glob("plan_*.md")) + list(plans_dir.glob("plan_*.json"))
+        for plan_file in plan_files:
             try:
-                plan_data = read_json_file(plan_file)
+                metadata, content = read_memory_file(plan_file)
+                plan_data = {**metadata, "content": content}
 
                 # Filter by status if specified
                 if status and plan_data.get("status") != status:
                     continue
 
                 # Calculate task counts from content
-                plan_content = plan_data.get("content", "")
-                task_count, completed_count = _count_tasks(plan_content)
+                task_count, completed_count = _count_tasks(content)
 
                 if include_content:
                     # Full mode: include everything plus task counts
@@ -189,7 +193,7 @@ async def plan(
                     }
                     all_plans.append(summary)
 
-            except (json.JSONDecodeError, KeyError):
+            except (ValueError, KeyError):
                 continue
 
         # Sort by timestamp descending
@@ -206,48 +210,52 @@ async def plan(
         # Deactivate all plans
         await _deactivate_all_plans(plans_dir)
 
-        # Activate this plan
-        plan_file = plans_dir / f"{id}.json"
+        # Activate this plan - try .md first, fall back to legacy .json
+        plan_file = plans_dir / f"{id}.md"
+        if not plan_file.exists():
+            plan_file = plans_dir / f"{id}.json"
         if not plan_file.exists():
             raise FileNotFoundError(f"Plan {id} not found")
 
-        plan_data = read_json_file(plan_file)
-        plan_data["status"] = "active"
-        write_json_file(plan_file, plan_data)
+        metadata, content = read_memory_file(plan_file)
+        metadata["status"] = "active"
+        write_memory_file(plan_file, metadata, content)
 
         if output_format == "json":
             return {"status": "success", "message": f"Plan {id} activated", "id": id}
-        return f"✓ Plan '{plan_data.get('title', id)}' activated"
+        return f"✓ Plan '{metadata.get('title', id)}' activated"
 
     elif action == "update":
         if not id:
             raise ValueError("id is required for update action")
 
-        plan_file = plans_dir / f"{id}.json"
+        # Try .md first, fall back to legacy .json
+        plan_file = plans_dir / f"{id}.md"
+        if not plan_file.exists():
+            plan_file = plans_dir / f"{id}.json"
         if not plan_file.exists():
             raise FileNotFoundError(f"Plan {id} not found")
 
-        plan_data = read_json_file(plan_file)
+        metadata, existing_content = read_memory_file(plan_file)
 
         # Update fields
-        if content is not None:
-            plan_data["content"] = content
+        new_content = content if content is not None else existing_content
         if status is not None:
-            plan_data["status"] = status
+            metadata["status"] = status
 
-        write_json_file(plan_file, plan_data)
+        write_memory_file(plan_file, metadata, new_content)
 
-        task_count, completed_count = _count_tasks(plan_data.get("content", ""))
+        task_count, completed_count = _count_tasks(new_content)
         if output_format == "json":
             return {
-                "id": plan_data.get("id"),
-                "title": plan_data.get("title"),
-                "status": plan_data.get("status"),
+                "id": metadata.get("id"),
+                "title": metadata.get("title"),
+                "status": metadata.get("status"),
                 "task_count": task_count,
                 "completed_count": completed_count,
                 "message": "Plan updated successfully",
             }
-        title = plan_data.get("title", id)
+        title = metadata.get("title", id)
         progress = f"[{completed_count}/{task_count}]" if task_count > 0 else ""
         return f"✓ Updated '{title}' {progress}"
 
@@ -255,27 +263,30 @@ async def plan(
         if not id:
             raise ValueError("id is required for complete action")
 
-        plan_file = plans_dir / f"{id}.json"
+        # Try .md first, fall back to legacy .json
+        plan_file = plans_dir / f"{id}.md"
+        if not plan_file.exists():
+            plan_file = plans_dir / f"{id}.json"
         if not plan_file.exists():
             raise FileNotFoundError(f"Plan {id} not found")
 
-        plan_data = read_json_file(plan_file)
-        plan_data["status"] = "completed"
-        plan_data["completed_at"] = int(time.time())
-        write_json_file(plan_file, plan_data)
+        metadata, content = read_memory_file(plan_file)
+        metadata["status"] = "completed"
+        metadata["completed_at"] = int(time.time())
+        write_memory_file(plan_file, metadata, content)
 
-        task_count, completed_count = _count_tasks(plan_data.get("content", ""))
+        task_count, completed_count = _count_tasks(content)
         if output_format == "json":
             return {
-                "id": plan_data.get("id"),
-                "title": plan_data.get("title"),
+                "id": metadata.get("id"),
+                "title": metadata.get("title"),
                 "status": "completed",
-                "completed_at": plan_data["completed_at"],
+                "completed_at": metadata["completed_at"],
                 "task_count": task_count,
                 "completed_count": completed_count,
                 "message": "Plan completed! 🎉",
             }
-        title = plan_data.get("title", id)
+        title = metadata.get("title", id)
         progress = f"[{completed_count}/{task_count}]" if task_count > 0 else ""
         return f"🎉 Completed '{title}' {progress}"
 
@@ -393,13 +404,15 @@ async def _deactivate_all_plans(plans_dir: Path) -> None:
     Args:
         plans_dir: Path to plans directory
     """
-    for plan_file in plans_dir.glob("plan_*.json"):
+    # Scan both .md and legacy .json files
+    plan_files = list(plans_dir.glob("plan_*.md")) + list(plans_dir.glob("plan_*.json"))
+    for plan_file in plan_files:
         try:
-            plan_data = read_json_file(plan_file)
+            metadata, content = read_memory_file(plan_file)
 
-            if plan_data.get("status") == "active":
-                plan_data["status"] = "pending"
-                write_json_file(plan_file, plan_data)
+            if metadata.get("status") == "active":
+                metadata["status"] = "pending"
+                write_memory_file(plan_file, metadata, content)
 
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, KeyError):
             continue
