@@ -99,10 +99,10 @@ async def handle_index(
     storage = StorageManager(db_path=str(db_path))
     vector_store = VectorStore(db_path=str(vector_path), embeddings=embeddings)
 
-    # If force=True, clear existing data
+    # If force=True, clear existing data from both SQLite and LanceDB
     if force:
         storage.clear_all()
-        # Note: vector_store clearing happens implicitly on re-index
+        vector_store.clear_all()
 
     # Create scanner
     scanner = WorkspaceScanner(

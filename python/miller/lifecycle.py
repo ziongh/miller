@@ -273,13 +273,13 @@ async def _background_initialization_and_indexing():
 
         ignore_spec = load_all_ignores(server_state.workspace_root)
         pattern_strings = {p.pattern for p in ignore_spec.patterns}
-        file_watcher = FileWatcher(
+        server_state.file_watcher = FileWatcher(
             workspace_path=server_state.workspace_root,
             indexing_callback=_on_files_changed,
             ignore_patterns=pattern_strings,
             debounce_delay=0.2,
         )
-        file_watcher.start()
+        server_state.file_watcher.start()
         logger.info("✅ File watcher active - workspace changes will be indexed automatically")
 
         init_phase = "complete"  # Stop watchdog thread
@@ -317,9 +317,6 @@ async def lifespan(_app):
 
     Shutdown: Stop file watcher and cleanup
     """
-    # File watcher reference (initialized by background task)
-    file_watcher = None
-
     # ═══════════════════════════════════════════════════════════════════════════════
     # SPAWN BACKGROUND TASK - DO NOT ADD ANY CODE BEFORE yield!
     # The yield MUST happen within milliseconds of this function being called.
@@ -334,9 +331,9 @@ async def lifespan(_app):
     # SHUTDOWN: Stop file watcher and wait for background task
     logger.info("🛑 Miller server shutting down...")
 
-    if file_watcher and file_watcher.is_running():
+    if server_state.file_watcher and server_state.file_watcher.is_running():
         logger.info("⏹️  Stopping file watcher...")
-        file_watcher.stop()
+        server_state.file_watcher.stop()
         logger.info("✅ File watcher stopped")
 
     if not init_task.done():

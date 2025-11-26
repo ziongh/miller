@@ -110,6 +110,22 @@ class VectorStore:
         self._fts_index_created = fts_created
         self._pattern_index_created = pattern_created
 
+    def clear_all(self) -> None:
+        """
+        Clear all vectors from the store (for force re-indexing).
+
+        Drops and recreates the table to ensure a clean slate.
+        """
+        try:
+            self.db.drop_table(self.table_name)
+            logger.info(f"Dropped LanceDB table '{self.table_name}'")
+        except Exception:
+            # Table might not exist
+            pass
+        self._table = None
+        self._fts_index_created = False
+        self._pattern_index_created = False
+
     def add_symbols(self, symbols: list[Any], vectors: np.ndarray) -> int:
         """
         Add symbols with their embeddings to LanceDB.
