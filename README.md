@@ -150,9 +150,135 @@ pytest python/tests/ -v
 >
 > See [docs/GPU_SETUP.md](docs/GPU_SETUP.md) for detailed GPU setup instructions.
 
-## Development
+## Development Setup
+
+This section covers setting up Miller for development and integrating it with Claude Code as an MCP server.
+
+### Prerequisites
+
+| Tool | Linux/macOS | Windows |
+|------|-------------|---------|
+| **Rust** | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` | `winget install Rustlang.Rustup` |
+| **uv** | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `winget install astral-sh.uv` |
+| **Python** | 3.12+ (uv will manage this) | 3.12 recommended for GPU support |
+
+### Building from Source
+
+#### Linux / macOS
+
+```bash
+# Clone and enter the project
+git clone https://github.com/your-org/miller.git
+cd miller
+
+# Create virtual environment and install dependencies
+uv sync
+
+# Build the Rust extension
+maturin develop --release
+
+# Verify everything works
+uv run pytest python/tests/ -v
+```
+
+#### Windows (PowerShell)
+
+```powershell
+# Clone and enter the project
+git clone https://github.com/your-org/miller.git
+cd miller
+
+# Create virtual environment and install dependencies
+uv sync
+
+# Build the Rust extension
+maturin develop --release
+
+# Verify everything works
+uv run pytest python/tests/ -v
+```
+
+### Adding Miller to Claude Code
+
+After building, add Miller as an MCP server so Claude Code can use its tools.
+
+#### Linux / macOS
+
+```bash
+# Project-scoped (only available in this project)
+claude mcp add -s project miller -- uv run --directory /path/to/miller python -m miller.server
+
+# User-scoped (available in all projects)
+claude mcp add -s user miller -- uv run --directory /path/to/miller python -m miller.server
+```
+
+#### Windows (PowerShell)
+
+```powershell
+# Project-scoped
+claude mcp add -s project miller -- uv run --directory C:\path\to\miller python -m miller.server
+
+# User-scoped
+claude mcp add -s user miller -- uv run --directory C:\path\to\miller python -m miller.server
+```
+
+> **Note:** Replace `/path/to/miller` or `C:\path\to\miller` with the actual absolute path to your Miller checkout.
+
+#### Verify Connection
+
+```bash
+# Check MCP server status
+claude mcp list
+
+# Or within Claude Code, use:
+/mcp
+```
+
+### Running Tests
+
+```bash
+# Python tests (run frequently)
+uv run pytest python/tests/ -v
+
+# Specific test file
+uv run pytest python/tests/test_storage.py -v
+
+# Pattern match
+uv run pytest python/tests/ -k "search" -v
+
+# Rust tests
+cargo test
+
+# Full rebuild + test (after Rust changes)
+maturin develop --release && uv run pytest python/tests/ -v
+```
+
+### Linting
+
+```bash
+# Rust
+cargo clippy -- -D warnings
+cargo fmt
+
+# Python
+uv run ruff check python/miller/
+uv run black python/miller/
+```
+
+### TDD Workflow
 
 This is a **TDD project** - tests are written before implementation. See [CLAUDE.md](CLAUDE.md) for development guidelines.
+
+```bash
+# RED: Write failing test first
+uv run pytest python/tests/test_feature.py::test_new_thing -v  # Should FAIL
+
+# GREEN: Implement minimal code to pass
+uv run pytest python/tests/test_feature.py::test_new_thing -v  # Should PASS
+
+# REFACTOR: Clean up, run full suite
+uv run pytest python/tests/ -v
+```
 
 ### Why UV?
 
