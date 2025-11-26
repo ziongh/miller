@@ -131,14 +131,32 @@ def main():
     2. MCP handshake completes in milliseconds
     3. Background indexing runs via lifespan handler (non-blocking)
     4. File watcher starts after initial indexing (real-time updates)
+
+    STDIO HARDENING (for MCP client integration):
+    - UTF-8 encoding enforced on stdout/stderr
+    - BrokenPipeError handled gracefully (client disconnect)
     """
+    # CRITICAL: Apply stdio hardening FIRST before any output
+    # This ensures UTF-8 encoding and clean streams for JSON-RPC protocol
+    from miller.stdio_hardening import harden_stdio
+
+    harden_stdio()
+
     logger.info("🚀 Starting Miller MCP server...")
     logger.info("📡 Server will respond to MCP handshake immediately")
     logger.info("📚 Background indexing will start after connection established")
     logger.info("👁️  File watcher will activate for real-time workspace updates")
 
     # Suppress FastMCP banner to keep stdout clean for MCP protocol
-    mcp.run(show_banner=False)
+    # Handle BrokenPipeError if client disconnects unexpectedly
+    try:
+        mcp.run(show_banner=False)
+    except BrokenPipeError:
+        # Client disconnected - exit cleanly without stack trace
+        import sys
+
+        sys.stderr.write("Client disconnected. Shutting down.\n")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
