@@ -73,6 +73,10 @@ class WorkspaceScanner:
         self.ignore_spec = load_all_ignores(self.workspace_root)
         self._millerignore_checked = False  # Track if we've done vendor detection
 
+        # Per-file locks to prevent concurrent indexing of the same file
+        self._file_locks: dict[Path, asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()
+
     async def _index_file(self, file_path: Path) -> bool:
         """
         Index a single file (for real-time re-indexing via file watcher).
@@ -82,6 +86,8 @@ class WorkspaceScanner:
         - SQLite storage (file, symbols, identifiers, relationships)
         - Vector store updates (deletes old embeddings, adds new ones)
 
+        Includes per-file locking to prevent concurrent indexing of the same file.
+
         Args:
             file_path: Absolute path to file to index
 
@@ -90,13 +96,28 @@ class WorkspaceScanner:
         """
         from .indexer import index_file
 
-        return await index_file(
-            file_path=file_path,
-            workspace_root=self.workspace_root,
-            storage=self.storage,
-            embeddings=self.embeddings,
-            vector_store=self.vector_store,
-        )
+        # Acquire per-file lock to prevent concurrent indexing
+        # (e.g. from rapid file watcher events)
+        async with self._locks_lock:
+            if file_path not in self._file_locks:
+                self._file_locks[file_path] = asyncio.Lock()
+            lock = self._file_locks[file_path]
+
+        async with lock:
+            try:
+                return await index_file(
+                    file_path=file_path,
+                    workspace_root=self.workspace_root,
+                    storage=self.storage,
+                    embeddings=self.embeddings,
+                    vector_store=self.vector_store,
+                )
+            finally:
+                # Cleanup lock if no longer used? 
+                # Hard to know if others are waiting without race condition.
+                # For now, we keep the lock object. 
+                # With normal workspace sizes (<50k files), this memory usage is negligible.
+                pass
 
     def _walk_directory(self) -> list[Path]:
         """
