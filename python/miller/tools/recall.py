@@ -190,7 +190,7 @@ async def _recall_semantic(
     Flow:
     1. Search vector store with query (get more results for filtering)
     2. Filter to only .memories/ paths
-    3. Load actual JSON files
+    3. Load memory files (markdown or legacy JSON)
     4. Apply time/type filters
     5. Return top results by relevance score
     """
@@ -199,7 +199,7 @@ async def _recall_semantic(
 
     if vector_store is None:
         # Indexing not complete yet - fall back to filesystem scan
-        return await _recall_filesystem(type, since, until, limit)
+        return await _recall_filesystem(type, tags, since, until, limit)
 
     # Search with higher limit since we'll filter by path
     # Use hybrid search for best results (combines text + semantic)

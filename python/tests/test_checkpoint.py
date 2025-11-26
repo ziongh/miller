@@ -3,14 +3,18 @@ Tests for checkpoint MCP tool (memory checkpoint creation).
 
 TDD Phase 1: Write ALL tests first (expect them to fail - RED).
 These tests define the contract for Julie-compatible checkpoint functionality.
+
+NOTE: Checkpoints are now stored as Markdown with YAML frontmatter (.md),
+not JSON. Tests use read_memory_file() for format-agnostic reading.
 """
 
 import pytest
-import json
 import re
 from pathlib import Path
 from datetime import datetime, timezone
 from unittest.mock import patch
+
+from miller.memory_utils import read_memory_file
 
 
 # ============================================================================
@@ -20,7 +24,7 @@ from unittest.mock import patch
 
 @pytest.mark.asyncio
 async def test_checkpoint_creates_file_in_correct_location(temp_memories_dir, mock_git_context, mock_context):
-    """Verify checkpoint creates file in .memories/YYYY-MM-DD/HHMMSS_XXXX.json."""
+    """Verify checkpoint creates file in .memories/YYYY-MM-DD/HHMMSS_XXXX.md."""
     from miller.tools.checkpoint import checkpoint
 
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
@@ -31,19 +35,19 @@ async def test_checkpoint_creates_file_in_correct_location(temp_memories_dir, mo
         date_dir = temp_memories_dir / today
         assert date_dir.exists(), f"Date directory {date_dir} should exist"
 
-        # Should have exactly one file
-        files = list(date_dir.glob("*.json"))
+        # Should have exactly one file (now .md format)
+        files = list(date_dir.glob("*.md"))
         assert len(files) == 1, f"Should have 1 checkpoint file, found {len(files)}"
 
-        # Verify filename format: HHMMSS_XXXX.json
+        # Verify filename format: HHMMSS_XXXX.md
         filename = files[0].name
-        assert re.match(r'^\d{6}_[a-f0-9]{4}\.json$', filename), \
-            f"Filename {filename} doesn't match HHMMSS_XXXX.json format"
+        assert re.match(r'^\d{6}_[a-f0-9]{4}\.md$', filename), \
+            f"Filename {filename} doesn't match HHMMSS_XXXX.md format"
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_json_schema_matches_julie(temp_memories_dir, mock_git_context, mock_context):
-    """Verify checkpoint JSON has all required fields with correct types."""
+async def test_checkpoint_schema_has_all_required_fields(temp_memories_dir, mock_git_context, mock_context):
+    """Verify checkpoint has all required fields with correct types."""
     from miller.tools.checkpoint import checkpoint
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
@@ -53,37 +57,37 @@ async def test_checkpoint_json_schema_matches_julie(temp_memories_dir, mock_git_
             tags=["test", "example"]
         )
 
-        # Read the created file
+        # Read the created file (now .md format)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
-        checkpoint_file = list(date_dir.glob("*.json"))[0]
+        checkpoint_file = list(date_dir.glob("*.md"))[0]
 
-        with open(checkpoint_file) as f:
-            data = json.load(f)
+        metadata, content = read_memory_file(checkpoint_file)
 
-        # Verify all required fields exist
-        assert "id" in data, "Missing 'id' field"
-        assert "timestamp" in data, "Missing 'timestamp' field"
-        assert "type" in data, "Missing 'type' field"
-        assert "git" in data, "Missing 'git' field"
-        assert "description" in data, "Missing 'description' field"
-        assert "tags" in data, "Missing 'tags' field"
+        # Verify all required fields exist in metadata
+        assert "id" in metadata, "Missing 'id' field"
+        assert "timestamp" in metadata, "Missing 'timestamp' field"
+        assert "type" in metadata, "Missing 'type' field"
+        assert "git" in metadata, "Missing 'git' field"
+        assert "tags" in metadata, "Missing 'tags' field"
+        # Description is now the content body, not in metadata
+        assert content, "Content (description) should not be empty"
 
         # Verify field types
-        assert isinstance(data["id"], str), "id should be string"
-        assert isinstance(data["timestamp"], int), "timestamp should be int"
-        assert isinstance(data["type"], str), "type should be string"
-        assert isinstance(data["git"], dict), "git should be dict"
-        assert isinstance(data["description"], str), "description should be string"
-        assert isinstance(data["tags"], list), "tags should be list"
+        assert isinstance(metadata["id"], str), "id should be string"
+        assert isinstance(metadata["timestamp"], int), "timestamp should be int"
+        assert isinstance(metadata["type"], str), "type should be string"
+        assert isinstance(metadata["git"], dict), "git should be dict"
+        assert isinstance(content, str), "content should be string"
+        assert isinstance(metadata["tags"], list), "tags should be list"
 
         # Verify git context structure
-        assert "branch" in data["git"], "git missing 'branch'"
-        assert "commit" in data["git"], "git missing 'commit'"
-        assert "dirty" in data["git"], "git missing 'dirty'"
-        assert "files_changed" in data["git"], "git missing 'files_changed'"
-        assert isinstance(data["git"]["dirty"], bool), "git.dirty should be bool"
-        assert isinstance(data["git"]["files_changed"], list), "git.files_changed should be list"
+        assert "branch" in metadata["git"], "git missing 'branch'"
+        assert "commit" in metadata["git"], "git missing 'commit'"
+        assert "dirty" in metadata["git"], "git missing 'dirty'"
+        assert "files_changed" in metadata["git"], "git missing 'files_changed'"
+        assert isinstance(metadata["git"]["dirty"], bool), "git.dirty should be bool"
+        assert isinstance(metadata["git"]["files_changed"], list), "git.files_changed should be list"
 
 
 @pytest.mark.asyncio
@@ -128,19 +132,18 @@ async def test_checkpoint_captures_git_context(temp_memories_dir, mock_context):
         ctx = mock_context
         checkpoint_id = await checkpoint(ctx, "Test git capture")
 
-        # Read the checkpoint file
+        # Read the checkpoint file (now .md format)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
-        checkpoint_file = list(date_dir.glob("*.json"))[0]
+        checkpoint_file = list(date_dir.glob("*.md"))[0]
 
-        with open(checkpoint_file) as f:
-            data = json.load(f)
+        metadata, content = read_memory_file(checkpoint_file)
 
         # Verify git context matches
-        assert data["git"]["branch"] == "feature/memory-tools"
-        assert data["git"]["commit"] == "a1b2c3d"
-        assert data["git"]["dirty"] is True
-        assert data["git"]["files_changed"] == [
+        assert metadata["git"]["branch"] == "feature/memory-tools"
+        assert metadata["git"]["commit"] == "a1b2c3d"
+        assert metadata["git"]["dirty"] is True
+        assert metadata["git"]["files_changed"] == [
             "python/miller/tools/memory.py",
             "python/tests/test_memory_tools.py"
         ]
@@ -171,13 +174,12 @@ async def test_checkpoint_supports_all_memory_types(temp_memories_dir, mock_git_
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             date_dir = temp_memories_dir / today
 
-            # Find the file with matching ID
+            # Find the file with matching ID (now .md format)
             found = False
-            for checkpoint_file in date_dir.glob("*.json"):
-                with open(checkpoint_file) as f:
-                    data = json.load(f)
-                if data["id"] == checkpoint_id:
-                    assert data["type"] == mem_type, f"Type should be '{mem_type}'"
+            for checkpoint_file in date_dir.glob("*.md"):
+                metadata, content = read_memory_file(checkpoint_file)
+                if metadata["id"] == checkpoint_id:
+                    assert metadata["type"] == mem_type, f"Type should be '{mem_type}'"
                     found = True
                     break
 
@@ -198,17 +200,16 @@ async def test_checkpoint_handles_tags(temp_memories_dir, mock_git_context, mock
             tags=["TDD-Plan", "Julie_Compatibility", "phase planning"]
         )
 
-        # Read file
+        # Read file (now .md format)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
-        checkpoint_file = list(date_dir.glob("*.json"))[0]
+        checkpoint_file = list(date_dir.glob("*.md"))[0]
 
-        with open(checkpoint_file) as f:
-            data = json.load(f)
+        metadata, content = read_memory_file(checkpoint_file)
 
         # Verify tags are normalized (lowercase, hyphenated)
-        assert isinstance(data["tags"], list)
-        for tag in data["tags"]:
+        assert isinstance(metadata["tags"], list)
+        for tag in metadata["tags"]:
             assert tag.islower() or "-" in tag, f"Tag '{tag}' should be lowercase"
             assert " " not in tag, f"Tag '{tag}' should not contain spaces"
 
@@ -225,39 +226,39 @@ async def test_checkpoint_returns_checkpoint_id(temp_memories_dir, mock_git_cont
         assert isinstance(checkpoint_id, str)
         assert re.match(r'^checkpoint_[a-f0-9]{8}_[a-f0-9]{6}$', checkpoint_id)
 
-        # Verify the ID in the file matches the return value
+        # Verify the ID in the file matches the return value (now .md format)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
-        checkpoint_file = list(date_dir.glob("*.json"))[0]
+        checkpoint_file = list(date_dir.glob("*.md"))[0]
 
-        with open(checkpoint_file) as f:
-            data = json.load(f)
+        metadata, content = read_memory_file(checkpoint_file)
 
-        assert data["id"] == checkpoint_id
+        assert metadata["id"] == checkpoint_id
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_file_is_pretty_printed(temp_memories_dir, mock_git_context, mock_context):
-    """Verify JSON is formatted with indent=2 and sorted keys."""
+async def test_checkpoint_file_is_well_formatted(temp_memories_dir, mock_git_context, mock_context):
+    """Verify markdown file has proper YAML frontmatter structure."""
     from miller.tools.checkpoint import checkpoint
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
         await checkpoint(ctx, "Test formatting", tags=["test"])
 
-        # Read raw file content
+        # Read raw file content (now .md format)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         date_dir = temp_memories_dir / today
-        checkpoint_file = list(date_dir.glob("*.json"))[0]
+        checkpoint_file = list(date_dir.glob("*.md"))[0]
 
-        with open(checkpoint_file) as f:
-            raw_content = f.read()
+        raw_content = checkpoint_file.read_text()
 
-        # Verify it's pretty-printed (has indentation)
-        assert "  " in raw_content, "JSON should be indented"
-        assert raw_content.count("\n") > 5, "JSON should be multi-line"
+        # Verify it has proper YAML frontmatter structure
+        assert raw_content.startswith("---\n"), "Should start with YAML frontmatter"
+        assert "\n---\n" in raw_content, "Should have closing frontmatter delimiter"
 
-        # Verify keys are sorted (description comes before git, git before id, etc.)
-        # Parse and re-serialize with sort_keys to compare
-        data = json.loads(raw_content)
-        expected_content = json.dumps(data, indent=2, sort_keys=True) + "\n"
-        assert raw_content == expected_content, "JSON should have sorted keys"
+        # Verify it's multi-line (readable format)
+        assert raw_content.count("\n") > 5, "Should be multi-line"
+
+        # Verify the content can be parsed correctly
+        metadata, content = read_memory_file(checkpoint_file)
+        assert metadata["id"], "Should have valid ID in metadata"
+        assert content == "Test formatting", "Content should be preserved"

@@ -219,7 +219,7 @@ async def plan(
 
         metadata, content = read_memory_file(plan_file)
         metadata["status"] = "active"
-        write_memory_file(plan_file, metadata, content)
+        _write_plan_file(plan_file, metadata, content)
 
         if output_format == "json":
             return {"status": "success", "message": f"Plan {id} activated", "id": id}
@@ -243,7 +243,7 @@ async def plan(
         if status is not None:
             metadata["status"] = status
 
-        write_memory_file(plan_file, metadata, new_content)
+        _write_plan_file(plan_file, metadata, new_content)
 
         task_count, completed_count = _count_tasks(new_content)
         if output_format == "json":
@@ -273,7 +273,7 @@ async def plan(
         metadata, content = read_memory_file(plan_file)
         metadata["status"] = "completed"
         metadata["completed_at"] = int(time.time())
-        write_memory_file(plan_file, metadata, content)
+        _write_plan_file(plan_file, metadata, content)
 
         task_count, completed_count = _count_tasks(content)
         if output_format == "json":
@@ -379,6 +379,34 @@ def _format_plan_list_as_text(plans: list[dict[str, Any]]) -> str:
     return "\n".join(output)
 
 
+def _write_plan_file(plan_file: Path, metadata: dict[str, Any], content: str) -> Path:
+    """
+    Write plan file, converting legacy .json to .md format.
+
+    If plan_file is a .json file, writes to .md instead and removes the old .json.
+    This ensures automatic migration from JSON to Markdown format.
+
+    Args:
+        plan_file: Original plan file path (may be .json or .md)
+        metadata: Plan metadata (frontmatter)
+        content: Plan content (markdown)
+
+    Returns:
+        Path to the written file (always .md)
+    """
+    # Convert .json to .md if needed
+    if plan_file.suffix == ".json":
+        md_file = plan_file.with_suffix(".md")
+        write_memory_file(md_file, metadata, content)
+        # Remove old JSON file after successful write
+        if plan_file.exists():
+            plan_file.unlink()
+        return md_file
+    else:
+        write_memory_file(plan_file, metadata, content)
+        return plan_file
+
+
 def _count_tasks(content: str) -> tuple[int, int]:
     """Count total tasks and completed tasks in markdown content.
 
@@ -412,7 +440,7 @@ async def _deactivate_all_plans(plans_dir: Path) -> None:
 
             if metadata.get("status") == "active":
                 metadata["status"] = "pending"
-                write_memory_file(plan_file, metadata, content)
+                _write_plan_file(plan_file, metadata, content)
 
         except (ValueError, KeyError):
             continue
