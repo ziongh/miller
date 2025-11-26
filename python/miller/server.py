@@ -40,7 +40,7 @@ except ImportError:
 
 # Load server instructions (Serena-style behavioral adoption)
 _instructions_path = Path(__file__).parent / "instructions.md"
-_instructions = _instructions_path.read_text() if _instructions_path.exists() else ""
+_instructions = _instructions_path.read_text(encoding='utf-8') if _instructions_path.exists() else ""
 
 # Create FastMCP server with lifespan handler and behavioral instructions
 # Components will be initialized in lifespan startup (after handshake)

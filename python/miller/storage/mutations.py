@@ -12,7 +12,7 @@ Handles:
 
 import sqlite3
 import time
-from typing import Any
+from typing import Any, Optional
 
 from .schema import StorageError, _normalize_path
 

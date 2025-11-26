@@ -144,37 +144,24 @@ async def _background_initialization_and_indexing():
         # ║  DO NOT REMOVE THIS! This fix has been reverted multiple times causing       ║
         # ║  15-second startup delays. The "lazy import" pattern is NOT enough -         ║
         # ║  imports block even inside async functions!                                   ║
+        # ║                                                                               ║
+        # ║  UPDATE 2024-11: On Windows, asyncio.to_thread() deadlocks when running as   ║
+        # ║  a subprocess with stdin/stdout pipes (how MCP servers run). The thread      ║
+        # ║  pool executor interacts badly with Windows pipe I/O. As a workaround, we    ║
+        # ║  run imports synchronously - this blocks the event loop for ~6s but works.   ║
+        # ║  The MCP handshake still completes immediately because this runs in a        ║
+        # ║  background task spawned AFTER the lifespan yields.                          ║
         # ╚══════════════════════════════════════════════════════════════════════════════╝
         init_phase = "imports"
         t0 = time.time()
 
-        def _sync_heavy_imports():
-            """Run heavy imports in thread pool to avoid blocking event loop."""
-            from miller.storage import StorageManager
-            from miller.workspace import WorkspaceScanner
-            from miller.workspace_registry import WorkspaceRegistry
-            from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
-            from miller.embeddings import EmbeddingManager, VectorStore
-            return (
-                StorageManager,
-                WorkspaceScanner,
-                WorkspaceRegistry,
-                get_workspace_db_path,
-                get_workspace_vector_path,
-                EmbeddingManager,
-                VectorStore,
-            )
-
-        # Run imports in thread pool - this is THE critical fix for fast startup
-        (
-            StorageManager,
-            WorkspaceScanner,
-            WorkspaceRegistry,
-            get_workspace_db_path,
-            get_workspace_vector_path,
-            EmbeddingManager,
-            VectorStore,
-        ) = await asyncio.to_thread(_sync_heavy_imports)
+        # Import heavy ML libraries (torch, sentence-transformers ~6s on first load)
+        # These are imported here rather than at module level to allow fast MCP handshake
+        from miller.storage import StorageManager
+        from miller.workspace import WorkspaceScanner
+        from miller.workspace_registry import WorkspaceRegistry
+        from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
+        from miller.embeddings import EmbeddingManager, VectorStore
 
         logger.info(f"✅ Imports complete ({time.time()-t0:.1f}s)")
 
