@@ -1,0 +1,24 @@
+{
+  "description": "Fixed Windows-specific MCP server issues: 1) UTF-8 encoding for instructions.md read, 2) asyncio.to_thread deadlock workaround (Windows pipes), 3) Missing Optional import in mutations.py, 4) Replaced rglob with os.walk directory pruning for 140x faster file discovery. Total indexing improved from 36s to 26s.",
+  "git": {
+    "branch": "main",
+    "commit": "8a8ac13",
+    "dirty": true,
+    "files_changed": [
+      "python/miller/lifecycle.py",
+      "python/miller/server.py",
+      "python/miller/storage/mutations.py",
+      "python/miller/tools/refactor.py",
+      "python/miller/workspace/discovery.py"
+    ]
+  },
+  "id": "checkpoint_85c22d78_b37a5e",
+  "tags": [
+    "windows",
+    "performance",
+    "bugfix",
+    "mcp"
+  ],
+  "timestamp": 1764172160,
+  "type": "checkpoint"
+}
