@@ -29,18 +29,64 @@ class TestEmbeddingManager:
         embeddings = EmbeddingManager(device="auto")
 
         # Should auto-detect and use any available accelerator
-        # Valid devices: cuda (NVIDIA/ROCm), mps (Apple Silicon), xpu (Intel Arc), directml, cpu
-        valid_devices = {"cuda", "mps", "xpu", "cpu", "directml"}
-        assert embeddings.device in valid_devices, f"Device '{embeddings.device}' not recognized"
+        # device_type is a string identifier for logging/display
+        valid_device_types = {"cuda", "mps", "xpu", "cpu", "directml"}
+        assert embeddings.device_type in valid_device_types, (
+            f"Device type '{embeddings.device_type}' not recognized"
+        )
 
         # Verify it chose an accelerator if one is available
-        import torch
         if torch.cuda.is_available():
-            assert embeddings.device == "cuda", "CUDA available but not selected"
+            assert embeddings.device_type == "cuda", "CUDA available but not selected"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            assert embeddings.device == "mps", "MPS available but not selected"
+            assert embeddings.device_type == "mps", "MPS available but not selected"
         # If no accelerator available, should fall back to CPU
-        # (we don't assert device == "cpu" because other accelerators like XPU might be present)
+        # (we don't assert device_type == "cpu" because other accelerators like XPU might be present)
+
+    def test_directml_uses_correct_torch_device(self):
+        """Test that DirectML uses torch_directml.device(), not a string.
+
+        This is critical: SentenceTransformer doesn't understand "dml" or "directml"
+        as device strings. We must pass the actual torch.device from torch_directml.device().
+        """
+        from unittest.mock import patch, MagicMock
+        import torch
+
+        # Mock torch_directml module
+        mock_directml = MagicMock()
+        mock_directml.is_available.return_value = True
+        mock_device = MagicMock()  # Mock device object (can't use real privateuseone on macOS)
+        mock_device.__str__ = MagicMock(return_value="privateuseone:0")
+        mock_directml.device.return_value = mock_device
+
+        # Mock SentenceTransformer since we can't actually use privateuseone backend
+        mock_st = MagicMock()
+        mock_st.get_sentence_embedding_dimension.return_value = 384
+
+        # Disable other accelerators so DirectML is selected
+        with patch.dict("sys.modules", {"torch_directml": mock_directml}):
+            with patch.object(torch.cuda, "is_available", return_value=False):
+                with patch.object(torch.backends.mps, "is_available", return_value=False):
+                    with patch(
+                        "miller.embeddings.manager.SentenceTransformer", return_value=mock_st
+                    ):
+                        from miller.embeddings.manager import EmbeddingManager
+
+                        # Force reimport by creating a new instance
+                        embeddings = EmbeddingManager(device="auto")
+
+                        # device_type should be "directml" for logging
+                        assert embeddings.device_type == "directml", (
+                            f"Expected device_type='directml', got '{embeddings.device_type}'"
+                        )
+
+                        # device should be the mock device object, not a string like "dml"
+                        assert embeddings.device == mock_device, (
+                            f"Expected device={mock_device}, got {embeddings.device}"
+                        )
+
+                        # Verify torch_directml.device() was called to get the device
+                        mock_directml.device.assert_called()
 
     def test_embed_query_returns_correct_dimensions(self):
         """Test query embedding has correct dimensions (384 for bge-small)."""

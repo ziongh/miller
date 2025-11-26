@@ -37,38 +37,50 @@ class EmbeddingManager:
         logger = logging.getLogger("miller.embeddings")
 
         # Auto-detect device with priority: CUDA > ROCm > XPU > MPS > DirectML > CPU
+        # device_type: string identifier for logging/display ("cuda", "mps", "directml", "cpu")
+        # device: actual value to pass to PyTorch (string or torch.device object)
         if device == "auto":
             if torch.cuda.is_available():
                 self.device = "cuda"
+                self.device_type = "cuda"
                 gpu_name = torch.cuda.get_device_name(0)
                 logger.info(f"🚀 Using CUDA GPU: {gpu_name}")
             elif self._check_rocm_available():
                 # ROCm support (AMD GPUs on Linux)
                 # Requires: pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
                 self.device = "cuda"  # ROCm uses CUDA API
+                self.device_type = "cuda"
                 gpu_name = torch.cuda.get_device_name(0)
                 logger.info(f"🔴 Using AMD GPU with ROCm: {gpu_name}")
             elif self._check_xpu_available():
                 # Intel Arc/Data Center GPU support (Linux/Windows)
                 # Requires: pip install torch --index-url https://download.pytorch.org/whl/nightly/xpu
                 self.device = "xpu"
+                self.device_type = "xpu"
                 gpu_name = self._get_xpu_device_name()
                 logger.info(f"🔷 Using Intel XPU: {gpu_name}")
             elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 self.device = "mps"
+                self.device_type = "mps"
                 logger.info(
                     "🍎 Using Apple Silicon MPS (Metal Performance Shaders) for GPU acceleration"
                 )
             elif self._check_directml_available():
                 # DirectML support (Windows AMD/Intel GPUs via torch-directml)
                 # Requires: pip install torch-directml
-                self.device = "dml"
+                # IMPORTANT: Must use torch_directml.device() - PyTorch doesn't understand "dml"
+                import torch_directml
+
+                self.device = torch_directml.device()  # Returns torch.device("privateuseone:0")
+                self.device_type = "directml"
                 logger.info("🪟 Using DirectML for GPU acceleration (AMD/Intel GPU on Windows)")
             else:
                 self.device = "cpu"
+                self.device_type = "cpu"
                 logger.info("💻 Using CPU (no GPU detected)")
         else:
             self.device = device
+            self.device_type = device if isinstance(device, str) else str(device)
             logger.info(f"🎯 Using manually specified device: {device}")
 
         # Load model (suppress stdout/stderr to keep MCP protocol clean)
@@ -90,7 +102,7 @@ class EmbeddingManager:
         self.dimensions = self.model.get_sentence_embedding_dimension()
 
         logger.info(
-            f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device})"
+            f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device_type})"
         )
 
     def _check_rocm_available(self) -> bool:

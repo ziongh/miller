@@ -1,12 +1,13 @@
 # Miller - TODO
 
-*Last updated: 2025-11-25*
+*Last updated: 2025-11-26*
 
 <!-- Add your notes below -->
 
 ## Current Tasks
 
-*No active tasks. Add new items here as needed.*
+1. Need to make sure github workflow still building properly and prepare for a 1.0 release
+
 
 ---
 
@@ -45,6 +46,10 @@
 
 <details>
 <summary>Click to expand completed items</summary>
+
+### 2025-11-26
+- ✅ Fixed DirectML not working on Windows - was passing "dml" string to SentenceTransformer, but PyTorch needs actual `torch_directml.device()` object
+- ✅ README overhaul - now features tool-specific lean formats (70-90% token savings), moved TOON to secondary
 
 ### 2025-11-25
 - ✅ Fixed `code_context` always null in `fast_search` (computed during indexing)
