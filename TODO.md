@@ -10,6 +10,8 @@
 
 2. We need to review the toolkit as a whole and decide if fast_refs needs to be removed and replaced with a better tool or if we just need to make it better and keep it.
 
+3. Saw a log entry: failed to index .gitattributes. a. we don't need to index .gitattributes. BUT b. it's just text right? why would it fail?
+
 ---
 
 ## Future Enhancements (Ranked by Impact)
