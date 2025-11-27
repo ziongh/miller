@@ -95,7 +95,8 @@ jobs:
       - name: Install wheel
         run: |
           # Install our wheel from dist/, plus dependencies from PyPI
-          uv pip install --system --find-links dist miller-core
+          # --prerelease=allow needed for toon-format>=0.9.0b1
+          uv pip install --system --find-links dist --prerelease=allow miller-core
 
       - name: Test import
         run: python -c "import miller_core; print('✅ Miller core imported successfully')"
