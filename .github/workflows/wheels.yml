@@ -99,7 +99,7 @@ jobs:
           uv pip install --system --find-links dist --prerelease=allow miller-core
 
       - name: Test import
-        run: python -c "import miller_core; print('✅ Miller core imported successfully')"
+        run: python -c "from miller import miller_core; print('✅ Miller core imported successfully')"
 
       - name: Run basic tests
         run: |
