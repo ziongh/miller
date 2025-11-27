@@ -82,6 +82,11 @@ from miller.tools.workspace import manage_workspace
 
 mcp.tool(output_schema=None)(manage_workspace)  # Returns text string (default: text)
 
+# Register GPU memory management tool
+from miller.tools.gpu_memory import gpu_memory
+
+mcp.tool(output_schema=None)(gpu_memory)  # Returns text string (default: text)
+
 
 # Module-level __getattr__ for backwards compatibility
 # This allows `from miller.server import storage` to still work

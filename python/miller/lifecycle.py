@@ -101,6 +101,54 @@ async def _on_files_changed(events: list[tuple[FileEvent, Path]]):
                 logger.warning(f"⚠️  Failed to index: {rel_path}")
 
 
+async def _embedding_auto_unload_task():
+    """
+    Auto-unload embedding model after 5 minutes of inactivity to free GPU memory.
+
+    Following Julie's proven pattern:
+    - Check every 60 seconds
+    - Unload after 300 seconds (5 minutes) of idle time
+    - Lazy reload on next use (handled by EmbeddingManager._ensure_loaded())
+
+    This frees 5GB of VRAM when the model isn't being used, while keeping
+    it loaded during active coding sessions.
+    """
+    CHECK_INTERVAL_SECS = 60  # Check every minute
+    IDLE_TIMEOUT_SECS = 300  # Unload after 5 minutes of inactivity
+
+    while True:
+        try:
+            await asyncio.sleep(CHECK_INTERVAL_SECS)
+
+            # Skip if embeddings not initialized yet
+            if server_state.embeddings is None:
+                continue
+
+            # Check if model should be unloaded
+            last_use_time = server_state.embeddings._last_use_time
+
+            if last_use_time is None:
+                # Never used yet, don't unload
+                continue
+
+            import time
+            idle_duration = time.time() - last_use_time
+
+            if idle_duration > IDLE_TIMEOUT_SECS:
+                # Model has been idle for >5 minutes
+                if server_state.embeddings.is_loaded_on_gpu():
+                    # Unload to free GPU memory
+                    server_state.embeddings.unload()
+                    logger.info(
+                        f"🧹 Embedding model auto-unloaded after {idle_duration:.0f}s of inactivity "
+                        "(will reload on next use)"
+                    )
+
+        except Exception as e:
+            # Log errors but keep the task running
+            logger.error(f"❌ Error in embedding auto-unload task: {e}", exc_info=True)
+
+
 async def _background_initialization_and_indexing():
     """
     Background task that initializes components, indexes workspace, and starts file watcher.
@@ -281,6 +329,12 @@ async def _background_initialization_and_indexing():
         )
         server_state.file_watcher.start()
         logger.info("✅ File watcher active - workspace changes will be indexed automatically")
+
+        # PHASE 4: Start auto-unload task for GPU memory management (Julie-style)
+        # This task monitors embedding usage and unloads the model after 5min of inactivity
+        init_phase = "auto_unload"
+        asyncio.create_task(_embedding_auto_unload_task())
+        logger.info("🕐 Started embedding auto-unload task (checks every 60s, unloads after 5min idle)")
 
         init_phase = "complete"  # Stop watchdog thread
 
