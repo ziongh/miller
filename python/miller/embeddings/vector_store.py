@@ -46,7 +46,7 @@ class VectorStore:
         [
             pa.field("id", pa.string(), nullable=False),
             pa.field("name", pa.string(), nullable=False),
-            pa.field("kind", pa.string(), nullable=False),
+            pa.field("kind", pa.string(), nullable=False),  # "function", "class", "file", etc.
             pa.field("language", pa.string(), nullable=False),
             pa.field("file_path", pa.string(), nullable=False),
             pa.field("signature", pa.string(), nullable=True),  # Optional
@@ -56,6 +56,9 @@ class VectorStore:
             pa.field(
                 "code_pattern", pa.string(), nullable=False
             ),  # Pattern-preserving content for code idiom search
+            pa.field(
+                "content", pa.string(), nullable=True
+            ),  # File content for file-level entries (kind="file")
             pa.field("vector", pa.list_(pa.float32(), 384), nullable=False),  # 384-dim embeddings
         ]
     )
@@ -165,7 +168,8 @@ class VectorStore:
                     "doc_comment": sym.doc_comment if hasattr(sym, "doc_comment") else None,
                     "start_line": sym.start_line if hasattr(sym, "start_line") else 0,
                     "end_line": sym.end_line if hasattr(sym, "end_line") else 0,
-                    "code_pattern": code_pattern,  # NEW: Pattern-preserving field
+                    "code_pattern": code_pattern,
+                    "content": getattr(sym, "content", None),  # File content for file-level entries
                     "vector": vec.tolist(),  # LanceDB stores as list
                 }
             )

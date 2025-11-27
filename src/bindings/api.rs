@@ -67,18 +67,22 @@ pub fn extract_file(
 ///     file_path (str): File path with extension (e.g., "main.rs", "app.py")
 ///
 /// Returns:
-///     str or None: Language name if detected, None otherwise
+///     str: Language name if detected, "text" for unknown extensions
+///
+/// Note:
+///     Never returns None - unknown file types are treated as "text" to ensure
+///     they remain searchable via full-text search even without symbol extraction.
 #[pyfunction]
 #[pyo3(signature = (file_path))]
-pub fn detect_language(file_path: &str) -> PyResult<Option<String>> {
+pub fn detect_language(file_path: &str) -> PyResult<String> {
     // Extract extension from file path
     let path = Path::new(file_path);
     let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
-    // Use Julie's language detection
-    let lang = detect_language_from_extension(extension);
+    // Use Julie's language detection, fallback to "text" for unknown extensions
+    let lang = detect_language_from_extension(extension).unwrap_or("text");
 
-    Ok(lang.map(|s| s.to_string()))
+    Ok(lang.to_string())
 }
 
 /// Get list of all supported programming languages

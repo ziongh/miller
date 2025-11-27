@@ -373,6 +373,52 @@ class EmbeddingManager:
 
         return batch_size
 
+    def calculate_file_batch_size(self) -> int:
+        """
+        Calculate optimal file batch size based on device type and VRAM.
+
+        File batch size determines how many files are processed before embedding.
+        This affects memory pressure - too many files = too many symbols = OOM.
+
+        Device-specific behavior:
+        - DirectML (integrated GPU): Conservative (10-15), fragile under memory pressure
+        - CPU: Moderate default (50), I/O bound anyway
+        - CUDA/MPS/XPU (dedicated GPU): Scale with VRAM (25-100)
+
+        Returns:
+            Optimal file batch size (int)
+        """
+        # DirectML (Intel Arc integrated, AMD APUs) - very conservative
+        # These have shared system memory and are fragile under pressure
+        if self.device_type == "directml":
+            return 15
+
+        # CPU - moderate default, mostly I/O bound anyway
+        if self.device_type == "cpu":
+            return 50
+
+        # Dedicated GPUs (CUDA, MPS, XPU) - scale with VRAM
+        known_gpu_devices = {"cuda", "mps", "xpu"}
+        if self.device_type not in known_gpu_devices:
+            # Unknown device type - use conservative fallback
+            return 30
+
+        vram_bytes = self._detect_gpu_memory_bytes()
+
+        if vram_bytes is None or vram_bytes == 0:
+            # VRAM detection failed - use conservative fallback
+            return 30
+
+        vram_gb = vram_bytes / 1_073_741_824.0
+
+        # Formula: scale from 25 (2GB) to 100 (16GB+)
+        # Linear interpolation: file_batch = 25 + (vram_gb - 2) * 5
+        # Clamped to [25, 100]
+        calculated = int(25 + (vram_gb - 2) * 5)
+        file_batch = max(25, min(100, calculated))
+
+        return file_batch
+
     def _check_directml_available(self) -> bool:
         """
         Check if DirectML is available (Windows AMD/Intel GPU acceleration).
@@ -548,6 +594,36 @@ class EmbeddingManager:
             convert_to_numpy=True,
             show_progress_bar=False,  # Suppress progress bar for tests
             batch_size=self.batch_size,  # Use dynamically calculated batch size
+        )
+
+        return embeddings.astype(np.float32)
+
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
+        """
+        Embed a batch of raw text strings.
+
+        Used for file-level indexing where we don't have symbol objects,
+        just raw file content.
+
+        Args:
+            texts: List of text strings to embed
+
+        Returns:
+            Array of embeddings (N x 384), L2-normalized
+        """
+        if not texts:
+            return np.empty((0, self.dimensions), dtype=np.float32)
+
+        # Ensure model is loaded on GPU (lazy reload if needed)
+        self._ensure_loaded()
+
+        # Batch encode
+        embeddings = self.model.encode(
+            texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+            batch_size=self.batch_size,
         )
 
         return embeddings.astype(np.float32)

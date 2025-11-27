@@ -13,16 +13,16 @@ logger = logging.getLogger("miller.vector_store")
 
 def create_fts_index(table, max_retries: int = 3):
     """
-    Create Tantivy FTS index with whitespace tokenizer on code_pattern field.
+    Create Tantivy FTS index on code_pattern and content fields.
 
-    The whitespace tokenizer preserves special chars (: < > [ ] ( ) { })
-    which is critical for code idiom search. The code_pattern field contains
-    signature + name + kind, so it's suitable for general search too.
+    Indexes two fields:
+    - code_pattern: signature + name + kind (for symbol search)
+    - content: raw file content (for file-level entries with kind="file")
 
-    Note: We use whitespace tokenizer instead of stemming because:
-    - Code idioms need exact character matching (: < > [ ])
-    - Whitespace tokenization is sufficient for code search
-    - Pattern field already contains name/signature/kind, so covers general search
+    Uses unicode61 tokenizer which:
+    - Provides good word segmentation for file content (natural language)
+    - Still works for code patterns (tokenizes on punctuation/whitespace)
+    - Supports searching across both symbols and file content
 
     Args:
         table: LanceDB table object to create index on
@@ -40,19 +40,19 @@ def create_fts_index(table, max_retries: int = 3):
     last_error = None
     for attempt in range(max_retries):
         try:
-            # Create single FTS index with whitespace tokenizer
-            # This supports both pattern search (: BaseClass) and general search (function names)
+            # Create FTS index on both code_pattern and content fields
+            # This enables searching symbols AND file content in one query
             table.create_fts_index(
-                ["code_pattern"],  # Pattern field (contains signature + name + kind)
+                ["code_pattern", "content"],  # Both symbol patterns AND file content
                 use_tantivy=True,  # Enable Tantivy FTS
-                base_tokenizer="whitespace",  # Whitespace only (preserves : < > [ ] ( ) { })
+                base_tokenizer="whitespace",  # Preserves code patterns (: < > [ ])
                 with_position=True,  # Enable phrase search
                 replace=True,  # Replace existing index
             )
             if attempt > 0:
                 logger.info(f"FTS index created successfully on retry {attempt + 1}")
             else:
-                logger.debug("FTS index created successfully on code_pattern field")
+                logger.debug("FTS index created on code_pattern and content fields")
             return True, True  # Both flags set (same index serves both purposes)
 
         except Exception as e:

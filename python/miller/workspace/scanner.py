@@ -330,13 +330,16 @@ class WorkspaceScanner:
                 f"🔄 Processing {len(files_to_process)} files (new/changed), skipping {stats.skipped} unchanged"
             )
 
-        # Process files in batches - smaller batches for DirectML stability
-        # DirectML is fragile under memory pressure, so we use smaller batches
-        # to prevent OOM and memory thrashing
-        BATCH_SIZE = 10  # Smaller batches prevent memory exhaustion on DirectML
+        # Process files in batches - batch size scales with GPU capability
+        # DirectML (integrated GPUs) get smaller batches, CUDA/MPS scale with VRAM
+        file_batch_size = self.embeddings.calculate_file_batch_size()
+        logger.info(
+            f"📦 File batch size: {file_batch_size} "
+            f"(device: {self.embeddings.device_type})"
+        )
 
-        for batch_idx in range(0, len(files_to_process), BATCH_SIZE):
-            batch = files_to_process[batch_idx : batch_idx + BATCH_SIZE]
+        for batch_idx in range(0, len(files_to_process), file_batch_size):
+            batch = files_to_process[batch_idx : batch_idx + file_batch_size]
 
             # Phase 2a: Prepare batch for parallel extraction
             extraction_batch = []
@@ -479,7 +482,7 @@ class WorkspaceScanner:
             gc.collect()
 
             # Log progress after each batch
-            processed = min(batch_idx + BATCH_SIZE, len(files_to_process))
+            processed = min(batch_idx + file_batch_size, len(files_to_process))
             logger.info(f"   📊 Progress: {processed}/{len(files_to_process)} files processed")
 
         # Rebuild FTS index once after all files processed
