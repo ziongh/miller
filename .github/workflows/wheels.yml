@@ -103,7 +103,7 @@ jobs:
 
       - name: Run basic tests
         run: |
-          uv pip install --system pytest
+          uv pip install --system pytest pytest-asyncio
           pytest python/tests/ -v -k "test_core" -p no:cacheprovider --override-ini="addopts=" || echo "Core tests not found, skipping"
 
   # Build source distribution
