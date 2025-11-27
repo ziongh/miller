@@ -94,7 +94,8 @@ jobs:
 
       - name: Install wheel
         run: |
-          uv pip install --system --find-links dist miller
+          # Use --no-index to avoid PyPI name conflict (there's another 'miller' package)
+          uv pip install --system --no-index --find-links dist miller
 
       - name: Test import
         run: python -c "from miller import miller_core; print('✅ Miller core imported successfully')"
