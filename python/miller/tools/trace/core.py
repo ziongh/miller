@@ -4,7 +4,7 @@ Main call tracing entry point.
 
 import time
 from collections import defaultdict
-from typing import Optional
+from typing import Any, Optional
 from miller.storage import StorageManager
 from miller.tools.trace_types import (
     DEFAULT_MAX_DEPTH,
