@@ -138,8 +138,8 @@ jobs:
           assert lang == 'rust', f'Expected rust, got {lang}'
           print(f'Language detection: test.rs -> {lang}')
 
-          # Test Rust code parsing
-          rust_code = 'fn main() { println!(\"hello\"); }'
+          # Test Rust code parsing (use triple quotes to avoid escaping issues on Windows)
+          rust_code = '''fn main() { println!("hello"); }'''
           rust_result = miller_core.extract_file(rust_code, 'rust', 'main.rs')
           assert len(rust_result.symbols) > 0
           print(f'Extracted {len(rust_result.symbols)} symbols from Rust')
