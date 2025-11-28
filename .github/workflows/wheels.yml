@@ -92,24 +92,56 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Install wheel
+      - name: Install wheel (no deps - just testing Rust extension)
         run: |
-          # Install our wheel from dist/, plus dependencies from PyPI
-          # --prerelease=allow needed for toon-format>=0.9.0b1
-          uv pip install --system --find-links dist --prerelease=allow miller-core
+          # Install ONLY our wheel, skip heavy dependencies (torch, lancedb, etc.)
+          # We only need to verify the Rust extension works, not the full ML stack
+          # The Rust extension (miller_core) is self-contained - no Python deps needed
+          uv pip install --system --no-deps --find-links dist miller-core
 
-      - name: Test import
-        run: python -c "from miller import miller_core; print('Miller core imported successfully')"
-
-      - name: Run smoke test
+      - name: Debug - Show wheel contents
         run: |
-          # Basic smoke test - verify core functionality works
+          echo "=== Installed files ==="
+          python -c "import miller; print(miller.__file__)"
+          python -c "import os, miller; print(os.listdir(os.path.dirname(miller.__file__)))"
+
+      - name: Verify Rust extension works
+        run: |
           python -c "
-          from miller import miller_core
-          # Test extract_file works
+          import sys
+
+          # Direct import of Rust extension - don't use __init__.py which swallows errors
+          # This will fail loudly if the extension can't load
+          try:
+              import miller.miller_core as miller_core
+          except ImportError as e:
+              print(f'IMPORT ERROR: {e}', file=sys.stderr)
+              # Try to get more info
+              import os, miller
+              miller_dir = os.path.dirname(miller.__file__)
+              print(f'miller directory: {miller_dir}', file=sys.stderr)
+              print(f'Contents: {os.listdir(miller_dir)}', file=sys.stderr)
+              raise
+
+          print(f'miller_core version: {miller_core.__version__}')
+
+          # Test symbol extraction (core functionality)
           result = miller_core.extract_file('def hello(): pass', 'python', 'test.py')
-          assert len(result.symbols) > 0, 'Should extract at least one symbol'
-          print(f'Extracted {len(result.symbols)} symbols - core works!')
+          assert len(result.symbols) > 0, f'Expected symbols, got {len(result.symbols)}'
+          print(f'Extracted {len(result.symbols)} symbols from Python')
+
+          # Test language detection
+          lang = miller_core.detect_language('test.rs')
+          assert lang == 'rust', f'Expected rust, got {lang}'
+          print(f'Language detection: test.rs -> {lang}')
+
+          # Test Rust code parsing
+          rust_code = 'fn main() { println!(\"hello\"); }'
+          rust_result = miller_core.extract_file(rust_code, 'rust', 'main.rs')
+          assert len(rust_result.symbols) > 0
+          print(f'Extracted {len(rust_result.symbols)} symbols from Rust')
+
+          print('All smoke tests passed!')
           "
 
   # Build source distribution
