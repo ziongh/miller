@@ -61,7 +61,7 @@ handleRequest (server.py:50)
 
 ## Features
 
-- **31 Languages**: Python, TypeScript, Rust, Go, Java, C#, and [more](docs/LANGUAGES.md)
+- **29 Languages**: Python, TypeScript, Rust, Go, Java, C#, and [more](docs/LANGUAGES.md)
 - **Hybrid Search**: Tantivy FTS + semantic vectors + cross-encoder re-ranking
 - **Pre-Indexed**: Sub-20ms queries on codebases of any size
 - **GPU Accelerated**: CUDA, MPS (Apple Silicon), DirectML (Windows AMD/Intel)
@@ -72,7 +72,7 @@ handleRequest (server.py:50)
 
 ```
 Python (MCP + ML)                 Rust (Parsing)
-├── FastMCP Protocol      ←───→   ├── Tree-sitter (31 languages)
+├── FastMCP Protocol      ←───→   ├── Tree-sitter (29 languages)
 ├── sentence-transformers         ├── Symbol extraction
 ├── SQLite (relations)            ├── Call graph building
 └── LanceDB (vectors)             └── PyO3 zero-copy bridge
@@ -80,20 +80,39 @@ Python (MCP + ML)                 Rust (Parsing)
 
 ## Quick Start
 
-### Prerequisites
-
-- **Rust**: [rustup.rs](https://rustup.rs)
-- **uv**: [astral.sh/uv](https://astral.sh/uv) (10-100x faster than pip)
-
-### Install & Build
+### Option 1: Install from PyPI (Recommended)
 
 ```bash
-git clone https://github.com/anthropics/miller.git
+pip install miller-core
+```
+
+### Option 2: Build from Source
+
+**Prerequisites:**
+- **Python 3.12+**
+- **Rust**: [rustup.rs](https://rustup.rs)
+- **uv**: [astral.sh/uv](https://astral.sh/uv) (recommended) or pip
+
+**All Platforms:**
+```bash
+git clone https://github.com/anortham/miller.git
 cd miller
 uv sync                      # Install Python dependencies
 maturin develop --release    # Build Rust extension
-uv run pytest python/tests/ -v  # Verify
+uv run pytest python/tests/ -v -o "addopts="  # Verify
 ```
+
+**Windows Notes:**
+- Use Python 3.12 for CUDA + DirectML GPU support
+- If using PowerShell, run from Developer Command Prompt for Rust builds
+- See [GPU_SETUP.md](docs/GPU_SETUP.md) for GPU acceleration setup
+
+**macOS Notes:**
+- Apple Silicon (M1/M2/M3) uses MPS for GPU acceleration automatically
+- Xcode Command Line Tools required: `xcode-select --install`
+
+**Linux Notes:**
+- CUDA support requires PyTorch with CUDA: `pip install torch --index-url https://download.pytorch.org/whl/cu121`
 
 ### Add to Claude Code
 
@@ -101,11 +120,12 @@ uv run pytest python/tests/ -v  # Verify
 # User-scoped (available in all projects)
 claude mcp add miller -- uv run --directory /path/to/miller python -m miller.server
 
+# Or if installed from PyPI
+claude mcp add miller -- python -m miller.server
+
 # Verify connection
 claude mcp list
 ```
-
-> **Windows GPU Note**: Use Python 3.12 for CUDA + DirectML support. See [GPU_SETUP.md](docs/GPU_SETUP.md).
 
 ## Core Tools
 
@@ -175,9 +195,9 @@ This is a **TDD project**. See [CLAUDE.md](CLAUDE.md) for development guidelines
 
 ## Status
 
-**v0.5.0** — Production-ready, actively used for development.
+**v0.1.0** — Initial release. Production-ready for code intelligence workflows.
 
-- ✅ 31-language parsing (tree-sitter via Rust)
+- ✅ 29-language parsing (tree-sitter via Rust)
 - ✅ Hybrid search (FTS + semantic + re-ranking)
 - ✅ Development memory (checkpoint/recall/plan)
 - ✅ Real-time file watching
@@ -189,4 +209,4 @@ MIT
 
 ## Acknowledgments
 
-Tree-sitter extractors originally developed for [Julie](https://github.com/anthropics/julie), a Rust MCP server.
+Tree-sitter extractors originally developed for [Julie](https://github.com/anortham/julie), a Rust MCP server.
