@@ -57,7 +57,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: 'true'
-          manylinux: auto
+          # Use manylinux_2_28 (glibc 2.28, RHEL 8) instead of auto (2_17)
+          # Fixes: undefined symbol: le16toh (byte-order conversion macro)
+          # Tree-sitter grammars use le16toh which needs newer glibc
+          manylinux: '2_28'
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
