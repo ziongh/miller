@@ -105,7 +105,7 @@ jobs:
         run: |
           # Basic smoke test - verify core functionality works
           python -c "
-          import miller_core
+          from miller import miller_core
           # Test extract_file works
           result = miller_core.extract_file('def hello(): pass', 'python', 'test.py')
           assert len(result.symbols) > 0, 'Should extract at least one symbol'
