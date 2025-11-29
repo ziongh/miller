@@ -116,15 +116,71 @@ uv run pytest python/tests/ -v -o "addopts="  # Verify
 
 ### Add to Claude Code
 
+After building from source, restart Claude Code, then run:
+
 ```bash
-# User-scoped (available in all projects)
+# From the miller directory (recommended)
+cd /path/to/miller
+claude mcp add miller -- uv run python -m miller.server
+
+# Or with explicit path (works from anywhere)
 claude mcp add miller -- uv run --directory /path/to/miller python -m miller.server
 
-# Or if installed from PyPI
-claude mcp add miller -- python -m miller.server
+# User-scoped (available in all projects, not just this one)
+claude mcp add --scope user miller -- uv run --directory /path/to/miller python -m miller.server
 
-# Verify connection
+# If installed from PyPI
+claude mcp add miller -- python -m miller.server
+```
+
+After adding, **restart Claude Code** to connect. Verify with:
+```bash
 claude mcp list
+```
+
+### Manual Configuration
+
+Alternatively, edit the config file directly:
+
+**Claude Code** (`~/.claude/settings.json`):
+```json
+{
+  "mcpServers": {
+    "miller": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/miller", "python", "-m", "miller.server"]
+    }
+  }
+}
+```
+
+**Claude Desktop** (config location varies by OS):
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "miller": {
+      "command": "python",
+      "args": ["-m", "miller.server"],
+      "cwd": "/path/to/your/project"
+    }
+  }
+}
+```
+
+**If installed from PyPI**, simplify to:
+```json
+{
+  "mcpServers": {
+    "miller": {
+      "command": "python",
+      "args": ["-m", "miller.server"]
+    }
+  }
+}
 ```
 
 ## Core Tools
