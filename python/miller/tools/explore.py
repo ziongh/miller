@@ -13,7 +13,7 @@ from miller.storage import StorageManager
 
 
 async def fast_explore(
-    mode: Literal["types", "similar"] = "types",
+    mode: Literal["types", "similar", "dead_code", "hot_spots"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
     threshold: float = 0.7,
@@ -28,12 +28,14 @@ async def fast_explore(
     Supported modes:
     - types: Type intelligence (implementations, hierarchy, returns, parameters)
     - similar: Find semantically similar code using vector embeddings
+    - dead_code: Find unreferenced symbols (potential cleanup candidates)
+    - hot_spots: Find most-referenced symbols (high-impact code)
 
     Note: For dependency tracing, use trace_call_path(direction="downstream") instead,
     which provides richer features including semantic cross-language discovery.
 
     Args:
-        mode: Exploration mode ("types" or "similar")
+        mode: Exploration mode ("types", "similar", "dead_code", or "hot_spots")
         type_name: Name of type to explore (required for types mode)
         symbol: Symbol name to explore (required for similar mode)
         threshold: Minimum similarity score for similar mode (0.0-1.0, default 0.7)
@@ -49,8 +51,12 @@ async def fast_explore(
         return await _explore_types(type_name, storage, limit)
     elif mode == "similar":
         return await _explore_similar(symbol, threshold, storage, vector_store, embeddings, limit)
+    elif mode == "dead_code":
+        return await _explore_dead_code(storage, limit)
+    elif mode == "hot_spots":
+        return await _explore_hot_spots(storage, limit)
     else:
-        raise ValueError(f"Unknown exploration mode: {mode}. Valid modes: 'types', 'similar'")
+        raise ValueError(f"Unknown exploration mode: {mode}. Valid modes: 'types', 'similar', 'dead_code', 'hot_spots'")
 
 
 async def _explore_types(
@@ -198,6 +204,163 @@ async def _explore_similar(
         return {"symbol": symbol, "error": str(e), "similar": [], "total_found": 0}
 
 
+async def _explore_dead_code(
+    storage: Optional[StorageManager],
+    limit: int,
+) -> dict[str, Any]:
+    """
+    Find unreferenced symbols (potential dead code).
+
+    Dead code = symbols that:
+    - Are functions or classes (not variables/constants)
+    - Are not in test files
+    - Are not private (starting with _)
+    - Are not test-prefixed (test_, Test)
+    - Have no incoming relationships (not called by anyone)
+    - Have no identifier references from other files
+
+    Args:
+        storage: StorageManager instance
+        limit: Maximum results to return
+
+    Returns:
+        Dict with dead_code list and total_found count
+    """
+    # Get storage from global if not provided
+    if storage is None:
+        import miller.server as server
+        storage = server.storage
+
+    if storage is None:
+        return {"error": "Storage not initialized", "dead_code": [], "total_found": 0}
+
+    try:
+        cursor = storage.conn.cursor()
+
+        # Find symbols that:
+        # 1. Are functions or classes
+        # 2. Not in test files
+        # 3. Not private (starting with _)
+        # 4. Not test-prefixed
+        # 5. Not called by anyone (no incoming relationships)
+        # 6. Not referenced in other files (no cross-file identifier references)
+        cursor.execute("""
+            SELECT s.id, s.name, s.kind, s.file_path, s.start_line, s.signature
+            FROM symbols s
+            WHERE s.kind IN ('function', 'class')
+            AND s.name NOT LIKE 'test\\_%' ESCAPE '\\'
+            AND s.name NOT LIKE 'Test%'
+            AND s.name NOT LIKE '\\_%' ESCAPE '\\'
+            AND s.file_path NOT LIKE '%test%'
+            AND s.file_path NOT LIKE '%fixture%'
+            -- Not called by anyone
+            AND s.id NOT IN (
+                SELECT DISTINCT to_symbol_id FROM relationships
+            )
+            -- Not referenced in other files
+            AND s.name NOT IN (
+                SELECT DISTINCT i.name FROM identifiers i
+                WHERE i.file_path != s.file_path
+            )
+            ORDER BY s.file_path, s.name
+            LIMIT ?
+        """, (limit,))
+
+        dead_code = []
+        for row in cursor.fetchall():
+            dead_code.append({
+                "name": row[1],
+                "kind": row[2],
+                "file_path": row[3],
+                "start_line": row[4],
+                "signature": row[5],
+            })
+
+        return {
+            "dead_code": dead_code,
+            "total_found": len(dead_code),
+        }
+
+    except Exception as e:
+        return {"error": str(e), "dead_code": [], "total_found": 0}
+
+
+async def _explore_hot_spots(
+    storage: Optional[StorageManager],
+    limit: int,
+) -> dict[str, Any]:
+    """
+    Find most-referenced symbols (high-impact code).
+
+    Hot spots = symbols that are referenced most frequently across the codebase.
+    These are high-impact areas where changes need careful consideration.
+
+    Only counts cross-file references (not self-references within the same file).
+    Only includes project-defined symbols (joins with symbols table).
+
+    Args:
+        storage: StorageManager instance
+        limit: Maximum results to return
+
+    Returns:
+        Dict with hot_spots list (ranked by ref_count) and total_found count
+    """
+    # Get storage from global if not provided
+    if storage is None:
+        import miller.server as server
+        storage = server.storage
+
+    if storage is None:
+        return {"error": "Storage not initialized", "hot_spots": [], "total_found": 0}
+
+    try:
+        cursor = storage.conn.cursor()
+
+        # Find symbols with most cross-file references
+        # Only count references from files OTHER than where the symbol is defined
+        cursor.execute("""
+            SELECT
+                s.id,
+                s.name,
+                s.kind,
+                s.file_path,
+                s.start_line,
+                s.signature,
+                COUNT(*) as ref_count,
+                COUNT(DISTINCT i.file_path) as file_count
+            FROM symbols s
+            INNER JOIN identifiers i ON s.name = i.name
+            WHERE s.kind IN ('function', 'method', 'class')
+            AND s.file_path NOT LIKE '%test%'
+            AND s.file_path NOT LIKE '%fixture%'
+            AND i.file_path != s.file_path  -- Cross-file references only
+            GROUP BY s.id
+            HAVING ref_count > 0
+            ORDER BY ref_count DESC, file_count DESC
+            LIMIT ?
+        """, (limit,))
+
+        hot_spots = []
+        for row in cursor.fetchall():
+            hot_spots.append({
+                "name": row[1],
+                "kind": row[2],
+                "file_path": row[3],
+                "start_line": row[4],
+                "signature": row[5],
+                "ref_count": row[6],
+                "file_count": row[7],
+            })
+
+        return {
+            "hot_spots": hot_spots,
+            "total_found": len(hot_spots),
+        }
+
+    except Exception as e:
+        return {"error": str(e), "hot_spots": [], "total_found": 0}
+
+
 def _format_explore_as_text(result: dict[str, Any]) -> str:
     """Format type exploration result as lean text output.
 
@@ -322,5 +485,83 @@ def _format_similar_as_text(result: dict[str, Any]) -> str:
         # Show as percentage
         pct = int(similarity * 100)
         output.append(f"  {pct}% {file_path}:{line} → {sig}")
+
+    return "\n".join(output)
+
+
+def _format_dead_code_as_text(result: dict[str, Any]) -> str:
+    """Format dead_code mode result as lean text output.
+
+    Output format:
+    ```
+    Dead code candidates (3 symbols):
+
+      src/orphan.py:15 → def unused_helper()
+      src/legacy.py:42 → class OldHandler
+      src/utils.py:88 → def deprecated_func()
+    ```
+    """
+    total = result.get("total_found", 0)
+    error = result.get("error")
+
+    if error:
+        return f"Dead code scan: Error - {error}"
+
+    if total == 0:
+        return "Dead code scan: No unreferenced symbols found. ✨"
+
+    output = [f"Dead code candidates ({total} symbols):", ""]
+
+    for item in result.get("dead_code", []):
+        name = item.get("name", "?")
+        kind = item.get("kind", "symbol")
+        file_path = item.get("file_path", "?")
+        line = item.get("start_line", 0)
+        sig = item.get("signature", name)
+        if sig and len(sig) > 55:
+            sig = sig[:52] + "..."
+
+        output.append(f"  {file_path}:{line} → {sig}")
+
+    output.append("")
+    output.append("Note: Review before deleting - may be used dynamically or externally.")
+
+    return "\n".join(output)
+
+
+def _format_hot_spots_as_text(result: dict[str, Any]) -> str:
+    """Format hot_spots mode result as lean text output.
+
+    Output format:
+    ```
+    High-impact symbols (10 most referenced):
+
+      395 refs (29 files) src/utils.py:15 → def helper_func()
+      210 refs (18 files) src/core.py:42 → class StorageManager
+      ...
+    ```
+    """
+    total = result.get("total_found", 0)
+    error = result.get("error")
+
+    if error:
+        return f"Hot spots scan: Error - {error}"
+
+    if total == 0:
+        return "Hot spots scan: No frequently-referenced symbols found."
+
+    output = [f"High-impact symbols ({total} most referenced):", ""]
+
+    for item in result.get("hot_spots", []):
+        name = item.get("name", "?")
+        file_path = item.get("file_path", "?")
+        line = item.get("start_line", 0)
+        ref_count = item.get("ref_count", 0)
+        file_count = item.get("file_count", 0)
+        sig = item.get("signature", name)
+        if sig and len(sig) > 45:
+            sig = sig[:42] + "..."
+
+        output.append(f"  {ref_count} refs ({file_count} files) {file_path}:{line} → {sig}")
 
     return "\n".join(output)

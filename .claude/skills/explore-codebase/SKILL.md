@@ -42,6 +42,8 @@ method: "pattern" - Code idioms (": BaseClass", "[Fact]")
 ```
 mode: "types" - Type intelligence (implementations, hierarchy)
 mode: "similar" - Semantic duplicate detection
+mode: "dead_code" - Find unreferenced symbols (cleanup candidates)
+mode: "hot_spots" - Find most-referenced symbols (core abstractions)
 ```
 
 ### Symbol Understanding
@@ -104,6 +106,16 @@ direction: "both" - Full call graph
 2. fast_refs on relevant symbols
 3. trace_call_path(direction="upstream") to find callers
 4. Analyze execution flow for root cause
+```
+
+### Pattern 4: Codebase Health Check
+**Goal:** Find cleanup opportunities and core abstractions
+
+```
+1. fast_explore(mode="dead_code") - Find unreferenced code
+2. fast_explore(mode="hot_spots") - Identify core abstractions
+3. Prioritize refactoring based on hot spots
+4. Remove dead code to reduce maintenance burden
 ```
 
 ## Token Efficiency Strategy

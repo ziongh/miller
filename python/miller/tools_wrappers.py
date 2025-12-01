@@ -13,6 +13,7 @@ from typing import Any, Literal, Optional, Union
 
 from miller import server_state
 from miller.tools.search import fast_search as fast_search_impl
+from miller.tools.navigation import fast_lookup as fast_lookup_impl
 from miller.tools.navigation import fast_refs as fast_refs_impl
 from miller.tools.symbols_wrapper import get_symbols as get_symbols_impl
 from miller.tools.trace_wrapper import trace_call_path as trace_call_path_impl
@@ -238,6 +239,93 @@ async def get_symbols(
     )
 
 
+async def fast_lookup(
+    symbols: list[str],
+    context_file: Optional[str] = None,
+    include_body: bool = False,
+    max_depth: int = 1,
+    workspace: str = "primary",
+    output_format: Literal["text", "json", "toon", "auto"] = "text",
+) -> Union[list[dict[str, Any]], str]:
+    """
+    Smart batch symbol resolution with semantic fallback.
+
+    Resolves multiple symbols in one call. For each symbol:
+    - First tries exact match (fast, from SQLite index)
+    - Falls back to semantic search if exact match fails
+    - Returns location, import statement, and structure
+
+    This is the PREFERRED way to verify symbols exist before writing code.
+    One call replaces N fast_goto calls, with smarter fallback behavior.
+
+    Args:
+        symbols: List of symbol names to look up (1-N symbols).
+                 Example: ["AuthService", "User", "hash_password"]
+        context_file: Where you're writing code (for relative import paths).
+                     Example: "src/handlers/auth.py"
+        include_body: Include source code body for each symbol.
+        max_depth: Structure depth - 0=signature only, 1=methods/properties (default), 2=nested.
+        workspace: Workspace to query ("primary" or workspace_id).
+        output_format: Output format - "text" (default), "json", "toon", or "auto".
+                      - "text": Lean formatted output (DEFAULT - most token-efficient)
+                      - "json": Standard list format (for programmatic use)
+                      - "toon": TOON-encoded string (30-40% token reduction)
+                      - "auto": TOON if ≥5 symbols, else JSON
+
+    Returns:
+        - text mode: Lean scannable format (DEFAULT). Format:
+
+        ═══ fast_lookup: 3 symbols ═══
+
+        AuthService ✓
+          src/services/auth.py:42 (class)
+          from services.auth import AuthService
+          class AuthService(BaseService):
+            Methods: authenticate, refresh_token
+
+        UserDTO ✗ → User (semantic match, 0.87)
+          src/models/user.py:8 (class)
+          from models.user import User
+          class User(BaseModel):
+
+        FooBarBaz ✗
+          No match found
+
+    Symbol status indicators:
+        ✓ = Exact match found
+        ✗ → Name = Semantic fallback (original not found, suggesting alternative)
+        ✗ = Not found (no exact or semantic match)
+
+    Examples:
+        # Verify symbols before writing code
+        fast_lookup(["AuthService", "User", "hash_password"])
+
+        # With context for better import paths
+        fast_lookup(["User"], context_file="src/handlers/auth.py")
+
+        # Include source code
+        fast_lookup(["process_payment"], include_body=True)
+
+    Workflow (Pre-flight validation):
+        1. fast_lookup(["A", "B", "C"]) → Verify all symbols exist
+        2. Check for ✗ indicators → Fix typos or use suggested alternatives
+        3. Copy import statements → Paste into your code
+        4. Write code with confidence
+    """
+    if err := _check_ready(require_vectors=False):
+        return err
+    return await fast_lookup_impl(
+        symbols=symbols,
+        context_file=context_file,
+        include_body=include_body,
+        max_depth=max_depth,
+        workspace=workspace,
+        output_format=output_format,
+        storage=server_state.storage,
+        vector_store=server_state.vector_store,
+    )
+
+
 async def fast_refs(
     symbol_name: str,
     kind_filter: Optional[list[str]] = None,
@@ -402,7 +490,7 @@ async def trace_call_path(
 
 
 async def fast_explore(
-    mode: Literal["types", "similar"] = "types",
+    mode: Literal["types", "similar", "dead_code", "hot_spots"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
     limit: int = 10,
@@ -420,12 +508,14 @@ async def fast_explore(
     Modes:
     - types: Type intelligence (implementations, hierarchy, return/parameter types)
     - similar: Find semantically similar code using TRUE vector embedding similarity
+    - dead_code: Find unreferenced symbols (functions/classes not called anywhere)
+    - hot_spots: Find most-referenced symbols ranked by cross-file usage
 
     Note: For dependency tracing, use trace_call_path(direction="downstream") instead,
     which provides richer features including semantic cross-language discovery.
 
     Args:
-        mode: Exploration mode ("types" or "similar")
+        mode: Exploration mode ("types", "similar", "dead_code", or "hot_spots")
         type_name: Name of type to explore (required for types mode)
         symbol: Symbol name to explore (required for similar mode)
         limit: Maximum results (default: 10)
@@ -449,11 +539,22 @@ async def fast_explore(
         # Find semantically similar code - duplicate/pattern detection
         await fast_explore(mode="similar", symbol="getUserData")
 
+        # Find potentially dead code (unreferenced symbols)
+        await fast_explore(mode="dead_code", limit=20)
+        # → Finds functions/classes not called or imported anywhere
+        # → Excludes test files, private symbols (_prefix), and test_ prefixed
+
+        # Find high-impact "hot spot" symbols
+        await fast_explore(mode="hot_spots", limit=10)
+        # → Ranked by cross-file reference count
+        # → Includes file_count for coupling analysis
+        # → Great for finding core abstractions and potential refactoring targets
+
     Note: Similar mode uses TRUE semantic similarity - it finds code with similar
     meaning/patterns, not just matching text. This works across naming conventions
     and even different languages (e.g., getUserData ↔ fetch_user_info).
     """
-    # Similar mode needs vector_store and embeddings, types mode only needs storage
+    # Similar mode needs vector_store and embeddings, other modes only need storage
     if err := _check_ready(require_vectors=(mode == "similar")):
         return err
     return await fast_explore_impl(

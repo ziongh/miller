@@ -11,7 +11,7 @@ from typing import Any, Literal, Union, Optional
 
 
 async def fast_explore(
-    mode: Literal["types", "similar"] = "types",
+    mode: Literal["types", "similar", "dead_code", "hot_spots"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
     limit: int = 10,
@@ -27,11 +27,13 @@ async def fast_explore(
     Modes:
     - types: Type intelligence (implementations, hierarchy, return/parameter types)
     - similar: Find semantically similar code using TRUE vector embedding similarity
+    - dead_code: Find unreferenced symbols (potential cleanup candidates)
+    - hot_spots: Find most-referenced symbols (high-impact code)
 
     Note: For dependency tracing, use trace_call_path(direction="downstream") instead.
 
     Args:
-        mode: Exploration mode ("types" or "similar")
+        mode: Exploration mode ("types", "similar", "dead_code", or "hot_spots")
         type_name: Name of type to explore (required for types mode)
         symbol: Symbol name to explore (required for similar mode)
         limit: Maximum results (default: 10)
@@ -50,7 +52,12 @@ async def fast_explore(
     SIMILARITY_THRESHOLD = 0.7
 
     from miller.tools.explore import fast_explore as _fast_explore
-    from miller.tools.explore import _format_similar_as_text, _format_explore_as_text
+    from miller.tools.explore import (
+        _format_similar_as_text,
+        _format_explore_as_text,
+        _format_dead_code_as_text,
+        _format_hot_spots_as_text,
+    )
     from miller.storage import StorageManager
     from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
     from miller.workspace_registry import WorkspaceRegistry
@@ -118,6 +125,10 @@ async def fast_explore(
         if output_format == "text":
             if mode == "similar":
                 return _format_similar_as_text(result)
+            elif mode == "dead_code":
+                return _format_dead_code_as_text(result)
+            elif mode == "hot_spots":
+                return _format_hot_spots_as_text(result)
             else:
                 return _format_explore_as_text(result)
         elif output_format == "toon":

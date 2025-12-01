@@ -91,14 +91,27 @@ async def _on_files_changed(events: list[tuple[FileEvent, Path]]):
         # Index all files concurrently
         results = await asyncio.gather(*[index_one(et, fp) for et, fp in files_to_index])
 
-        # Log results
+        # Log results and track if any succeeded
+        any_success = False
         for success, event_type, file_path in results:
             rel_path = str(file_path.relative_to(server_state.workspace_root)).replace("\\", "/")
             if success:
+                any_success = True
                 action = "Indexed" if event_type == FileEvent.CREATED else "Updated"
                 logger.info(f"✏️  {action}: {rel_path}")
             else:
                 logger.warning(f"⚠️  Failed to index: {rel_path}")
+
+        # Phase 5: Refresh reachability if files changed (relationships may have changed)
+        if any_success or deleted_files:
+            from miller.closure import is_reachability_stale, refresh_reachability
+
+            if await asyncio.to_thread(is_reachability_stale, server_state.storage):
+                logger.info("🔗 Refreshing reachability (relationships changed)...")
+                count = await asyncio.to_thread(
+                    refresh_reachability, server_state.storage, 10
+                )
+                logger.info(f"✅ Reachability refreshed: {count} entries")
 
 
 async def _embedding_auto_unload_task():
@@ -305,6 +318,18 @@ async def _background_initialization_and_indexing():
             logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
         else:
             logger.info("✅ Workspace already indexed - ready for search")
+
+            # Check if reachability needs to be computed (may be empty from older versions)
+            from miller.closure import should_compute_closure, compute_transitive_closure
+
+            if await asyncio.to_thread(should_compute_closure, server_state.storage):
+                logger.info("🔗 Reachability table empty - computing transitive closure...")
+                closure_start = time.time()
+                closure_count = await asyncio.to_thread(
+                    compute_transitive_closure, server_state.storage, max_depth=10
+                )
+                closure_time = (time.time() - closure_start) * 1000
+                logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
 
         # Always update registry stats (ensures consistency after manual DB changes)
         cursor = server_state.storage.conn.cursor()

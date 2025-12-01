@@ -1,135 +1,27 @@
 """
-Code navigation tools - find references.
+Code navigation tools - fast_lookup and fast_refs.
 
-Provides fast_refs for finding symbol usages.
-
-NOTE: fast_goto is intentionally NOT exposed as an MCP tool. Its functionality is
-covered by get_symbols(target="X") which provides the same "jump to definition"
-capability while also showing the symbol's structure and context. We keep fast_goto
-here for potential internal use but agents should use get_symbols instead.
+This module re-exports the navigation tools from the navigation package.
+The actual implementations are in:
+- navigation/lookup.py - fast_lookup and symbol resolution
+- navigation/fuzzy.py - fuzzy matching strategies
 """
 
 from typing import Any, Literal, Optional, Union
 
+# Re-export lookup functions
+from miller.tools.nav_impl.lookup import (
+    fast_lookup,
+    get_symbol_structure as _get_symbol_structure,
+    generate_import_path as _generate_import_path,
+    format_lookup_output as _format_lookup_output,
+)
 
-async def fast_goto(
-    symbol_name: str,
-    workspace: str = "primary",
-    output_format: Literal["text", "json"] = "text",
-    storage=None,
-) -> Union[str, Optional[dict[str, Any]]]:
-    """
-    Find symbol definition location - jump directly to where a symbol is defined.
-
-    Use this when you know the symbol name and need to find its definition.
-    Returns exact file path and line number - you can navigate there directly.
-
-    Args:
-        symbol_name: Name of symbol to find
-        workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "text" (default) or "json"
-                      - "text": Lean formatted string - DEFAULT
-                      - "json": Dict with full metadata
-        storage: StorageManager instance (injected by server)
-
-    Returns:
-        - Text mode: Formatted string with location
-        - JSON mode: Symbol location dict (file, line, signature), or None if not found
-
-    Note: For exploring unknown code, use fast_search first. Use fast_goto when
-    you already know the symbol name from search results or references.
-    """
-    # Get workspace-specific storage if needed
-    if workspace != "primary":
-        from miller.workspace_paths import get_workspace_db_path
-        from miller.workspace_registry import WorkspaceRegistry
-        from miller.storage import StorageManager
-
-        registry = WorkspaceRegistry()
-        workspace_entry = registry.get_workspace(workspace)
-        if workspace_entry:
-            db_path = get_workspace_db_path(workspace)
-            storage = StorageManager(db_path=str(db_path))
-        else:
-            # Return not found for non-existent workspace
-            if output_format == "text":
-                return f'No definition found for "{symbol_name}" (workspace "{workspace}" not found).'
-            else:
-                return None
-
-    # Query SQLite for exact match
-    # Support qualified names like "ClassName.method" (consistent with fast_refs)
-    sym = None
-    if "." in symbol_name:
-        # Qualified name: Parent.Child
-        parts = symbol_name.split(".", 1)
-        parent_name, child_name = parts[0], parts[1]
-        # Query for child symbol with matching parent
-        cursor = storage.conn.execute("""
-            SELECT s.* FROM symbols s
-            JOIN symbols parent ON s.parent_id = parent.id
-            WHERE parent.name = ? AND s.name = ?
-            ORDER BY CASE s.kind
-                WHEN 'import' THEN 2
-                WHEN 'reference' THEN 2
-                ELSE 1
-            END
-            LIMIT 1
-        """, (parent_name, child_name))
-        row = cursor.fetchone()
-        if row:
-            sym = dict(row)
-    else:
-        # Simple name lookup
-        sym = storage.get_symbol_by_name(symbol_name)
-
-    result = None
-    if sym:
-        result = {
-            "name": sym["name"],
-            "kind": sym["kind"],
-            "file_path": sym["file_path"],
-            "start_line": sym["start_line"],
-            "end_line": sym["end_line"],
-            "signature": sym["signature"],
-            "doc_comment": sym["doc_comment"],
-        }
-
-    if output_format == "text":
-        return _format_goto_as_text(symbol_name, result)
-    else:
-        return result
-
-
-def _format_goto_as_text(symbol_name: str, result: Optional[dict[str, Any]]) -> str:
-    """Format goto result as lean text output.
-
-    Output format:
-    ```
-    Found 1 definition for "symbol_name":
-
-    file.py:42 (function)
-      def symbol_name(args)
-    ```
-    """
-    if not result:
-        return f'No definition found for "{symbol_name}".'
-
-    file_path = result.get("file_path", "?")
-    line = result.get("start_line", 0)
-    kind = result.get("kind", "symbol")
-    signature = result.get("signature", "")
-
-    output = [f'Found 1 definition for "{symbol_name}":', ""]
-    output.append(f"{file_path}:{line} ({kind})")
-    if signature:
-        # Truncate long signatures
-        sig = signature.split("\n")[0]
-        if len(sig) > 80:
-            sig = sig[:77] + "..."
-        output.append(f"  {sig}")
-
-    return "\n".join(output)
+# Re-export fuzzy functions (for backward compatibility with tests)
+from miller.tools.nav_impl.fuzzy import (
+    fuzzy_find_symbol as _fuzzy_find_symbol,
+    levenshtein_distance as _levenshtein_distance,
+)
 
 
 async def fast_refs(
@@ -200,7 +92,8 @@ async def fast_refs(
         3. Make changes
         4. fast_refs("symbol") again → Verify all usages updated
 
-    Note: Shows where symbols are USED (not where defined). Use get_symbols with target parameter to find definitions.
+    Note: Shows where symbols are USED (not where defined).
+    Use get_symbols with target parameter to find definitions.
     """
     from miller.tools.refs import find_references
     from miller.workspace_paths import get_workspace_db_path
@@ -209,6 +102,7 @@ async def fast_refs(
     from miller.toon_utils import create_toonable_result
 
     # Get workspace-specific storage
+    workspace_storage = None
     if workspace != "primary":
         registry = WorkspaceRegistry()
         workspace_entry = registry.get_workspace(workspace)
@@ -238,39 +132,23 @@ async def fast_refs(
             limit=limit
         )
 
-        # Use Julie's simple pattern: same structure for both JSON and TOON
-        # fast_refs already returns TOON-friendly nested dicts
         return create_toonable_result(
-            json_data=raw_result,           # Full result as-is
-            toon_data=raw_result,           # Same structure - TOON handles nesting
+            json_data=raw_result,
+            toon_data=raw_result,
             output_format=output_format,
-            auto_threshold=10,              # 10+ refs → TOON
+            auto_threshold=10,
             result_count=raw_result.get("total_references", 0),
             tool_name="fast_refs",
-            text_formatter=_format_refs_as_text,  # Lean text output
+            text_formatter=_format_refs_as_text,
         )
     finally:
-        # Close workspace storage if it's not the default
-        if workspace != "primary":
+        # Close workspace storage if we created it
+        if workspace != "primary" and workspace_storage is not None:
             workspace_storage.close()
 
 
 def _format_refs_as_text(result: dict[str, Any]) -> str:
-    """Format references result as lean text output.
-
-    Output format:
-    ```
-    14 references to "fast_search":
-
-    Definition:
-      python/miller/server.py:201 (function) → async def fast_search(...)
-
-    References (13):
-      python/tests/test_server.py:32 (calls)
-      python/tests/test_server.py:66 (calls)
-      ...
-    ```
-    """
+    """Format references result as lean text output."""
     symbol = result.get("symbol", "?")
     total = result.get("total_references", 0)
     files = result.get("files", [])
@@ -308,3 +186,16 @@ def _format_refs_as_text(result: dict[str, Any]) -> str:
                 output.append(f"    {context}")
 
     return "\n".join(output)
+
+
+# Export all public symbols
+__all__ = [
+    "fast_lookup",
+    "fast_refs",
+    # Internal functions exported for backward compatibility
+    "_get_symbol_structure",
+    "_generate_import_path",
+    "_format_lookup_output",
+    "_fuzzy_find_symbol",
+    "_levenshtein_distance",
+]

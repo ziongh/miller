@@ -116,6 +116,14 @@ async def handle_index(
     try:
         stats = await scanner.index_workspace()
 
+        # Compute transitive closure for reachability queries
+        import asyncio
+        from miller.closure import compute_transitive_closure
+
+        closure_count = await asyncio.to_thread(
+            compute_transitive_closure, storage, 10
+        )
+
         # Get final counts
         cursor = storage.conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM symbols")
@@ -134,6 +142,7 @@ async def handle_index(
             f"✅ Indexing complete: {workspace_path}",
             f"  📁 Files: {file_count:,}",
             f"  ✨ Symbols: {symbol_count:,}",
+            f"  🔗 Reachability: {closure_count:,} paths",
         ]
 
         if stats.get("indexed", 0) > 0:

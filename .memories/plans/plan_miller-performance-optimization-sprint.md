@@ -5,7 +5,7 @@ git:
   dirty: false
   files_changed: []
 id: plan_miller-performance-optimization-sprint
-status: active
+status: pending
 timestamp: 1764098532
 title: Miller Performance Optimization Sprint
 type: plan
@@ -68,4 +68,3 @@ Optimize Miller's performance across file discovery, database operations, and se
 - [x] Search hydration: 20 queries → 1 query
 - [x] Search expansion: ~240 queries → ~3 queries
 - [x] File cleanup: N commits → 1 commit
-

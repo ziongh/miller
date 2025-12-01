@@ -52,6 +52,7 @@ logger.info("✓ FastMCP server created (components will initialize post-handsha
 from miller.tools_wrappers import (
     fast_search,
     get_symbols,
+    fast_lookup,
     fast_refs,
     trace_call_path,
     fast_explore,
@@ -64,6 +65,7 @@ from miller.tools_wrappers import (
 # All tools that return text/TOON strings need this to render properly
 mcp.tool(output_schema=None)(fast_search)      # Returns text/TOON string (default: text)
 mcp.tool(output_schema=None)(get_symbols)      # Returns text/TOON/code string
+mcp.tool(output_schema=None)(fast_lookup)      # Returns lean text string (batch symbol lookup)
 mcp.tool(output_schema=None)(fast_refs)        # Returns text/TOON string (default: text)
 mcp.tool(output_schema=None)(trace_call_path)  # Returns tree/TOON string (default: tree)
 mcp.tool(output_schema=None)(fast_explore)     # Returns text string (default: text)
@@ -81,12 +83,6 @@ mcp.tool(output_schema=None)(plan)        # Returns formatted text/JSON
 from miller.tools.workspace import manage_workspace
 
 mcp.tool(output_schema=None)(manage_workspace)  # Returns text string (default: text)
-
-# Register GPU memory management tool
-from miller.tools.gpu_memory import gpu_memory
-
-mcp.tool(output_schema=None)(gpu_memory)  # Returns text string (default: text)
-
 
 # Module-level __getattr__ for backwards compatibility
 # This allows `from miller.server import storage` to still work
