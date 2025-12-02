@@ -70,12 +70,17 @@ async def trace_call_path(
         - Rust user_service → TypeScript UserService
     """
     from miller.storage import StorageManager
-    from miller.workspace_paths import get_workspace_db_path
+    from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
     from miller.workspace_registry import WorkspaceRegistry
     from miller.tools.trace import trace_call_path as trace_impl
     from miller.toon_utils import create_toonable_result
 
-    # Get workspace-specific storage
+    # Get workspace-specific storage and vector store
+    workspace_storage = storage
+    embeddings = None
+    vector_store = None
+    should_close_storage = False
+
     if workspace != "primary":
         registry = WorkspaceRegistry()
         workspace_entry = registry.get_workspace(workspace)
@@ -86,13 +91,24 @@ async def trace_call_path(
             return {"symbol": symbol_name, "error": error_msg}
         db_path = get_workspace_db_path(workspace)
         workspace_storage = StorageManager(db_path=str(db_path))
-    else:
-        workspace_storage = storage
+        should_close_storage = True
 
-    # Get embeddings and vector_store from server state for semantic discovery
-    from miller import server_state
-    embeddings = server_state.embeddings
-    vector_store = server_state.vector_store
+        # Get workspace-specific vector store for semantic discovery
+        vector_path = get_workspace_vector_path(workspace)
+        if vector_path.exists():
+            from miller.embeddings import VectorStore, EmbeddingManager
+            # Reuse server embeddings model (it's stateless), but use workspace vector DB
+            from miller import server_state
+            embeddings = server_state.embeddings
+            if embeddings is not None:
+                vector_store = VectorStore(
+                    db_path=str(vector_path), embeddings=embeddings
+                )
+    else:
+        # Primary workspace - use server state
+        from miller import server_state
+        embeddings = server_state.embeddings
+        vector_store = server_state.vector_store
 
     try:
         # For tree format, return directly (it's already a formatted string)
@@ -132,6 +148,9 @@ async def trace_call_path(
             tool_name="trace_call_path"
         )
     finally:
-        # Close workspace storage if it's not the default
-        if workspace != "primary":
+        # Close workspace-specific resources
+        if should_close_storage and workspace_storage:
             workspace_storage.close()
+        # Close workspace-specific vector store (only created for non-primary)
+        if workspace != "primary" and vector_store is not None:
+            vector_store.close()
