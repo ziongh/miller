@@ -13,13 +13,13 @@ from miller.storage import StorageManager
 
 
 async def fast_explore(
-    mode: Literal["types", "similar", "dependencies"] = "types",
+    mode: Literal["types", "similar", "dead_code", "hot_spots"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
     threshold: float = 0.7,
-    depth: int = 3,
     storage: Optional[StorageManager] = None,
     vector_store: Optional[Any] = None,  # VectorStore for similar mode
+    embeddings: Optional[Any] = None,  # EmbeddingManager for similar mode
     limit: int = 10,
 ) -> dict[str, Any]:
     """
@@ -27,16 +27,21 @@ async def fast_explore(
 
     Supported modes:
     - types: Type intelligence (implementations, hierarchy, returns, parameters)
-    - similar: Find semantically similar code (for duplicate detection)
-    - dependencies: Trace transitive dependencies (for impact analysis)
+    - similar: Find semantically similar code using vector embeddings
+    - dead_code: Find unreferenced symbols (potential cleanup candidates)
+    - hot_spots: Find most-referenced symbols (high-impact code)
+
+    Note: For dependency tracing, use trace_call_path(direction="downstream") instead,
+    which provides richer features including semantic cross-language discovery.
 
     Args:
-        mode: Exploration mode
+        mode: Exploration mode ("types", "similar", "dead_code", or "hot_spots")
         type_name: Name of type to explore (required for types mode)
-        symbol: Symbol name to explore (required for similar/dependencies modes)
+        symbol: Symbol name to explore (required for similar mode)
         threshold: Minimum similarity score for similar mode (0.0-1.0, default 0.7)
-        depth: Maximum traversal depth for dependencies mode (1-10, default 3)
         storage: StorageManager instance (uses global if not provided)
+        vector_store: VectorStore instance (for similar mode)
+        embeddings: EmbeddingManager instance (for similar mode)
         limit: Maximum results (default: 10)
 
     Returns:
@@ -45,11 +50,13 @@ async def fast_explore(
     if mode == "types":
         return await _explore_types(type_name, storage, limit)
     elif mode == "similar":
-        return await _explore_similar(symbol, threshold, storage, vector_store, limit)
-    elif mode == "dependencies":
-        return await _explore_dependencies(symbol, depth, storage, limit)
+        return await _explore_similar(symbol, threshold, storage, vector_store, embeddings, limit)
+    elif mode == "dead_code":
+        return await _explore_dead_code(storage, limit)
+    elif mode == "hot_spots":
+        return await _explore_hot_spots(storage, limit)
     else:
-        raise ValueError(f"Unknown exploration mode: {mode}")
+        raise ValueError(f"Unknown exploration mode: {mode}. Valid modes: 'types', 'similar', 'dead_code', 'hot_spots'")
 
 
 async def _explore_types(
@@ -118,9 +125,20 @@ async def _explore_similar(
     threshold: float,
     storage: Optional[StorageManager],
     vector_store: Optional[Any],
+    embeddings: Optional[Any],
     limit: int,
 ) -> dict[str, Any]:
-    """Find semantically similar symbols using vector embeddings."""
+    """
+    Find semantically similar symbols using TRUE vector embedding similarity.
+
+    Unlike a text search, this:
+    1. Looks up the actual symbol from the database
+    2. Builds an embedding from its name + signature + docstring
+    3. Searches for other symbols with similar embeddings
+
+    This enables finding similar code patterns across different naming conventions
+    and even different languages (e.g., getUserData ↔ fetch_user_info).
+    """
     if not symbol:
         return {"symbol": None, "error": "symbol parameter is required", "similar": [], "total_found": 0}
 
@@ -131,12 +149,12 @@ async def _explore_similar(
         if storage is None:
             return {"symbol": symbol, "error": "Storage not available", "similar": [], "total_found": 0}
 
-    # Find the target symbol
+    # Find the target symbol in the database
     target = storage.get_symbol_by_name(symbol)
     if not target:
         return {"symbol": symbol, "error": "Symbol not found", "similar": [], "total_found": 0}
 
-    # Get vector store for similarity search (use passed param or fall back to server global)
+    # Get vector store and embeddings for similarity search
     try:
         if vector_store is None:
             import miller.server as server
@@ -144,29 +162,41 @@ async def _explore_similar(
         if vector_store is None:
             return {"symbol": symbol, "error": "Vector store not available", "similar": [], "total_found": 0}
 
-        # Search for similar symbols using semantic search
-        results = vector_store.search(symbol, method="semantic", limit=limit + 1)
+        if embeddings is None:
+            import miller.server as server
+            embeddings = getattr(server, 'embeddings', None)
+            if embeddings is None:
+                # Try server_state as fallback
+                from miller import server_state
+                embeddings = server_state.embeddings
+        if embeddings is None:
+            return {"symbol": symbol, "error": "Embeddings not available", "similar": [], "total_found": 0}
 
-        # Filter by threshold and exclude self
+        # Use semantic_neighbors for TRUE semantic similarity search
+        from miller.tools.trace.search import semantic_neighbors
+
+        matches = semantic_neighbors(
+            storage=storage,
+            vector_store=vector_store,
+            embeddings=embeddings,
+            symbol=target,
+            limit=limit,
+            threshold=threshold,
+            cross_language_only=False,  # Include same-language matches for similar mode
+        )
+
+        # Format results to match expected output structure
         similar = []
-        target_id = target.get("id")
-        for r in results:
-            if r.get("id") == target_id:
-                continue  # Exclude self
-            score = r.get("score", 0)
-            if score >= threshold:
-                similar.append({
-                    "name": r.get("name"),
-                    "kind": r.get("kind"),
-                    "file_path": r.get("file_path"),
-                    "start_line": r.get("start_line"),
-                    "signature": r.get("signature"),
-                    "similarity": round(score, 3),
-                })
-
-        # Sort by similarity descending
-        similar.sort(key=lambda x: x["similarity"], reverse=True)
-        similar = similar[:limit]
+        for match in matches:
+            similar.append({
+                "name": match.get("name"),
+                "kind": match.get("kind"),
+                "file_path": match.get("file_path"),
+                "start_line": match.get("line", match.get("start_line", 0)),
+                "signature": match.get("signature"),
+                "similarity": round(match.get("similarity", 0), 3),
+                "language": match.get("language"),
+            })
 
         return {"symbol": symbol, "similar": similar, "total_found": len(similar)}
 
@@ -174,76 +204,161 @@ async def _explore_similar(
         return {"symbol": symbol, "error": str(e), "similar": [], "total_found": 0}
 
 
-async def _explore_dependencies(
-    symbol: Optional[str],
-    depth: int,
+async def _explore_dead_code(
     storage: Optional[StorageManager],
     limit: int,
 ) -> dict[str, Any]:
-    """Trace transitive dependencies for a symbol."""
-    if not symbol:
-        return {"symbol": None, "error": "symbol parameter is required", "dependencies": [], "total_found": 0}
+    """
+    Find unreferenced symbols (potential dead code).
 
-    # Clamp depth
-    depth = max(1, min(10, depth))
+    Dead code = symbols that:
+    - Are functions or classes (not variables/constants)
+    - Are not in test files
+    - Are not private (starting with _)
+    - Are not test-prefixed (test_, Test)
+    - Have no incoming relationships (not called by anyone)
+    - Have no identifier references from other files
 
-    # Get storage
+    Args:
+        storage: StorageManager instance
+        limit: Maximum results to return
+
+    Returns:
+        Dict with dead_code list and total_found count
+    """
+    # Get storage from global if not provided
     if storage is None:
         import miller.server as server
         storage = server.storage
-        if storage is None:
-            return {"symbol": symbol, "error": "Storage not available", "dependencies": [], "total_found": 0}
 
-    # Find the target symbol
-    target = storage.get_symbol_by_name(symbol)
-    if not target:
-        return {"symbol": symbol, "error": "Symbol not found", "dependencies": [], "total_found": 0}
+    if storage is None:
+        return {"error": "Storage not initialized", "dead_code": [], "total_found": 0}
 
-    # BFS to find dependencies
-    dependencies = []
-    visited = {target.get("id")}
-    queue = [(target.get("id"), 0)]  # (symbol_id, current_depth)
-    has_cycles = False
-    max_depth_reached = 0
+    try:
+        cursor = storage.conn.cursor()
 
-    while queue and len(dependencies) < limit:
-        current_id, current_depth = queue.pop(0)
-        if current_depth >= depth:
-            continue
+        # Find symbols that:
+        # 1. Are functions or classes
+        # 2. Not in test files
+        # 3. Not private (starting with _)
+        # 4. Not test-prefixed
+        # 5. Not called by anyone (no incoming relationships)
+        # 6. Not referenced in other files (no cross-file identifier references)
+        cursor.execute("""
+            SELECT s.id, s.name, s.kind, s.file_path, s.start_line, s.signature
+            FROM symbols s
+            WHERE s.kind IN ('function', 'class')
+            AND s.name NOT LIKE 'test\\_%' ESCAPE '\\'
+            AND s.name NOT LIKE 'Test%'
+            AND s.name NOT LIKE '\\_%' ESCAPE '\\'
+            AND s.file_path NOT LIKE '%test%'
+            AND s.file_path NOT LIKE '%fixture%'
+            -- Not called by anyone
+            AND s.id NOT IN (
+                SELECT DISTINCT to_symbol_id FROM relationships
+            )
+            -- Not referenced in other files
+            AND s.name NOT IN (
+                SELECT DISTINCT i.name FROM identifiers i
+                WHERE i.file_path != s.file_path
+            )
+            ORDER BY s.file_path, s.name
+            LIMIT ?
+        """, (limit,))
 
-        max_depth_reached = max(max_depth_reached, current_depth)
+        dead_code = []
+        for row in cursor.fetchall():
+            dead_code.append({
+                "name": row[1],
+                "kind": row[2],
+                "file_path": row[3],
+                "start_line": row[4],
+                "signature": row[5],
+            })
 
-        # Get relationships for this symbol
-        rels = storage.get_relationships_from_symbol(current_id)
-        for rel in rels:
-            target_id = rel.get("target_id")
-            if target_id in visited:
-                has_cycles = True
-                continue
+        return {
+            "dead_code": dead_code,
+            "total_found": len(dead_code),
+        }
 
-            visited.add(target_id)
-            dep_symbol = storage.get_symbol_by_id(target_id)
-            if dep_symbol:
-                dependencies.append({
-                    "name": dep_symbol.get("name"),
-                    "kind": dep_symbol.get("kind"),
-                    "file_path": dep_symbol.get("file_path"),
-                    "start_line": dep_symbol.get("start_line"),
-                    "depth": current_depth + 1,
-                    "relationship": rel.get("kind", "unknown").lower(),
-                })
-                queue.append((target_id, current_depth + 1))
+    except Exception as e:
+        return {"error": str(e), "dead_code": [], "total_found": 0}
 
-            if len(dependencies) >= limit:
-                break
 
-    return {
-        "symbol": symbol,
-        "dependencies": dependencies,
-        "total_found": len(dependencies),
-        "max_depth_reached": max_depth_reached,
-        "has_cycles": has_cycles,
-    }
+async def _explore_hot_spots(
+    storage: Optional[StorageManager],
+    limit: int,
+) -> dict[str, Any]:
+    """
+    Find most-referenced symbols (high-impact code).
+
+    Hot spots = symbols that are referenced most frequently across the codebase.
+    These are high-impact areas where changes need careful consideration.
+
+    Only counts cross-file references (not self-references within the same file).
+    Only includes project-defined symbols (joins with symbols table).
+
+    Args:
+        storage: StorageManager instance
+        limit: Maximum results to return
+
+    Returns:
+        Dict with hot_spots list (ranked by ref_count) and total_found count
+    """
+    # Get storage from global if not provided
+    if storage is None:
+        import miller.server as server
+        storage = server.storage
+
+    if storage is None:
+        return {"error": "Storage not initialized", "hot_spots": [], "total_found": 0}
+
+    try:
+        cursor = storage.conn.cursor()
+
+        # Find symbols with most cross-file references
+        # Only count references from files OTHER than where the symbol is defined
+        cursor.execute("""
+            SELECT
+                s.id,
+                s.name,
+                s.kind,
+                s.file_path,
+                s.start_line,
+                s.signature,
+                COUNT(*) as ref_count,
+                COUNT(DISTINCT i.file_path) as file_count
+            FROM symbols s
+            INNER JOIN identifiers i ON s.name = i.name
+            WHERE s.kind IN ('function', 'method', 'class')
+            AND s.file_path NOT LIKE '%test%'
+            AND s.file_path NOT LIKE '%fixture%'
+            AND i.file_path != s.file_path  -- Cross-file references only
+            GROUP BY s.id
+            HAVING ref_count > 0
+            ORDER BY ref_count DESC, file_count DESC
+            LIMIT ?
+        """, (limit,))
+
+        hot_spots = []
+        for row in cursor.fetchall():
+            hot_spots.append({
+                "name": row[1],
+                "kind": row[2],
+                "file_path": row[3],
+                "start_line": row[4],
+                "signature": row[5],
+                "ref_count": row[6],
+                "file_count": row[7],
+            })
+
+        return {
+            "hot_spots": hot_spots,
+            "total_found": len(hot_spots),
+        }
+
+    except Exception as e:
+        return {"error": str(e), "hot_spots": [], "total_found": 0}
 
 
 def _format_explore_as_text(result: dict[str, Any]) -> str:
@@ -374,45 +489,79 @@ def _format_similar_as_text(result: dict[str, Any]) -> str:
     return "\n".join(output)
 
 
-def _format_dependencies_as_text(result: dict[str, Any]) -> str:
-    """Format dependencies mode result as lean text output."""
-    symbol = result.get("symbol", "?")
+def _format_dead_code_as_text(result: dict[str, Any]) -> str:
+    """Format dead_code mode result as lean text output.
+
+    Output format:
+    ```
+    Dead code candidates (3 symbols):
+
+      src/orphan.py:15 → def unused_helper()
+      src/legacy.py:42 → class OldHandler
+      src/utils.py:88 → def deprecated_func()
+    ```
+    """
     total = result.get("total_found", 0)
     error = result.get("error")
-    has_cycles = result.get("has_cycles", False)
-    max_depth = result.get("max_depth_reached", 0)
 
     if error:
-        return f'Dependencies of "{symbol}": Error - {error}'
+        return f"Dead code scan: Error - {error}"
 
     if total == 0:
-        return f'Dependencies of "{symbol}": No dependencies found (0 matches).'
+        return "Dead code scan: No unreferenced symbols found. ✨"
 
-    header = f'Dependencies of "{symbol}" ({total} found, depth {max_depth})'
-    if has_cycles:
-        header += " ⚠ cycles detected"
-    output = [header + ":", ""]
+    output = [f"Dead code candidates ({total} symbols):", ""]
 
-    # Group by depth
-    deps_by_depth: dict[int, list] = {}
-    for dep in result.get("dependencies", []):
-        d = dep.get("depth", 1)
-        if d not in deps_by_depth:
-            deps_by_depth[d] = []
-        deps_by_depth[d].append(dep)
+    for item in result.get("dead_code", []):
+        name = item.get("name", "?")
+        kind = item.get("kind", "symbol")
+        file_path = item.get("file_path", "?")
+        line = item.get("start_line", 0)
+        sig = item.get("signature", name)
+        if sig and len(sig) > 55:
+            sig = sig[:52] + "..."
 
-    for depth_level in sorted(deps_by_depth.keys()):
-        output.append(f"  Depth {depth_level}:")
-        for dep in deps_by_depth[depth_level]:
-            name = dep.get("name", "?")
-            file_path = dep.get("file_path", "?")
-            line = dep.get("start_line", 0)
-            rel = dep.get("relationship", "?")
-            output.append(f"    {file_path}:{line} → {name} ({rel})")
-        output.append("")
+        output.append(f"  {file_path}:{line} → {sig}")
 
-    # Remove trailing empty lines
-    while output and output[-1] == "":
-        output.pop()
+    output.append("")
+    output.append("Note: Review before deleting - may be used dynamically or externally.")
+
+    return "\n".join(output)
+
+
+def _format_hot_spots_as_text(result: dict[str, Any]) -> str:
+    """Format hot_spots mode result as lean text output.
+
+    Output format:
+    ```
+    High-impact symbols (10 most referenced):
+
+      395 refs (29 files) src/utils.py:15 → def helper_func()
+      210 refs (18 files) src/core.py:42 → class StorageManager
+      ...
+    ```
+    """
+    total = result.get("total_found", 0)
+    error = result.get("error")
+
+    if error:
+        return f"Hot spots scan: Error - {error}"
+
+    if total == 0:
+        return "Hot spots scan: No frequently-referenced symbols found."
+
+    output = [f"High-impact symbols ({total} most referenced):", ""]
+
+    for item in result.get("hot_spots", []):
+        name = item.get("name", "?")
+        file_path = item.get("file_path", "?")
+        line = item.get("start_line", 0)
+        ref_count = item.get("ref_count", 0)
+        file_count = item.get("file_count", 0)
+        sig = item.get("signature", name)
+        if sig and len(sig) > 45:
+            sig = sig[:42] + "..."
+
+        output.append(f"  {ref_count} refs ({file_count} files) {file_path}:{line} → {sig}")
 
     return "\n".join(output)

@@ -7,11 +7,46 @@ Uses L2 normalization for cosine similarity in vector search.
 
 import logging
 import os
+import time
 from contextlib import redirect_stderr, redirect_stdout
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import torch
+
+# WORKAROUND: DirectML doesn't support torch.inference_mode() properly
+# It throws "RuntimeError: Cannot set version_counter for inference tensor"
+# Patch inference_mode BEFORE importing sentence_transformers because the decorator
+# is applied at import time. See: https://github.com/microsoft/DirectML/issues/622
+def _apply_directml_inference_mode_patch() -> bool:
+    """
+    Patch torch.inference_mode for DirectML compatibility if DirectML is available.
+    Must be called BEFORE importing sentence_transformers.
+
+    Returns:
+        True if patch was applied, False otherwise
+    """
+    try:
+        import torch_directml
+
+        if torch_directml.is_available():
+            # Store original for potential restoration
+            if not hasattr(torch, "_original_inference_mode"):
+                torch._original_inference_mode = torch.inference_mode
+
+            # Replace with no_grad-based implementation
+            torch.inference_mode = (
+                lambda mode=True: torch.no_grad() if mode else torch.enable_grad()
+            )
+            return True
+    except ImportError:
+        pass
+    return False
+
+
+_DIRECTML_PATCHED = _apply_directml_inference_mode_patch()
+
+# NOW we can safely import sentence_transformers
 from sentence_transformers import SentenceTransformer
 
 
@@ -37,38 +72,51 @@ class EmbeddingManager:
         logger = logging.getLogger("miller.embeddings")
 
         # Auto-detect device with priority: CUDA > ROCm > XPU > MPS > DirectML > CPU
+        # device_type: string identifier for logging/display ("cuda", "mps", "directml", "cpu")
+        # device: actual value to pass to PyTorch (string or torch.device object)
         if device == "auto":
             if torch.cuda.is_available():
                 self.device = "cuda"
+                self.device_type = "cuda"
                 gpu_name = torch.cuda.get_device_name(0)
                 logger.info(f"🚀 Using CUDA GPU: {gpu_name}")
             elif self._check_rocm_available():
                 # ROCm support (AMD GPUs on Linux)
                 # Requires: pip install torch --index-url https://download.pytorch.org/whl/rocm6.2
                 self.device = "cuda"  # ROCm uses CUDA API
+                self.device_type = "cuda"
                 gpu_name = torch.cuda.get_device_name(0)
                 logger.info(f"🔴 Using AMD GPU with ROCm: {gpu_name}")
             elif self._check_xpu_available():
                 # Intel Arc/Data Center GPU support (Linux/Windows)
                 # Requires: pip install torch --index-url https://download.pytorch.org/whl/nightly/xpu
                 self.device = "xpu"
+                self.device_type = "xpu"
                 gpu_name = self._get_xpu_device_name()
                 logger.info(f"🔷 Using Intel XPU: {gpu_name}")
             elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 self.device = "mps"
+                self.device_type = "mps"
                 logger.info(
                     "🍎 Using Apple Silicon MPS (Metal Performance Shaders) for GPU acceleration"
                 )
             elif self._check_directml_available():
                 # DirectML support (Windows AMD/Intel GPUs via torch-directml)
                 # Requires: pip install torch-directml
-                self.device = "dml"
+                # IMPORTANT: Must use torch_directml.device() - PyTorch doesn't understand "dml"
+                import torch_directml
+
+                self.device = torch_directml.device()  # Returns torch.device("privateuseone:0")
+                self.device_type = "directml"
+                # Note: inference_mode patch is applied at module level (before SentenceTransformer import)
                 logger.info("🪟 Using DirectML for GPU acceleration (AMD/Intel GPU on Windows)")
             else:
                 self.device = "cpu"
+                self.device_type = "cpu"
                 logger.info("💻 Using CPU (no GPU detected)")
         else:
             self.device = device
+            self.device_type = device if isinstance(device, str) else str(device)
             logger.info(f"🎯 Using manually specified device: {device}")
 
         # Load model (suppress stdout/stderr to keep MCP protocol clean)
@@ -90,8 +138,21 @@ class EmbeddingManager:
         self.dimensions = self.model.get_sentence_embedding_dimension()
 
         logger.info(
-            f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device})"
+            f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device_type})"
         )
+
+        # Track last usage for auto-unload (Julie-style GPU memory management)
+        self._last_use_time: Optional[float] = None
+        self._original_device = self.device  # Remember original device for reload
+
+        # Calculate optimal batch size based on GPU memory (Julie's DirectML-safe formula)
+        vram_bytes = self._detect_gpu_memory_bytes()
+        if vram_bytes:
+            self.batch_size = self._calculate_batch_size_from_vram(vram_bytes)
+        else:
+            # Conservative fallback (Julie's default)
+            self.batch_size = 50
+            logger.info(f"⚙️  Using default batch size: {self.batch_size} (GPU memory detection unavailable)")
 
     def _check_rocm_available(self) -> bool:
         """
@@ -141,6 +202,223 @@ class EmbeddingManager:
         except Exception:
             return "Intel XPU Device"
 
+    def _detect_gpu_memory_bytes(self) -> Optional[int]:
+        """
+        Detect total GPU VRAM in bytes (platform-specific).
+
+        Returns:
+            Total VRAM in bytes, or None if detection fails
+        """
+        logger = logging.getLogger("miller.embeddings")
+
+        if self.device_type == "cpu":
+            return None  # CPU mode, no GPU memory
+
+        if self.device_type == "cuda":
+            return self._detect_cuda_memory()
+        elif self.device_type == "directml":
+            return self._detect_directml_memory()
+        elif self.device_type == "xpu":
+            return self._detect_xpu_memory()
+        elif self.device_type == "mps":
+            return self._detect_mps_memory()
+
+        return None
+
+    def _detect_cuda_memory(self) -> Optional[int]:
+        """
+        Detect CUDA GPU memory via PyTorch API.
+
+        Returns:
+            Total VRAM in bytes, or None if detection fails
+        """
+        try:
+            # PyTorch provides total memory directly
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            vram_gb = total_memory / 1_073_741_824.0
+            logger = logging.getLogger("miller.embeddings")
+            logger.info(f"📊 Detected CUDA GPU memory: {vram_gb:.2f} GB")
+            return total_memory
+        except Exception as e:
+            logger = logging.getLogger("miller.embeddings")
+            logger.warning(f"Failed to detect CUDA memory: {e}")
+            return None
+
+    def _detect_directml_memory(self) -> Optional[int]:
+        """
+        Detect DirectML GPU memory via WMI (Windows).
+
+        Uses WMI as a simpler alternative to DXGI ctypes implementation.
+        Falls back to default batch size if detection fails.
+
+        Returns:
+            Total VRAM in bytes, or None if detection fails
+        """
+        logger = logging.getLogger("miller.embeddings")
+
+        try:
+            import wmi
+
+            # Query WMI for GPU information
+            w = wmi.WMI()
+            gpus = w.Win32_VideoController()
+
+            if not gpus:
+                logger.warning("No GPUs found via WMI")
+                return None
+
+            # Find GPU with most dedicated VRAM (matches Julie's DXGI logic)
+            max_vram = 0
+            selected_gpu = None
+
+            for gpu in gpus:
+                if hasattr(gpu, 'AdapterRAM') and gpu.AdapterRAM:
+                    vram_bytes = int(gpu.AdapterRAM)
+                    if vram_bytes > max_vram:
+                        max_vram = vram_bytes
+                        selected_gpu = gpu
+
+            if max_vram > 0 and selected_gpu:
+                vram_gb = max_vram / 1_073_741_824.0
+                gpu_name = getattr(selected_gpu, 'Name', 'Unknown GPU')
+                logger.info(f"📊 Detected DirectML GPU: {gpu_name} ({vram_gb:.2f} GB)")
+                return max_vram
+            else:
+                logger.warning("No GPU with dedicated VRAM found via WMI")
+                return None
+
+        except ImportError:
+            logger.warning("WMI module not available - install with: pip install wmi")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to detect DirectML memory via WMI: {e}")
+            return None
+
+    def _detect_xpu_memory(self) -> Optional[int]:
+        """
+        Detect Intel XPU memory via PyTorch XPU API.
+
+        Returns:
+            Total VRAM in bytes, or None if detection fails
+        """
+        logger = logging.getLogger("miller.embeddings")
+
+        try:
+            if hasattr(torch, 'xpu') and hasattr(torch.xpu, 'get_device_properties'):
+                total_memory = torch.xpu.get_device_properties(0).total_memory
+                vram_gb = total_memory / 1_073_741_824.0
+                logger.info(f"📊 Detected Intel XPU memory: {vram_gb:.2f} GB")
+                return total_memory
+        except Exception as e:
+            logger.warning(f"Failed to detect XPU memory: {e}")
+
+        return None
+
+    def _detect_mps_memory(self) -> Optional[int]:
+        """
+        Detect Apple MPS memory.
+
+        Note: PyTorch MPS doesn't expose total memory easily.
+        We use a conservative default for Apple Silicon.
+
+        Returns:
+            None (use default batch size for MPS)
+        """
+        logger = logging.getLogger("miller.embeddings")
+
+        # MPS doesn't expose total memory in PyTorch
+        # Apple Silicon has unified memory architecture
+        # Conservative approach: use default batch size
+        logger.info("ℹ️  MPS memory detection not available - using default batch size")
+        return None
+
+    def _calculate_batch_size_from_vram(self, vram_bytes: int) -> int:
+        """
+        Calculate optimal batch size using Julie's DirectML-safe formula.
+
+        Formula: batch_size = (VRAM_GB / 6.0) * 30
+        Clamped to [25, 250] range
+
+        This formula is 40% more conservative than the original, specifically
+        tuned for DirectML fragility and tested on 6GB A1000.
+
+        Real-world validation:
+        - 6GB A1000 @ 97.6% util: batch_size=50 → 55s batch + crash
+        - 6GB A1000: batch_size=30 → stable operation ✅
+
+        Args:
+            vram_bytes: Total GPU VRAM in bytes
+
+        Returns:
+            Optimal batch size (clamped to [25, 250])
+        """
+        logger = logging.getLogger("miller.embeddings")
+
+        vram_gb = vram_bytes / 1_073_741_824.0
+
+        # Julie's DirectML-safe formula (40% more conservative)
+        # Background: DirectML on Windows is more fragile under memory pressure than CUDA
+        # Previous formula used total VRAM without accounting for already-allocated memory
+        calculated = int((vram_gb / 6.0) * 30.0)
+
+        # Clamp to safe range [25, 250]
+        # - Minimum 25: Ensures reasonable performance even on small GPUs
+        # - Maximum 250: Avoid timeout issues and excessive failure blast radius
+        batch_size = max(25, min(250, calculated))
+
+        logger.info(
+            f"📊 GPU Memory: {vram_gb:.2f} GB → Dynamic batch size: {batch_size} "
+            f"(Julie's DirectML-safe formula)"
+        )
+
+        return batch_size
+
+    def calculate_file_batch_size(self) -> int:
+        """
+        Calculate optimal file batch size based on device type and VRAM.
+
+        File batch size determines how many files are processed before embedding.
+        This affects memory pressure - too many files = too many symbols = OOM.
+
+        Device-specific behavior:
+        - DirectML (integrated GPU): Conservative (10-15), fragile under memory pressure
+        - CPU: Moderate default (50), I/O bound anyway
+        - CUDA/MPS/XPU (dedicated GPU): Scale with VRAM (25-100)
+
+        Returns:
+            Optimal file batch size (int)
+        """
+        # DirectML (Intel Arc integrated, AMD APUs) - very conservative
+        # These have shared system memory and are fragile under pressure
+        if self.device_type == "directml":
+            return 15
+
+        # CPU - moderate default, mostly I/O bound anyway
+        if self.device_type == "cpu":
+            return 50
+
+        # Dedicated GPUs (CUDA, MPS, XPU) - scale with VRAM
+        known_gpu_devices = {"cuda", "mps", "xpu"}
+        if self.device_type not in known_gpu_devices:
+            # Unknown device type - use conservative fallback
+            return 30
+
+        vram_bytes = self._detect_gpu_memory_bytes()
+
+        if vram_bytes is None or vram_bytes == 0:
+            # VRAM detection failed - use conservative fallback
+            return 30
+
+        vram_gb = vram_bytes / 1_073_741_824.0
+
+        # Formula: scale from 25 (2GB) to 100 (16GB+)
+        # Linear interpolation: file_batch = 25 + (vram_gb - 2) * 5
+        # Clamped to [25, 100]
+        calculated = int(25 + (vram_gb - 2) * 5)
+        file_batch = max(25, min(100, calculated))
+
+        return file_batch
+
     def _check_directml_available(self) -> bool:
         """
         Check if DirectML is available (Windows AMD/Intel GPU acceleration).
@@ -159,6 +437,100 @@ class EmbeddingManager:
         except ImportError:
             return False
 
+    def is_loaded_on_gpu(self) -> bool:
+        """
+        Check if model is currently loaded on GPU.
+
+        Returns:
+            True if model is on GPU device, False if on CPU
+        """
+        if self.device_type == "cpu":
+            return False  # CPU device, never on GPU
+
+        # Check model's actual device
+        try:
+            # SentenceTransformer wraps a transformers model
+            model_device = str(self.model.device)
+            return "cpu" not in model_device.lower()
+        except Exception:
+            # Fallback: assume still on original device
+            return True
+
+    def unload(self) -> None:
+        """
+        Move model to CPU and free GPU memory.
+
+        Following Julie's pattern: instead of dropping the model entirely,
+        we move it to CPU for faster reload (2-3s vs 6s from scratch).
+        """
+        logger = logging.getLogger("miller.embeddings")
+
+        if self.device_type == "cpu":
+            logger.debug("Model already on CPU, nothing to unload")
+            return
+
+        if not self.is_loaded_on_gpu():
+            logger.debug("Model already unloaded from GPU")
+            return
+
+        logger.info(f"🗑️  Unloading embedding model from {self.device_type} to free GPU memory...")
+
+        # Move model to CPU
+        self.model = self.model.to("cpu")
+
+        # Free GPU cache
+        if self.device_type == "cuda":
+            torch.cuda.empty_cache()
+            logger.info("✅ GPU memory freed (CUDA cache cleared)")
+        elif self.device_type == "directml":
+            # DirectML doesn't have explicit cache clearing
+            logger.info("✅ GPU memory freed (DirectML model moved to CPU)")
+        elif self.device_type == "xpu":
+            # Intel XPU cache clearing if available
+            try:
+                torch.xpu.empty_cache()
+                logger.info("✅ GPU memory freed (XPU cache cleared)")
+            except Exception:
+                logger.info("✅ GPU memory freed (XPU model moved to CPU)")
+        elif self.device_type == "mps":
+            # MPS doesn't have explicit cache clearing in PyTorch
+            logger.info("✅ GPU memory freed (MPS model moved to CPU)")
+
+    def reload(self) -> None:
+        """
+        Reload model to GPU when needed (lazy reload).
+
+        Called automatically by _ensure_loaded() before embedding operations.
+        """
+        logger = logging.getLogger("miller.embeddings")
+
+        if self.device_type == "cpu":
+            # CPU device, nothing to reload
+            return
+
+        if self.is_loaded_on_gpu():
+            logger.debug("Model already loaded on GPU")
+            return
+
+        logger.info(f"🔄 Reloading embedding model to {self.device_type}...")
+
+        # Move model back to original GPU device
+        self.model = self.model.to(self._original_device)
+
+        logger.info(f"✅ Model reloaded to {self.device_type}")
+
+    def _ensure_loaded(self) -> None:
+        """
+        Ensure model is loaded on GPU before use (lazy reload if needed).
+
+        Internal helper called by embed_query() and embed_batch().
+        """
+        if not self.is_loaded_on_gpu():
+            self.reload()
+
+        # Update last use timestamp (for auto-unload tracking)
+        self._last_use_time = time.time()
+
     def embed_query(self, query: str) -> np.ndarray:
         """
         Embed a single query string.
@@ -169,6 +541,9 @@ class EmbeddingManager:
         Returns:
             L2-normalized embedding vector (384 dimensions)
         """
+        # Ensure model is loaded on GPU (lazy reload if needed)
+        self._ensure_loaded()
+
         # Encode and normalize
         embedding = self.model.encode(
             query,
@@ -191,6 +566,9 @@ class EmbeddingManager:
             # Return empty array with correct shape
             return np.empty((0, self.dimensions), dtype=np.float32)
 
+        # Ensure model is loaded on GPU (lazy reload if needed)
+        self._ensure_loaded()
+
         # Build text representations for each symbol
         texts = []
         for sym in symbols:
@@ -206,14 +584,46 @@ class EmbeddingManager:
             text = " ".join(parts)
             texts.append(text)
 
-        # Batch encode with optimized batch size for GPU throughput
-        # Larger batches = better GPU utilization (amortize overhead)
+        # Batch encode using dynamically calculated batch size
+        # Batch size is calculated once during initialization based on GPU VRAM
+        # using Julie's DirectML-safe formula: (VRAM_GB / 6.0) * 30
+        # This prevents OOM crashes and GPU thrashing on memory-constrained GPUs
         embeddings = self.model.encode(
             texts,
             normalize_embeddings=True,  # L2 normalize
             convert_to_numpy=True,
             show_progress_bar=False,  # Suppress progress bar for tests
-            batch_size=256,  # Optimized for GPU (32 default is too small)
+            batch_size=self.batch_size,  # Use dynamically calculated batch size
+        )
+
+        return embeddings.astype(np.float32)
+
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
+        """
+        Embed a batch of raw text strings.
+
+        Used for file-level indexing where we don't have symbol objects,
+        just raw file content.
+
+        Args:
+            texts: List of text strings to embed
+
+        Returns:
+            Array of embeddings (N x 384), L2-normalized
+        """
+        if not texts:
+            return np.empty((0, self.dimensions), dtype=np.float32)
+
+        # Ensure model is loaded on GPU (lazy reload if needed)
+        self._ensure_loaded()
+
+        # Batch encode
+        embeddings = self.model.encode(
+            texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+            batch_size=self.batch_size,
         )
 
         return embeddings.astype(np.float32)

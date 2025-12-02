@@ -163,6 +163,28 @@ DEFAULT_IGNORES = [
     ".DS_Store",
     "Thumbs.db",
     "desktop.ini",
+    # ═══════════════════════════════════════════
+    # Noisy/Generated Files (high token, low signal)
+    # These files are auto-generated and pollute search results
+    # ═══════════════════════════════════════════
+    # Lock files (huge, auto-generated, zero search value)
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "poetry.lock",
+    "Gemfile.lock",
+    "composer.lock",
+    "Pipfile.lock",
+    "bun.lockb",
+    # Minified/bundled files (unreadable, low signal)
+    "*.min.js",
+    "*.min.css",
+    "*.bundle.js",
+    "*.chunk.js",
+    "*.map",  # Source maps
+    # Generated type definitions
+    "*.d.ts.map",
 ]
 
 # Directory names that typically contain vendor/third-party code

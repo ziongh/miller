@@ -12,7 +12,7 @@ Handles:
 
 import sqlite3
 import time
-from typing import Any
+from typing import Any, Optional
 
 from .schema import StorageError, _normalize_path
 
@@ -65,13 +65,45 @@ def delete_file(conn: sqlite3.Connection, file_path: str) -> None:
     conn.commit()
 
 
-def add_symbols_batch(conn: sqlite3.Connection, symbols: list[Any]) -> int:
+def delete_files_batch(conn: sqlite3.Connection, file_paths: list[str]) -> int:
+    """
+    Delete multiple files in single transaction.
+
+    OPTIMIZED: Uses single transaction instead of N individual commits.
+    CASCADE will handle symbols/identifiers/relationships automatically.
+
+    Args:
+        conn: SQLite connection
+        file_paths: List of file paths to delete
+
+    Returns:
+        Number of files deleted
+    """
+    if not file_paths:
+        return 0
+
+    conn.executemany(
+        "DELETE FROM files WHERE path = ?",
+        [(path,) for path in file_paths]
+    )
+    conn.commit()
+    return len(file_paths)
+
+
+def add_symbols_batch(
+    conn: sqlite3.Connection,
+    symbols: list[Any],
+    code_context_map: Optional[dict[str, str]] = None,
+) -> int:
     """
     Bulk insert symbols.
 
     Args:
         conn: SQLite connection
         symbols: List of PySymbol objects from extraction
+        code_context_map: Optional dict mapping symbol_id to computed code_context.
+                         If provided, overrides sym.code_context (which is typically None).
+                         This allows Python to compute grep-style context from file content.
 
     Returns:
         Number of symbols inserted
@@ -82,6 +114,11 @@ def add_symbols_batch(conn: sqlite3.Connection, symbols: list[Any]) -> int:
     # Convert PySymbol objects to tuples
     symbol_data = []
     for sym in symbols:
+        # Use computed code_context if available, otherwise fall back to extractor's value
+        code_context = (
+            code_context_map.get(sym.id) if code_context_map else None
+        ) or sym.code_context
+
         symbol_data.append(
             (
                 sym.id,
@@ -98,7 +135,7 @@ def add_symbols_batch(conn: sqlite3.Connection, symbols: list[Any]) -> int:
                 sym.end_byte,
                 sym.doc_comment,
                 sym.visibility,
-                sym.code_context,
+                code_context,
                 sym.parent_id,
                 None,  # metadata (TODO: serialize dict to JSON)
                 None,  # file_hash
@@ -259,6 +296,25 @@ def clear_reachability(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def clear_all(conn: sqlite3.Connection) -> None:
+    """
+    Clear all data from all tables (for force re-indexing).
+
+    Deletes from tables in correct order to respect foreign key constraints,
+    even though CASCADE should handle it. This is more explicit and safer.
+
+    Args:
+        conn: SQLite connection
+    """
+    # Delete in reverse dependency order (children before parents)
+    conn.execute("DELETE FROM reachability")
+    conn.execute("DELETE FROM relationships")
+    conn.execute("DELETE FROM identifiers")
+    conn.execute("DELETE FROM symbols")
+    conn.execute("DELETE FROM files")
+    conn.commit()
+
+
 def incremental_update_atomic(
     conn: sqlite3.Connection,
     files_to_clean: list[str],
@@ -266,9 +322,13 @@ def incremental_update_atomic(
     symbols: list,
     identifiers: list,
     relationships: list,
+    code_context_map: Optional[dict[str, str]] = None,
 ) -> dict:
     """
     Perform atomic incremental update - delete old data and insert new in single transaction.
+
+    OPTIMIZED: Uses executemany() for batch inserts instead of row-by-row operations.
+    This is typically 10-100x faster for large batches.
 
     This mirrors Julie's incremental_update_atomic() pattern which prevents data corruption
     during incremental updates. If any step fails, the entire operation is rolled back.
@@ -280,6 +340,8 @@ def incremental_update_atomic(
         symbols: List of PySymbol objects to insert
         identifiers: List of PyIdentifier objects to insert
         relationships: List of PyRelationship objects to insert
+        code_context_map: Optional dict mapping symbol_id to computed code_context
+                         for grep-style search output
 
     Returns:
         Dict with counts: {files_cleaned, files_added, symbols_added, identifiers_added, relationships_added}
@@ -301,35 +363,40 @@ def incremental_update_atomic(
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
 
-        # Step 1: Delete old data for files being re-indexed
+        # Step 1: Delete old data for files being re-indexed (batch delete)
         # CASCADE will handle symbols, identifiers, relationships
-        for file_path in files_to_clean:
-            cursor.execute("DELETE FROM files WHERE path = ?", (file_path,))
-            counts["files_cleaned"] += cursor.rowcount
+        if files_to_clean:
+            cursor.executemany(
+                "DELETE FROM files WHERE path = ?",
+                [(path,) for path in files_to_clean]
+            )
+            counts["files_cleaned"] = len(files_to_clean)
 
-        # Step 2: Insert new file records
-        for path, language, content, file_hash, size in file_data:
-            normalized_path = _normalize_path(path)
-            cursor.execute(
+        # Step 2: Batch insert new file records
+        if file_data:
+            file_tuples = [
+                (_normalize_path(path), language, content, file_hash, size, timestamp, timestamp)
+                for path, language, content, file_hash, size in file_data
+            ]
+            cursor.executemany(
                 """
                 INSERT OR REPLACE INTO files
                 (path, language, content, hash, size, last_modified, last_indexed)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (normalized_path, language, content, file_hash, size, timestamp, timestamp),
+                file_tuples,
             )
-            counts["files_added"] += 1
+            counts["files_added"] = len(file_data)
 
-        # Step 3: Insert symbols (OR REPLACE for safety if cleanup missed any)
-        for sym in symbols:
-            file_path = _normalize_path(sym.file_path)
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO symbols
-                (id, name, kind, signature, file_path, start_line, end_line, parent_id, language, doc_comment)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
+        # Step 3: Batch insert symbols
+        if symbols:
+            symbol_tuples = []
+            for sym in symbols:
+                file_path = _normalize_path(sym.file_path)
+                code_context = (
+                    code_context_map.get(sym.id) if code_context_map else None
+                ) or sym.code_context
+                symbol_tuples.append((
                     sym.id,
                     sym.name,
                     sym.kind,
@@ -340,14 +407,42 @@ def incremental_update_atomic(
                     sym.parent_id,
                     sym.language,
                     sym.doc_comment,
-                ),
+                    code_context,
+                ))
+            cursor.executemany(
+                """
+                INSERT OR REPLACE INTO symbols
+                (id, name, kind, signature, file_path, start_line, end_line, parent_id, language, doc_comment, code_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                symbol_tuples,
             )
-            counts["symbols_added"] += 1
+            counts["symbols_added"] = len(symbols)
 
-        # Step 4: Insert identifiers (OR REPLACE for safety if cleanup missed any)
-        for ident in identifiers:
-            file_path = _normalize_path(ident.file_path)
-            cursor.execute(
+        # Step 4: Batch insert identifiers
+        if identifiers:
+            identifier_tuples = [
+                (
+                    ident.id,
+                    ident.name,
+                    ident.kind,
+                    ident.language,
+                    _normalize_path(ident.file_path),
+                    ident.start_line,
+                    ident.start_column,
+                    ident.end_line,
+                    ident.end_column,
+                    ident.start_byte,
+                    ident.end_byte,
+                    ident.containing_symbol_id,
+                    ident.target_symbol_id,
+                    ident.confidence,
+                    ident.code_context,
+                    timestamp,
+                )
+                for ident in identifiers
+            ]
+            cursor.executemany(
                 """
                 INSERT OR REPLACE INTO identifiers (
                     id, name, kind, language, file_path,
@@ -356,46 +451,32 @@ def incremental_update_atomic(
                     confidence, code_context, last_indexed
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    ident.id,
-                    ident.name,
-                    ident.kind,
-                    ident.language,
-                    file_path,
-                    ident.start_line,
-                    ident.start_column,  # PyIdentifier uses start_column → DB start_col
-                    ident.end_line,
-                    ident.end_column,  # PyIdentifier uses end_column → DB end_col
-                    ident.start_byte,
-                    ident.end_byte,
-                    ident.containing_symbol_id,
-                    ident.target_symbol_id,
-                    ident.confidence,
-                    ident.code_context,
-                    timestamp,  # last_indexed
-                ),
+                identifier_tuples,
             )
-            counts["identifiers_added"] += 1
+            counts["identifiers_added"] = len(identifiers)
 
-        # Step 5: Insert relationships (OR REPLACE for safety if cleanup missed any)
-        for rel in relationships:
-            file_path = _normalize_path(rel.file_path) if rel.file_path else None
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO relationships
-                (id, from_symbol_id, to_symbol_id, kind, file_path, line_number)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
+        # Step 5: Batch insert relationships
+        if relationships:
+            relationship_tuples = [
                 (
                     rel.id,
                     rel.from_symbol_id,
                     rel.to_symbol_id,
                     rel.kind,
-                    file_path,
+                    _normalize_path(rel.file_path) if rel.file_path else None,
                     rel.line_number,
-                ),
+                )
+                for rel in relationships
+            ]
+            cursor.executemany(
+                """
+                INSERT OR REPLACE INTO relationships
+                (id, from_symbol_id, to_symbol_id, kind, file_path, line_number)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                relationship_tuples,
             )
-            counts["relationships_added"] += 1
+            counts["relationships_added"] = len(relationships)
 
         # Step 6: Commit entire transaction atomically
         conn.commit()

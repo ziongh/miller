@@ -324,6 +324,79 @@ class TestWorkspaceIndexing:
         )
 
     @pytest.mark.asyncio
+    async def test_check_if_indexing_needed_detects_stale_files_with_newer_non_code_indexed(
+        self, test_workspace, storage_manager, vector_store
+    ):
+        """
+        Bug: check_if_indexing_needed uses MAX-based heuristic that misses stale code files.
+
+        Scenario:
+        1. Index workspace (all files indexed)
+        2. Modify a code file (content changes, mtime updates)
+        3. A non-code file (.memories/test.json) is indexed with NEWER timestamp
+        4. check_if_indexing_needed() should return True (code file is stale)
+
+        Bug: The check compares MAX(last_indexed) to max(code_file_mtime).
+        If a non-code file was indexed more recently than any code file was modified,
+        the check incorrectly returns False, leaving code files stale.
+
+        Root cause: Comparing global MAX values instead of per-file mtime vs last_indexed.
+        """
+        from miller.workspace import WorkspaceScanner
+        from miller.embeddings import EmbeddingManager
+        import time
+
+        embeddings = EmbeddingManager(device="cpu")
+
+        # Step 1: Index everything
+        scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
+        await scanner.index_workspace()
+
+        # Verify it's up-to-date
+        assert await scanner.check_if_indexing_needed() is False
+
+        # Step 2: Wait to ensure we're in a new second (filesystem timestamps often 1s resolution)
+        # Then modify a code file (change content so hash is different)
+        time.sleep(1.1)  # Ensure we cross a second boundary
+
+        utils_file = test_workspace / "src" / "utils.py"
+        original_content = utils_file.read_text()
+        new_content = original_content + "\n# Modified for test\n"
+        utils_file.write_text(new_content)
+
+        # Step 3: Simulate watcher indexing a non-code file with NEWER timestamp
+        # This simulates the watcher picking up a .memories file after code was modified
+        memories_dir = test_workspace / ".memories"
+        memories_dir.mkdir(exist_ok=True)
+        memory_file = memories_dir / "test_checkpoint.json"
+        memory_file.write_text('{"type": "checkpoint", "description": "test"}')
+
+        # Manually add the memory file to DB with current timestamp
+        # (simulating what the watcher would do)
+        import json
+        memory_content = memory_file.read_text()
+        memory_hash = hashlib.sha256(memory_content.encode()).hexdigest()
+        relative_memory_path = str(memory_file.relative_to(test_workspace)).replace("\\", "/")
+        storage_manager.add_file(
+            relative_memory_path, "json", memory_content, memory_hash, len(memory_content)
+        )
+
+        # Now the bug manifests:
+        # - MAX(last_indexed) = timestamp from .memories file (very recent)
+        # - max(code_file_mtime) = mtime of utils.py (slightly older)
+        # - The check sees: max_file_mtime <= db_timestamp, returns False
+        # - But utils.py HAS changed and needs re-indexing!
+
+        # Step 4: check_if_indexing_needed() should detect the stale code file
+        needs_indexing = await scanner.check_if_indexing_needed()
+
+        assert needs_indexing is True, (
+            "Bug: check_if_indexing_needed() missed stale code file. "
+            "The MAX-based heuristic was fooled by a recently-indexed non-code file. "
+            "utils.py was modified but not re-indexed because MAX(last_indexed) > max(code_mtime)."
+        )
+
+    @pytest.mark.asyncio
     async def test_index_workspace_returns_stats(self, test_workspace, storage_manager, vector_store):
         """Test that index_workspace returns indexing statistics."""
         from miller.workspace import WorkspaceScanner

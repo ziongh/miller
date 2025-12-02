@@ -89,16 +89,17 @@ class WorkspaceRegistry:
 
     def _generate_workspace_id(self, path: str, name: str) -> str:
         """
-        Generate stable workspace ID from path.
+        Generate stable workspace ID from path only.
 
-        Uses path hash for uniqueness, name slug for readability.
+        Uses path hash for uniqueness. Name is ignored to prevent duplicate
+        workspace entries when the same path is added with different names.
 
         Args:
             path: Workspace path
-            name: Workspace name
+            name: Workspace name (ignored, kept for API compatibility)
 
         Returns:
-            Workspace ID (format: "name-slug_hash8")
+            Workspace ID (format: "workspace_hash8")
         """
         # Resolve path for stable hashing (if it exists)
         resolved_path = str(Path(path).resolve()) if Path(path).exists() else path
@@ -106,13 +107,7 @@ class WorkspaceRegistry:
         # Hash path for uniqueness (8 hex chars)
         path_hash = hashlib.sha256(resolved_path.encode()).hexdigest()[:8]
 
-        # Slugify name for readability
-        slug = name.lower().replace(" ", "-").replace("_", "-")
-
-        # Remove non-alphanumeric except dashes
-        slug = "".join(c for c in slug if c.isalnum() or c == "-")
-
-        return f"{slug}_{path_hash}"
+        return f"workspace_{path_hash}"
 
     def list_workspaces(self) -> List[Dict]:
         """
@@ -125,14 +120,21 @@ class WorkspaceRegistry:
 
     def get_workspace(self, workspace_id: str) -> Optional[WorkspaceEntry]:
         """
-        Get specific workspace by ID.
+        Get specific workspace by ID or type.
 
         Args:
-            workspace_id: Workspace ID to retrieve
+            workspace_id: Workspace ID to retrieve, OR "primary" to get the primary workspace
 
         Returns:
             WorkspaceEntry if found, None otherwise
         """
+        # Special case: "primary" resolves to the workspace with workspace_type="primary"
+        if workspace_id == "primary":
+            for entry in self.workspaces.values():
+                if entry.workspace_type == "primary":
+                    return entry
+            return None
+
         return self.workspaces.get(workspace_id)
 
     def remove_workspace(self, workspace_id: str) -> bool:

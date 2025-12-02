@@ -81,19 +81,27 @@ class StorageManager:
         """
         mutations.delete_file(self.conn, file_path)
 
+    def delete_files_batch(self, file_paths: list[str]) -> int:
+        """Delete multiple files in single transaction (batch version)."""
+        return mutations.delete_files_batch(self.conn, file_paths)
+
     # Symbol operations
 
-    def add_symbols_batch(self, symbols: list[Any]) -> int:
+    def add_symbols_batch(
+        self, symbols: list[Any], code_context_map: Optional[dict[str, str]] = None
+    ) -> int:
         """
         Bulk insert symbols.
 
         Args:
             symbols: List of PySymbol objects from extraction
+            code_context_map: Optional dict mapping symbol_id to computed code_context.
+                             Used for grep-style output (computed from file content).
 
         Returns:
             Number of symbols inserted
         """
-        return mutations.add_symbols_batch(self.conn, symbols)
+        return mutations.add_symbols_batch(self.conn, symbols, code_context_map)
 
     def get_symbol_by_name(self, name: str) -> Optional[dict]:
         """
@@ -110,6 +118,10 @@ class StorageManager:
     def get_symbol_by_id(self, symbol_id: str) -> Optional[dict]:
         """Get symbol by ID."""
         return queries.get_symbol_by_id(self.conn, symbol_id)
+
+    def get_symbols_by_ids(self, symbol_ids: list[str]) -> dict[str, dict]:
+        """Get multiple symbols by ID in single query (batch version)."""
+        return queries.get_symbols_by_ids(self.conn, symbol_ids)
 
     # Identifier operations
 
@@ -145,6 +157,14 @@ class StorageManager:
         """Clear all reachability data."""
         mutations.clear_reachability(self.conn)
 
+    def clear_all(self) -> None:
+        """
+        Clear all data from all tables (for force re-indexing).
+
+        Use this before a complete rebuild of the index.
+        """
+        mutations.clear_all(self.conn)
+
     def get_reachability_for_target(self, target_id: str) -> list[dict]:
         """Get all symbols that can reach the target (upstream/callers)."""
         return queries.get_reachability_for_target(self.conn, target_id)
@@ -152,6 +172,22 @@ class StorageManager:
     def get_reachability_from_source(self, source_id: str) -> list[dict]:
         """Get all symbols reachable from source (downstream/callees)."""
         return queries.get_reachability_from_source(self.conn, source_id)
+
+    def get_reachability_for_targets_batch(
+        self, target_ids: list[str], min_distance: int = 1
+    ) -> dict[str, list[dict]]:
+        """Get callers for multiple targets in single query (batch version)."""
+        return queries.get_reachability_for_targets_batch(
+            self.conn, target_ids, min_distance
+        )
+
+    def get_reachability_from_sources_batch(
+        self, source_ids: list[str], min_distance: int = 1
+    ) -> dict[str, list[dict]]:
+        """Get callees for multiple sources in single query (batch version)."""
+        return queries.get_reachability_from_sources_batch(
+            self.conn, source_ids, min_distance
+        )
 
     def can_reach(self, source_id: str, target_id: str) -> bool:
         """Check if source can reach target (O(1) lookup)."""
@@ -194,6 +230,7 @@ class StorageManager:
         symbols: list,
         identifiers: list,
         relationships: list,
+        code_context_map: Optional[dict[str, str]] = None,
     ) -> dict:
         """
         Perform atomic incremental update.
@@ -207,6 +244,7 @@ class StorageManager:
             symbols,
             identifiers,
             relationships,
+            code_context_map,
         )
 
     def close(self):

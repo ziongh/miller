@@ -3,13 +3,17 @@ Tests for plan MCP tool (mutable development plan tracking).
 
 TDD Phase 1: Write ALL tests first (expect them to fail - RED).
 These tests define the contract for Julie-compatible plan functionality.
+
+NOTE: Plans are now stored as Markdown with YAML frontmatter (.md),
+not JSON. Tests use read_memory_file() for format-agnostic reading.
 """
 
 import pytest
-import json
 import shutil
 from pathlib import Path
 from unittest.mock import patch
+
+from miller.memory_utils import read_memory_file
 
 
 # ============================================================================
@@ -19,7 +23,7 @@ from unittest.mock import patch
 
 @pytest.mark.asyncio
 async def test_plan_save_creates_file(temp_memories_dir, mock_git_context, mock_context):
-    """Verify plan save creates file in .memories/plans/plan_{slug}.json."""
+    """Verify plan save creates file in .memories/plans/plan_{slug}.md."""
     from miller.tools.plan import plan
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
         ctx = mock_context
@@ -34,8 +38,8 @@ async def test_plan_save_creates_file(temp_memories_dir, mock_git_context, mock_
         plans_dir = temp_memories_dir / "plans"
         assert plans_dir.exists()
 
-        # Verify plan file exists
-        plan_files = list(plans_dir.glob("plan_*.json"))
+        # Verify plan file exists (now .md format)
+        plan_files = list(plans_dir.glob("plan_*.md"))
         assert len(plan_files) == 1
 
         # Verify filename is based on title slug
@@ -48,9 +52,9 @@ async def test_plan_generates_slug_from_title(temp_memories_dir, mock_git_contex
     from miller.tools.plan import plan
 
     test_cases = [
-        ("Add Search", "plan_add-search.json"),
-        ("Fix Bug #123", "plan_fix-bug-123.json"),
-        ("Implement User Authentication", "plan_implement-user-authentication.json"),
+        ("Add Search", "plan_add-search.md"),
+        ("Fix Bug #123", "plan_fix-bug-123.md"),
+        ("Implement User Authentication", "plan_implement-user-authentication.md"),
     ]
 
     with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
@@ -66,8 +70,8 @@ async def test_plan_generates_slug_from_title(temp_memories_dir, mock_git_contex
             # Create plan
             await plan(ctx, action="save", title=title, content="Test")
 
-            # Verify filename
-            plan_files = list(plans_dir.glob("*.json"))
+            # Verify filename (now .md format)
+            plan_files = list(plans_dir.glob("*.md"))
             assert len(plan_files) == 1
 
             # Check filename matches expected pattern
@@ -97,14 +101,13 @@ async def test_plan_save_auto_activates_by_default(temp_memories_dir, mock_git_c
             content="## Test"
         )
 
-        # Read the plan file
+        # Read the plan file (now .md format)
         plans_dir = temp_memories_dir / "plans"
-        plan_file = list(plans_dir.glob("*.json"))[0]
+        plan_file = list(plans_dir.glob("*.md"))[0]
 
-        with open(plan_file) as f:
-            data = json.load(f)
+        metadata, content = read_memory_file(plan_file)
 
-        assert data["status"] == "active"
+        assert metadata["status"] == "active"
 
 
 @pytest.mark.asyncio

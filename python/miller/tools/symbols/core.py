@@ -146,7 +146,7 @@ async def get_symbols_enhanced(
         # Convert to dicts
         result_dicts = []
         for idx, sym in enumerate(symbols):
-            sym_dict = symbol_to_dict(sym, code_bodies)
+            sym_dict = symbol_to_dict(sym, code_bodies, file_path=str(path))
 
             # Add relevance_score if available (Phase 2 Task 2.1)
             if relevance_scores is not None and idx < len(relevance_scores):

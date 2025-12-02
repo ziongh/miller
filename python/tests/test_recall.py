@@ -69,6 +69,31 @@ async def test_recall_filters_by_type(temp_memories_dir, mock_git_context, mock_
 
 
 @pytest.mark.asyncio
+async def test_recall_filters_by_tags(temp_memories_dir, mock_git_context, mock_context):
+    """Verify recall filters by tags (ANY match)."""
+    from miller.tools.checkpoint import checkpoint
+    from miller.tools.recall import recall
+    with patch('miller.memory_utils.get_git_context', return_value=mock_git_context):
+        ctx = mock_context
+
+        # Create checkpoints with various tags
+        await checkpoint(ctx, "Auth bug fix", tags=["auth", "bugfix"])
+        await checkpoint(ctx, "DB optimization", tags=["database", "performance"])
+        await checkpoint(ctx, "Auth refactor", tags=["auth", "refactor"])
+        await checkpoint(ctx, "No tags")  # No tags at all
+
+        # Filter for auth-related (should match 2)
+        auth_results = await recall(ctx, output_format="json", tags=["auth"], limit=10)
+        assert len(auth_results) == 2, f"Should get 2 results with 'auth' tag, got {len(auth_results)}"
+        for result in auth_results:
+            assert "auth" in result.get("tags", [])
+
+        # Filter for ANY of multiple tags (should match 3)
+        multi_results = await recall(ctx, output_format="json", tags=["auth", "database"], limit=10)
+        assert len(multi_results) == 3, f"Should get 3 results with 'auth' OR 'database' tag, got {len(multi_results)}"
+
+
+@pytest.mark.asyncio
 async def test_recall_filters_by_since_date(temp_memories_dir, mock_git_context, mock_context):
     """Verify recall respects 'since' date filter."""
     from miller.tools.recall import recall
@@ -363,3 +388,60 @@ class TestRecallTextFormat:
             # Should be text (string), not JSON (list)
             assert isinstance(result, str)
             assert "memory found" in result
+
+
+# ============================================================================
+# Semantic Search Tests
+# ============================================================================
+
+
+class TestRecallSemanticSearch:
+    """Tests for recall with query parameter (semantic search)."""
+
+    @pytest.mark.asyncio
+    async def test_semantic_search_uses_file_path_filter(self, temp_memories_dir, mock_context):
+        """Semantic search must filter to .memories/ files DURING search, not after.
+
+        This is the critical bug fix: the WHERE clause must be applied during
+        the LanceDB search to prevent code files from crowding out memories.
+        """
+        from unittest.mock import MagicMock, patch
+        import numpy as np
+        from miller.tools.recall import _recall_semantic
+
+        # Create mock vector_store with proper structure
+        mock_vs = MagicMock()
+        mock_table = MagicMock()
+        mock_vs._table = mock_table
+        mock_vs._embeddings = MagicMock()
+        mock_vs._embeddings.embed_query = MagicMock(return_value=np.zeros(384))
+
+        # Set up the search chain to return empty results
+        mock_search = mock_table.search.return_value
+        mock_where = mock_search.where.return_value
+        mock_where.limit.return_value.to_list.return_value = []
+
+        with patch('miller.server.vector_store', mock_vs):
+            await _recall_semantic("test query", limit=10)
+
+        # Verify .where() was called with file_path filter
+        mock_search.where.assert_called_once()
+        filter_arg = mock_search.where.call_args[0][0]
+        assert ".memories" in filter_arg, f"Expected .memories filter, got: {filter_arg}"
+
+    @pytest.mark.asyncio
+    async def test_semantic_search_fallback_when_no_vector_store(
+        self, temp_memories_dir, mock_git_context, mock_context
+    ):
+        """When vector_store is None, semantic search falls back to filesystem."""
+        from miller.tools.checkpoint import checkpoint
+        from miller.tools.recall import recall
+
+        with patch('miller.tools.checkpoint.get_git_context', return_value=mock_git_context):
+            await checkpoint(mock_context, "Test checkpoint for fallback")
+
+        with patch('miller.server.vector_store', None):
+            results = await recall(mock_context, query="test", output_format="json", limit=10)
+
+        # Should return results via filesystem fallback (returns all memories)
+        assert isinstance(results, list)

@@ -162,6 +162,9 @@ def apply_kind_weighting(result: dict) -> float:
         # Deboost noise - you want definitions, not these
         "Import": 0.4,
         "Namespace": 0.6,
+        # File-level entries (text files without parsers)
+        # Ranked lower than symbols so code results appear first
+        "File": 0.5,
     }
 
     base_score = result.get("score", 0.0)

@@ -59,6 +59,34 @@ def get_symbol_by_id(conn: sqlite3.Connection, symbol_id: str) -> Optional[dict]
     return dict(row) if row else None
 
 
+def get_symbols_by_ids(conn: sqlite3.Connection, symbol_ids: list[str]) -> dict[str, dict]:
+    """
+    Get multiple symbols by ID in a single query.
+
+    OPTIMIZED: Uses single WHERE IN query instead of N individual queries.
+    This is the batch version of get_symbol_by_id() for search hydration.
+
+    Args:
+        conn: SQLite connection
+        symbol_ids: List of symbol IDs to fetch
+
+    Returns:
+        Dict mapping symbol_id -> symbol data. Missing IDs are not in the dict.
+    """
+    if not symbol_ids:
+        return {}
+
+    # Build parameterized query with correct number of placeholders
+    placeholders = ",".join("?" * len(symbol_ids))
+    cursor = conn.execute(
+        f"SELECT * FROM symbols WHERE id IN ({placeholders})",
+        symbol_ids,
+    )
+
+    # Build lookup dict: id -> symbol data
+    return {row["id"]: dict(row) for row in cursor.fetchall()}
+
+
 def get_identifiers_by_file(conn: sqlite3.Connection, file_path: str) -> list[dict]:
     """
     Get all identifiers in a file.
@@ -147,6 +175,90 @@ def get_reachability_from_source(conn: sqlite3.Connection, source_id: str) -> li
         (source_id,),
     )
     return [dict(row) for row in cursor.fetchall()]
+
+
+def get_reachability_for_targets_batch(
+    conn: sqlite3.Connection,
+    target_ids: list[str],
+    min_distance: int = 1,
+) -> dict[str, list[dict]]:
+    """
+    Get callers (upstream) for multiple targets in a single query.
+
+    OPTIMIZED: Uses single WHERE IN query instead of N individual queries.
+
+    Args:
+        conn: SQLite connection
+        target_ids: List of target symbol IDs
+        min_distance: Filter to only this distance (default 1 for direct callers)
+
+    Returns:
+        Dict mapping target_id -> list of caller dicts {source_id, min_distance}
+    """
+    if not target_ids:
+        return {}
+
+    placeholders = ",".join("?" * len(target_ids))
+    cursor = conn.execute(
+        f"""
+        SELECT source_id, target_id, min_distance
+        FROM reachability
+        WHERE target_id IN ({placeholders}) AND min_distance = ?
+        """,
+        (*target_ids, min_distance),
+    )
+
+    # Group results by target_id
+    result: dict[str, list[dict]] = {tid: [] for tid in target_ids}
+    for row in cursor.fetchall():
+        row_dict = dict(row)
+        target_id = row_dict["target_id"]
+        if target_id in result:
+            result[target_id].append(row_dict)
+
+    return result
+
+
+def get_reachability_from_sources_batch(
+    conn: sqlite3.Connection,
+    source_ids: list[str],
+    min_distance: int = 1,
+) -> dict[str, list[dict]]:
+    """
+    Get callees (downstream) for multiple sources in a single query.
+
+    OPTIMIZED: Uses single WHERE IN query instead of N individual queries.
+
+    Args:
+        conn: SQLite connection
+        source_ids: List of source symbol IDs
+        min_distance: Filter to only this distance (default 1 for direct callees)
+
+    Returns:
+        Dict mapping source_id -> list of callee dicts {target_id, min_distance}
+    """
+    if not source_ids:
+        return {}
+
+    placeholders = ",".join("?" * len(source_ids))
+    cursor = conn.execute(
+        f"""
+        SELECT source_id, target_id, min_distance
+        FROM reachability
+        WHERE source_id IN ({placeholders}) AND min_distance = ?
+        """,
+        (*source_ids, min_distance),
+    )
+
+    # Group results by source_id
+    result: dict[str, list[dict]] = {sid: [] for sid in source_ids}
+    for row in cursor.fetchall():
+        row_dict = dict(row)
+        source_id = row_dict["source_id"]
+        if source_id in result:
+            result[source_id].append(row_dict)
+
+    return result
 
 
 def can_reach(conn: sqlite3.Connection, source_id: str, target_id: str) -> bool:

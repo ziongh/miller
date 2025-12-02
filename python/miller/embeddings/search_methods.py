@@ -259,20 +259,21 @@ def search_hybrid_fallback(table: Any, embeddings, query: str, limit: int, apply
     Returns:
         List of merged, deduplicated matching symbols with scores
     """
-    # Get results from both methods
-    text_results = search_text(table, True, query, limit, apply_enhancements)
-    semantic_results = search_semantic(table, embeddings, query, limit)
+    # Get results from both methods (without enhancements - we'll apply after merge)
+    # Pass a no-op enhancement function to text search to get raw results
+    text_results = search_text(table, True, query, limit * 2, lambda r, q, m: r)
+    semantic_results = search_semantic(table, embeddings, query, limit * 2)
 
-    # Merge and deduplicate by ID
-    seen = set()
-    merged = []
+    # Merge and deduplicate by ID, keeping the higher score
+    seen = {}
+    for r in text_results + semantic_results:
+        rid = r["id"]
+        if rid not in seen or r.get("score", 0) > seen[rid].get("score", 0):
+            seen[rid] = r
 
-    for r in semantic_results + text_results:
-        if r["id"] not in seen:
-            seen.add(r["id"])
-            merged.append(r)
+    merged = list(seen.values())
 
-    # Sort by score descending
-    merged.sort(key=lambda x: x.get("score", 0), reverse=True)
+    # Apply enhancements AFTER merging (so kind weighting affects all results)
+    merged = apply_enhancements(merged, query, "hybrid")
 
     return merged[:limit]

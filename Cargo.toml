@@ -13,7 +13,7 @@ crate-type = ["cdylib"]  # CRITICAL: Makes it a Python extension module
 [dependencies]
 # Julie's extractors crate - provides all 31 language parsers
 # This is the SINGLE SOURCE OF TRUTH for symbol extraction
-julie-extractors = { git = "https://github.com/anortham/julie.git", tag = "v1.16.0" }
+julie-extractors = { git = "https://github.com/anortham/julie.git", tag = "v1.20.0" }
 
 # PyO3 for Python bindings
 # Version verified via web search 2025-11-17: https://github.com/PyO3/pyo3/releases

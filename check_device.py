@@ -73,7 +73,7 @@ elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
     device = "mps"
     print("  🍎 Apple Silicon MPS")
 elif directml_available:
-    device = "dml"
+    device = "directml"
     print("  🪟 DirectML (Windows AMD/Intel GPU)")
 else:
     device = "cpu"
@@ -94,9 +94,9 @@ cpu_time = (time() - start) * 1000
 print(f"  CPU: {cpu_time:.2f}ms")
 
 # GPU test (if available)
-if device in ["cuda", "mps", "dml"]:
+if device in ["cuda", "mps", "directml"]:
     try:
-        if device == "dml":
+        if device == "directml":
             import torch_directml
             dml_device = torch_directml.device()
             x_gpu = x.to(dml_device)
@@ -137,7 +137,7 @@ if device == "cpu":
 else:
     print(f"✅ GPU acceleration enabled ({device.upper()})")
     print("   Embeddings will run on GPU (10-50x faster than CPU)")
-    if device == "dml":
+    if device == "directml":
         print()
         print("   ⚠️  DirectML is experimental - may have compatibility issues")
         print("   If you encounter errors, switch back to CPU:")

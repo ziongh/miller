@@ -201,14 +201,49 @@ miller/
 │   └── miller.log         # Server logs
 │
 ├── .memories/             # Development memories (checkpoint/recall)
-│   ├── YYYY-MM-DD/        # Daily checkpoints
-│   └── plans/             # Mutable plans
+│   ├── YYYY-MM-DD/        # Daily checkpoints (.md files)
+│   └── plans/             # Mutable plans (.md files)
 │
 └── docs/                  # Detailed documentation
     ├── TOON.md            # TOON format spec
     ├── GPU_SETUP.md       # PyTorch GPU installation
     └── DEVELOPMENT.md     # Architecture, testing details
 ```
+
+---
+
+## Memory Format
+
+Memories (checkpoints and plans) are stored as **Markdown with YAML frontmatter**:
+
+```markdown
+---
+id: checkpoint_abc123_def456
+type: checkpoint
+timestamp: 1234567890
+tags: [bugfix, auth]
+git:
+  branch: main
+  commit: abc1234
+---
+
+Fixed the authentication bug - was missing await on token validation.
+```
+
+### Migrating Legacy JSON Memories
+
+If you have old `.json` memory files, convert them:
+
+```python
+from miller.memory_utils import migrate_all_memories
+stats = migrate_all_memories()
+print(f"Migrated: {stats['migrated']}")
+```
+
+Notes:
+- Migration creates `.md` files alongside `.json` (backup preserved)
+- `recall()` reads both formats automatically
+- To clean up old JSON: `find .memories -name "*.json" -delete`
 
 ---
 

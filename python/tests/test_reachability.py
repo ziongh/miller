@@ -174,6 +174,76 @@ class TestReachabilityStorage:
         storage.close()
 
 
+class TestClosureTrigger:
+    """Tests for WHEN closure computation should run."""
+
+    def test_closure_should_run_if_reachability_empty_but_relationships_exist(self, tmp_path):
+        """
+        Closure should compute if reachability table is empty but relationships exist.
+
+        This is the key bug we're fixing: previously closure only ran on fresh index,
+        but if workspace was already indexed, reachability stayed empty forever.
+        """
+        from miller.closure import compute_transitive_closure, should_compute_closure
+
+        db_path = tmp_path / "test.db"
+        storage = StorageManager(str(db_path))
+
+        # Simulate "already indexed" state: has symbols and relationships but no reachability
+        _add_test_symbols(storage, ["sym_a", "sym_b", "sym_c"])
+        _add_test_relationships(storage, [
+            ("sym_a", "sym_b", "Call"),
+            ("sym_b", "sym_c", "Call"),
+        ])
+
+        # Verify: relationships exist but reachability is empty
+        cursor = storage.conn.execute("SELECT COUNT(*) FROM relationships")
+        assert cursor.fetchone()[0] == 2
+
+        cursor = storage.conn.execute("SELECT COUNT(*) FROM reachability")
+        assert cursor.fetchone()[0] == 0
+
+        # should_compute_closure should return True
+        assert should_compute_closure(storage) is True
+
+        # After computing, should_compute_closure should return False
+        compute_transitive_closure(storage)
+        assert should_compute_closure(storage) is False
+
+        storage.close()
+
+    def test_closure_should_not_run_if_reachability_populated(self, tmp_path):
+        """Closure should NOT recompute if reachability already has entries."""
+        from miller.closure import should_compute_closure
+
+        db_path = tmp_path / "test.db"
+        storage = StorageManager(str(db_path))
+
+        _add_test_symbols(storage, ["sym_a", "sym_b"])
+        _add_test_relationships(storage, [("sym_a", "sym_b", "Call")])
+
+        # Manually add reachability entry
+        storage.add_reachability_batch([("sym_a", "sym_b", 1)])
+
+        # should_compute_closure should return False (already populated)
+        assert should_compute_closure(storage) is False
+        storage.close()
+
+    def test_closure_should_not_run_if_no_relationships(self, tmp_path):
+        """Closure should NOT run if there are no relationships (nothing to compute)."""
+        from miller.closure import should_compute_closure
+
+        db_path = tmp_path / "test.db"
+        storage = StorageManager(str(db_path))
+
+        # Only symbols, no relationships
+        _add_test_symbols(storage, ["sym_a", "sym_b"])
+
+        # should_compute_closure should return False (nothing to compute)
+        assert should_compute_closure(storage) is False
+        storage.close()
+
+
 class TestClosureComputation:
     """Tests for transitive closure computation algorithm."""
 
@@ -380,3 +450,111 @@ def _add_test_relationships(storage: StorageManager, rels: list[tuple[str, str, 
 
     relationships = [MockRelationship(f, t, k) for f, t, k in rels]
     storage.add_relationships_batch(relationships)
+
+
+class TestIncrementalReachability:
+    """Tests for reachability updates after incremental file changes."""
+
+    def test_reachability_stale_after_new_relationships(self, tmp_path):
+        """
+        After adding new relationships, reachability should be stale.
+
+        This tests the detection of stale reachability data.
+        """
+        from miller.closure import compute_transitive_closure, is_reachability_stale
+
+        db_path = tmp_path / "test.db"
+        storage = StorageManager(str(db_path))
+
+        # Initial state: A -> B, C exists but no relationships yet
+        _add_test_symbols(storage, ["sym_a", "sym_b", "sym_c"])
+        _add_test_relationships(storage, [("sym_a", "sym_b", "calls")])
+
+        # Compute initial closure
+        compute_transitive_closure(storage, max_depth=10)
+
+        # Should NOT be stale yet
+        assert is_reachability_stale(storage) is False
+
+        # Add new relationship: B -> C (sym_c already exists)
+        _add_test_relationships(storage, [("sym_b", "sym_c", "calls")])
+
+        # Should now be stale - new relationship exists but A->C path is missing
+        assert is_reachability_stale(storage) is True
+
+        storage.close()
+
+    def test_refresh_reachability_after_new_relationships(self, tmp_path):
+        """
+        After refreshing reachability, new transitive paths should be included.
+        """
+        from miller.closure import compute_transitive_closure, refresh_reachability
+
+        db_path = tmp_path / "test.db"
+        storage = StorageManager(str(db_path))
+
+        # Initial state: A -> B, C exists but no relationship yet
+        _add_test_symbols(storage, ["sym_a", "sym_b", "sym_c"])
+        _add_test_relationships(storage, [("sym_a", "sym_b", "calls")])
+
+        # Compute initial closure
+        compute_transitive_closure(storage, max_depth=10)
+
+        # Verify A -> B exists
+        assert storage.can_reach("sym_a", "sym_b")
+
+        # Add new relationship: B -> C (sym_c already exists)
+        _add_test_relationships(storage, [("sym_b", "sym_c", "calls")])
+
+        # A -> C should NOT exist yet (stale)
+        assert not storage.can_reach("sym_a", "sym_c")
+
+        # Refresh reachability
+        refresh_reachability(storage, max_depth=10)
+
+        # Now A -> C should exist
+        assert storage.can_reach("sym_a", "sym_c")
+
+        storage.close()
+
+    def test_refresh_reachability_clears_deleted_paths(self, tmp_path):
+        """
+        After deleting relationships, refresh should remove stale paths.
+        """
+        from miller.closure import compute_transitive_closure, refresh_reachability
+
+        db_path = tmp_path / "test.db"
+        storage = StorageManager(str(db_path))
+
+        # Initial state: A -> B -> C
+        _add_test_symbols(storage, ["sym_a", "sym_b", "sym_c"])
+        _add_test_relationships(storage, [
+            ("sym_a", "sym_b", "calls"),
+            ("sym_b", "sym_c", "calls"),
+        ])
+
+        # Compute initial closure
+        compute_transitive_closure(storage, max_depth=10)
+
+        # Verify A -> C exists
+        assert storage.can_reach("sym_a", "sym_c")
+
+        # Delete B -> C relationship
+        storage.conn.execute(
+            "DELETE FROM relationships WHERE from_symbol_id = ? AND to_symbol_id = ?",
+            ("sym_b", "sym_c")
+        )
+        storage.conn.commit()
+
+        # A -> C should still exist in stale reachability
+        assert storage.can_reach("sym_a", "sym_c")
+
+        # Refresh reachability
+        refresh_reachability(storage, max_depth=10)
+
+        # Now A -> C should NOT exist (path was deleted)
+        assert not storage.can_reach("sym_a", "sym_c")
+        # But A -> B should still exist
+        assert storage.can_reach("sym_a", "sym_b")
+
+        storage.close()

@@ -4,7 +4,7 @@ Main call tracing entry point.
 
 import time
 from collections import defaultdict
-from typing import Optional
+from typing import Any, Optional
 from miller.storage import StorageManager
 from miller.tools.trace_types import (
     DEFAULT_MAX_DEPTH,
@@ -25,8 +25,9 @@ async def trace_call_path(
     context_file: Optional[str] = None,
     output_format: str = "json",
     workspace: str = "primary",
-    enable_semantic: bool = False,
+    enable_semantic: bool = True,  # NOW DEFAULT TRUE - uses vector search for cross-language discovery
     embeddings=None,
+    vector_store=None,  # Pass vector store for TRUE semantic discovery
 ) -> dict[str, Any] | str:
     """
     Trace call paths across language boundaries using naming variants.
@@ -105,6 +106,7 @@ async def trace_call_path(
         cycles_detected_ref=cycles_detected_ref,
         enable_semantic=enable_semantic,
         embeddings=embeddings,
+        vector_store=vector_store,  # NEW: For true semantic discovery
     )
 
     # Count total nodes

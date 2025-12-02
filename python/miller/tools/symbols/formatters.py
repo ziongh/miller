@@ -139,20 +139,25 @@ def calculate_importance_tier(importance_score: float) -> str:
         return "critical"
 
 
-def symbol_to_dict(symbol, code_bodies: dict[str, str]) -> dict[str, Any]:
+def symbol_to_dict(symbol, code_bodies: dict[str, str], file_path: str = "") -> dict[str, Any]:
     """Convert a symbol object to a dictionary.
 
     Args:
         symbol: Symbol object from miller_core
         code_bodies: Dict mapping symbol.id -> code_body string
+        file_path: Fallback file path if not on symbol (for TOON/JSON output)
     """
     # Normalize kind to PascalCase for consistency with Julie
     kind_raw = getattr(symbol, "kind", "")
     kind = kind_raw.capitalize() if kind_raw else ""
 
+    # Get file_path from symbol if available, otherwise use passed-in fallback
+    sym_file_path = getattr(symbol, "file_path", "") or file_path
+
     result = {
         "name": getattr(symbol, "name", ""),
         "kind": kind,
+        "file_path": sym_file_path,
         "start_line": getattr(symbol, "start_line", 0),
         "end_line": getattr(symbol, "end_line", 0),
     }

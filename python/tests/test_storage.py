@@ -401,3 +401,75 @@ class TestWorkspaceScanning:
         assert len(files) == 1
         assert 'last_indexed' in files[0]
         assert files[0]['last_indexed'] > 0  # Timestamp should be set
+
+
+class TestClearAll:
+    """Test clearing all data from the database."""
+
+    def test_clear_all_removes_all_data(self):
+        """Test that clear_all removes all files, symbols, identifiers, relationships."""
+        from miller.storage import StorageManager
+        from miller import miller_core
+
+        storage = StorageManager(":memory:")
+
+        # Add a file with symbols
+        code = '''class Base:
+    def method(self): pass
+
+class Derived(Base):
+    def other(self):
+        self.method()
+'''
+        result = miller_core.extract_file(code, "python", "test.py")
+        storage.add_file("test.py", "python", code, "hash123", len(code))
+        storage.add_symbols_batch(result.symbols)
+        storage.add_identifiers_batch(result.identifiers)
+        storage.add_relationships_batch(result.relationships)
+
+        # Verify data exists
+        cursor = storage.conn.cursor()
+        assert cursor.execute("SELECT COUNT(*) FROM files").fetchone()[0] > 0
+        assert cursor.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] > 0
+
+        # Clear all
+        storage.clear_all()
+
+        # Verify all tables are empty
+        assert cursor.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
+        assert cursor.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] == 0
+        assert cursor.execute("SELECT COUNT(*) FROM identifiers").fetchone()[0] == 0
+        assert cursor.execute("SELECT COUNT(*) FROM relationships").fetchone()[0] == 0
+
+    def test_clear_all_allows_reindexing(self):
+        """Test that after clear_all, we can add new data."""
+        from miller.storage import StorageManager
+        from miller import miller_core
+
+        storage = StorageManager(":memory:")
+
+        # Add initial data
+        code1 = "def old_func(): pass"
+        result1 = miller_core.extract_file(code1, "python", "old.py")
+        storage.add_file("old.py", "python", code1, "hash1", len(code1))
+        storage.add_symbols_batch(result1.symbols)
+
+        # Clear
+        storage.clear_all()
+
+        # Add new data
+        code2 = "def new_func(): pass"
+        result2 = miller_core.extract_file(code2, "python", "new.py")
+        storage.add_file("new.py", "python", code2, "hash2", len(code2))
+        storage.add_symbols_batch(result2.symbols)
+
+        # Should only have new data
+        files = storage.get_all_files()
+        assert len(files) == 1
+        assert files[0]['path'] == "new.py"
+
+        sym = storage.get_symbol_by_name("new_func")
+        assert sym is not None
+
+        old_sym = storage.get_symbol_by_name("old_func")
+        assert old_sym is None

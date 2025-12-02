@@ -13,6 +13,7 @@ background initialization and indexing.
 """
 
 import asyncio
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -90,14 +91,75 @@ async def _on_files_changed(events: list[tuple[FileEvent, Path]]):
         # Index all files concurrently
         results = await asyncio.gather(*[index_one(et, fp) for et, fp in files_to_index])
 
-        # Log results
+        # Log results and track if any succeeded
+        any_success = False
         for success, event_type, file_path in results:
             rel_path = str(file_path.relative_to(server_state.workspace_root)).replace("\\", "/")
             if success:
+                any_success = True
                 action = "Indexed" if event_type == FileEvent.CREATED else "Updated"
                 logger.info(f"✏️  {action}: {rel_path}")
             else:
                 logger.warning(f"⚠️  Failed to index: {rel_path}")
+
+        # Phase 5: Refresh reachability if files changed (relationships may have changed)
+        if any_success or deleted_files:
+            from miller.closure import is_reachability_stale, refresh_reachability
+
+            if await asyncio.to_thread(is_reachability_stale, server_state.storage):
+                logger.info("🔗 Refreshing reachability (relationships changed)...")
+                count = await asyncio.to_thread(
+                    refresh_reachability, server_state.storage, 10
+                )
+                logger.info(f"✅ Reachability refreshed: {count} entries")
+
+
+async def _embedding_auto_unload_task():
+    """
+    Auto-unload embedding model after 5 minutes of inactivity to free GPU memory.
+
+    Following Julie's proven pattern:
+    - Check every 60 seconds
+    - Unload after 300 seconds (5 minutes) of idle time
+    - Lazy reload on next use (handled by EmbeddingManager._ensure_loaded())
+
+    This frees 5GB of VRAM when the model isn't being used, while keeping
+    it loaded during active coding sessions.
+    """
+    CHECK_INTERVAL_SECS = 60  # Check every minute
+    IDLE_TIMEOUT_SECS = 300  # Unload after 5 minutes of inactivity
+
+    while True:
+        try:
+            await asyncio.sleep(CHECK_INTERVAL_SECS)
+
+            # Skip if embeddings not initialized yet
+            if server_state.embeddings is None:
+                continue
+
+            # Check if model should be unloaded
+            last_use_time = server_state.embeddings._last_use_time
+
+            if last_use_time is None:
+                # Never used yet, don't unload
+                continue
+
+            import time
+            idle_duration = time.time() - last_use_time
+
+            if idle_duration > IDLE_TIMEOUT_SECS:
+                # Model has been idle for >5 minutes
+                if server_state.embeddings.is_loaded_on_gpu():
+                    # Unload to free GPU memory
+                    server_state.embeddings.unload()
+                    logger.info(
+                        f"🧹 Embedding model auto-unloaded after {idle_duration:.0f}s of inactivity "
+                        "(will reload on next use)"
+                    )
+
+        except Exception as e:
+            # Log errors but keep the task running
+            logger.error(f"❌ Error in embedding auto-unload task: {e}", exc_info=True)
 
 
 async def _background_initialization_and_indexing():
@@ -144,12 +206,19 @@ async def _background_initialization_and_indexing():
         # ║  DO NOT REMOVE THIS! This fix has been reverted multiple times causing       ║
         # ║  15-second startup delays. The "lazy import" pattern is NOT enough -         ║
         # ║  imports block even inside async functions!                                   ║
+        # ║                                                                               ║
+        # ║  UPDATE 2024-11: On Windows, asyncio.to_thread() deadlocks when running as   ║
+        # ║  a subprocess with stdin/stdout pipes (how MCP servers run). The thread      ║
+        # ║  pool executor interacts badly with Windows pipe I/O. As a workaround, we    ║
+        # ║  run imports synchronously - this blocks the event loop for ~6s but works.   ║
+        # ║  The MCP handshake still completes immediately because this runs in a        ║
+        # ║  background task spawned AFTER the lifespan yields.                          ║
         # ╚══════════════════════════════════════════════════════════════════════════════╝
         init_phase = "imports"
         t0 = time.time()
 
         def _sync_heavy_imports():
-            """Run heavy imports in thread pool to avoid blocking event loop."""
+            """Import heavy ML libraries (torch, sentence-transformers ~6s on first load)."""
             from miller.storage import StorageManager
             from miller.workspace import WorkspaceScanner
             from miller.workspace_registry import WorkspaceRegistry
@@ -165,16 +234,31 @@ async def _background_initialization_and_indexing():
                 VectorStore,
             )
 
-        # Run imports in thread pool - this is THE critical fix for fast startup
-        (
-            StorageManager,
-            WorkspaceScanner,
-            WorkspaceRegistry,
-            get_workspace_db_path,
-            get_workspace_vector_path,
-            EmbeddingManager,
-            VectorStore,
-        ) = await asyncio.to_thread(_sync_heavy_imports)
+        if sys.platform == "win32":
+            # Windows: asyncio.to_thread deadlocks with MCP's pipe-based stdin/stdout.
+            # The thread pool executor interacts badly with Windows pipe I/O.
+            # Run synchronously - blocks event loop ~6s but avoids deadlock.
+            # This is okay because MCP handshake completed before this task started.
+            (
+                StorageManager,
+                WorkspaceScanner,
+                WorkspaceRegistry,
+                get_workspace_db_path,
+                get_workspace_vector_path,
+                EmbeddingManager,
+                VectorStore,
+            ) = _sync_heavy_imports()
+        else:
+            # Unix/macOS: Run in thread pool to keep event loop responsive
+            (
+                StorageManager,
+                WorkspaceScanner,
+                WorkspaceRegistry,
+                get_workspace_db_path,
+                get_workspace_vector_path,
+                EmbeddingManager,
+                VectorStore,
+            ) = await asyncio.to_thread(_sync_heavy_imports)
 
         logger.info(f"✅ Imports complete ({time.time()-t0:.1f}s)")
 
@@ -235,6 +319,26 @@ async def _background_initialization_and_indexing():
         else:
             logger.info("✅ Workspace already indexed - ready for search")
 
+            # Check if reachability needs to be computed (may be empty from older versions)
+            from miller.closure import should_compute_closure, compute_transitive_closure
+
+            if await asyncio.to_thread(should_compute_closure, server_state.storage):
+                logger.info("🔗 Reachability table empty - computing transitive closure...")
+                closure_start = time.time()
+                closure_count = await asyncio.to_thread(
+                    compute_transitive_closure, server_state.storage, max_depth=10
+                )
+                closure_time = (time.time() - closure_start) * 1000
+                logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
+
+        # Always update registry stats (ensures consistency after manual DB changes)
+        cursor = server_state.storage.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM symbols")
+        final_symbol_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM symbols")
+        final_file_count = cursor.fetchone()[0]
+        registry.update_workspace_stats(workspace_id, final_symbol_count, final_file_count)
+
         # PHASE 3: Start file watcher for real-time updates
         init_phase = "file_watcher"
         logger.info("👁️  Starting file watcher for real-time indexing...")
@@ -242,14 +346,20 @@ async def _background_initialization_and_indexing():
 
         ignore_spec = load_all_ignores(server_state.workspace_root)
         pattern_strings = {p.pattern for p in ignore_spec.patterns}
-        file_watcher = FileWatcher(
+        server_state.file_watcher = FileWatcher(
             workspace_path=server_state.workspace_root,
             indexing_callback=_on_files_changed,
             ignore_patterns=pattern_strings,
             debounce_delay=0.2,
         )
-        file_watcher.start()
+        server_state.file_watcher.start()
         logger.info("✅ File watcher active - workspace changes will be indexed automatically")
+
+        # PHASE 4: Start auto-unload task for GPU memory management (Julie-style)
+        # This task monitors embedding usage and unloads the model after 5min of inactivity
+        init_phase = "auto_unload"
+        asyncio.create_task(_embedding_auto_unload_task())
+        logger.info("🕐 Started embedding auto-unload task (checks every 60s, unloads after 5min idle)")
 
         init_phase = "complete"  # Stop watchdog thread
 
@@ -286,9 +396,6 @@ async def lifespan(_app):
 
     Shutdown: Stop file watcher and cleanup
     """
-    # File watcher reference (initialized by background task)
-    file_watcher = None
-
     # ═══════════════════════════════════════════════════════════════════════════════
     # SPAWN BACKGROUND TASK - DO NOT ADD ANY CODE BEFORE yield!
     # The yield MUST happen within milliseconds of this function being called.
@@ -303,9 +410,9 @@ async def lifespan(_app):
     # SHUTDOWN: Stop file watcher and wait for background task
     logger.info("🛑 Miller server shutting down...")
 
-    if file_watcher and file_watcher.is_running():
+    if server_state.file_watcher and server_state.file_watcher.is_running():
         logger.info("⏹️  Stopping file watcher...")
-        file_watcher.stop()
+        server_state.file_watcher.stop()
         logger.info("✅ File watcher stopped")
 
     if not init_task.done():

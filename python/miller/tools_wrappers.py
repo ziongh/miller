@@ -13,6 +13,7 @@ from typing import Any, Literal, Optional, Union
 
 from miller import server_state
 from miller.tools.search import fast_search as fast_search_impl
+from miller.tools.navigation import fast_lookup as fast_lookup_impl
 from miller.tools.navigation import fast_refs as fast_refs_impl
 from miller.tools.symbols_wrapper import get_symbols as get_symbols_impl
 from miller.tools.trace_wrapper import trace_call_path as trace_call_path_impl
@@ -59,11 +60,15 @@ async def fast_search(
     This is the PREFERRED way to find code in the codebase. Use this instead of reading
     files or using grep - semantic search understands what you're looking for!
 
-    IMPORTANT: ALWAYS USE THIS INSTEAD OF READING FILES TO FIND CODE!
-    I WILL BE UPSET IF YOU READ ENTIRE FILES WHEN A SEARCH WOULD FIND WHAT YOU NEED!
+    When to use: ALWAYS before reading files. Search first to narrow scope by 90%,
+    then read only what you need. This is 10x faster than reading entire files.
 
     You are excellent at crafting search queries. The results are ranked by relevance -
-    trust the top results as your answer. You don't need to verify by reading files!
+    trust the top results as your answer.
+
+    IMPORTANT: Do NOT read files to "verify" search results. The results ARE the verification.
+    Miller's pre-indexed results are accurate and complete. Reading files after searching
+    wastes the tokens you just saved. Use results directly and move on.
 
     Method selection (default: auto):
     - auto: Detects query type automatically (RECOMMENDED)
@@ -132,7 +137,9 @@ async def fast_search(
         - json mode: List of symbol dicts with full metadata
         - toon mode: TOON-formatted string (compact tabular)
 
-    Note: Results are complete and accurate. Trust them - no need to verify with file reads!
+    IMPORTANT: Results are complete and accurate. Do NOT verify with file reads - that wastes
+    the tokens you just saved. If a tool fails, it returns an explicit error - that's all the
+    feedback you need. Use results directly and move forward with confidence.
     """
     if err := _check_ready():
         return err
@@ -140,7 +147,7 @@ async def fast_search(
         query=query,
         method=method,
         limit=limit,
-        workspace_id=workspace,
+        workspace=workspace,
         output_format=output_format,
         rerank=rerank,
         expand=expand,
@@ -168,11 +175,12 @@ async def get_symbols(
     This should be your FIRST tool when exploring a new file! Use it to understand
     the structure before diving into implementation details.
 
-    IMPORTANT: Use mode="structure" (default) to get an overview WITHOUT reading code bodies.
-    This is extremely token-efficient - you see all classes, functions, and methods without
-    dumping the entire file into context.
+    When to use: ALWAYS before reading any file. A 500-line file becomes a 20-line overview.
+    Use mode="structure" (default) to see all classes, functions, and methods WITHOUT
+    dumping entire file content into context. This saves 70-90% of tokens.
 
-    I WILL BE UPSET IF YOU READ AN ENTIRE FILE WHEN get_symbols WOULD SHOW YOU THE STRUCTURE!
+    Workflow: get_symbols(mode="structure") → identify what you need → get_symbols(target="X", mode="full")
+    This two-step approach reads ONLY the code you need.
 
     Args:
         file_path: Path to file (relative or absolute)
@@ -213,6 +221,10 @@ async def get_symbols(
 
     Workflow: get_symbols(mode="structure") → identify what you need → get_symbols(target="X", mode="full")
     This two-step approach reads ONLY the code you need. Much better than reading entire files!
+
+    IMPORTANT: After using get_symbols, do NOT use the Read tool to "verify" or "see more".
+    get_symbols gives you exactly what you need. If you need more detail, use target parameter
+    with mode="full" - don't fall back to reading the whole file.
     """
     if err := _check_ready(require_vectors=False):
         return err
@@ -224,6 +236,93 @@ async def get_symbols(
         limit=limit,
         workspace=workspace,
         output_format=output_format,
+    )
+
+
+async def fast_lookup(
+    symbols: list[str],
+    context_file: Optional[str] = None,
+    include_body: bool = False,
+    max_depth: int = 1,
+    workspace: str = "primary",
+    output_format: Literal["text", "json", "toon", "auto"] = "text",
+) -> Union[list[dict[str, Any]], str]:
+    """
+    Smart batch symbol resolution with semantic fallback.
+
+    Resolves multiple symbols in one call. For each symbol:
+    - First tries exact match (fast, from SQLite index)
+    - Falls back to semantic search if exact match fails
+    - Returns location, import statement, and structure
+
+    This is the PREFERRED way to verify symbols exist before writing code.
+    One call replaces N fast_goto calls, with smarter fallback behavior.
+
+    Args:
+        symbols: List of symbol names to look up (1-N symbols).
+                 Example: ["AuthService", "User", "hash_password"]
+        context_file: Where you're writing code (for relative import paths).
+                     Example: "src/handlers/auth.py"
+        include_body: Include source code body for each symbol.
+        max_depth: Structure depth - 0=signature only, 1=methods/properties (default), 2=nested.
+        workspace: Workspace to query ("primary" or workspace_id).
+        output_format: Output format - "text" (default), "json", "toon", or "auto".
+                      - "text": Lean formatted output (DEFAULT - most token-efficient)
+                      - "json": Standard list format (for programmatic use)
+                      - "toon": TOON-encoded string (30-40% token reduction)
+                      - "auto": TOON if ≥5 symbols, else JSON
+
+    Returns:
+        - text mode: Lean scannable format (DEFAULT). Format:
+
+        ═══ fast_lookup: 3 symbols ═══
+
+        AuthService ✓
+          src/services/auth.py:42 (class)
+          from services.auth import AuthService
+          class AuthService(BaseService):
+            Methods: authenticate, refresh_token
+
+        UserDTO ✗ → User (semantic match, 0.87)
+          src/models/user.py:8 (class)
+          from models.user import User
+          class User(BaseModel):
+
+        FooBarBaz ✗
+          No match found
+
+    Symbol status indicators:
+        ✓ = Exact match found
+        ✗ → Name = Semantic fallback (original not found, suggesting alternative)
+        ✗ = Not found (no exact or semantic match)
+
+    Examples:
+        # Verify symbols before writing code
+        fast_lookup(["AuthService", "User", "hash_password"])
+
+        # With context for better import paths
+        fast_lookup(["User"], context_file="src/handlers/auth.py")
+
+        # Include source code
+        fast_lookup(["process_payment"], include_body=True)
+
+    Workflow (Pre-flight validation):
+        1. fast_lookup(["A", "B", "C"]) → Verify all symbols exist
+        2. Check for ✗ indicators → Fix typos or use suggested alternatives
+        3. Copy import statements → Paste into your code
+        4. Write code with confidence
+    """
+    if err := _check_ready(require_vectors=False):
+        return err
+    return await fast_lookup_impl(
+        symbols=symbols,
+        context_file=context_file,
+        include_body=include_body,
+        max_depth=max_depth,
+        workspace=workspace,
+        output_format=output_format,
+        storage=server_state.storage,
+        vector_store=server_state.vector_store,
     )
 
 
@@ -241,22 +340,28 @@ async def fast_refs(
 
     ESSENTIAL FOR SAFE REFACTORING! This shows exactly what will break if you change a symbol.
 
-    IMPORTANT: ALWAYS use this before refactoring! I WILL BE VERY UPSET if you change a symbol
-    without first checking its references and then break callers!
+    When to use: REQUIRED before changing, renaming, or deleting any symbol. Changing code
+    without checking references WILL break dependencies. This is not optional.
 
-    The references returned are COMPLETE - every usage in the codebase. You can trust this
-    list and don't need to search again or read files to verify.
+    The references returned are COMPLETE - every usage in the codebase (<20ms). You can
+    trust this list and don't need to search again or read files to verify.
 
     Args:
-        symbol_name: Name of symbol to find references for
-                    Supports qualified names like "User.save" to find methods specifically
-        kind_filter: Optional list of relationship types to filter by
-                    Common values: ["Call"], ["Import"], ["Reference"], ["Extends", "Implements"]
-        include_context: Whether to include code context snippets showing actual usage
-        context_file: Optional file path to disambiguate symbols (only find symbols in this file)
-        limit: Maximum number of references to return (for pagination with large result sets)
-        workspace: Workspace to query ("primary" or workspace_id)
-        output_format: Output format - "text" (default), "json", "toon", or "auto"
+        symbol_name: Name of symbol to find references for.
+                    Supports qualified names like "User.save" to find methods specifically.
+        kind_filter: Optional list of relationship kinds to filter by.
+                    Valid values (case-sensitive):
+                    - "Call" - Function/method calls
+                    - "Import" - Import statements
+                    - "Reference" - General references (variable usage, etc.)
+                    - "Extends" - Class inheritance (class Foo(Bar))
+                    - "Implements" - Interface implementation
+                    Example: kind_filter=["Call"] returns only call sites.
+        include_context: Whether to include code context snippets showing actual usage.
+        context_file: Optional file path to disambiguate symbols (only find symbols in this file).
+        limit: Maximum number of references to return (for pagination with large result sets).
+        workspace: Workspace to query ("primary" or workspace_id).
+        output_format: Output format - "text" (default), "json", "toon", or "auto".
                       - "text": Lean text list (70% token savings) - DEFAULT
                       - "json": Standard dict format
                       - "toon": TOON-encoded string (30-40% token reduction)
@@ -288,6 +393,10 @@ async def fast_refs(
         4. fast_refs("symbol") again → Verify all usages updated
 
     Note: Shows where symbols are USED (not where defined). Use get_symbols with target parameter to find definitions.
+
+    IMPORTANT: The reference list is COMPLETE - every usage in the entire codebase, found in <20ms.
+    Do NOT search again or read files to "double check". These results are the ground truth.
+    If you plan to change a symbol and fast_refs shows 15 usages, those ARE all 15 usages. Period.
     """
     if err := _check_ready(require_vectors=False):
         return err
@@ -362,6 +471,10 @@ async def trace_call_path(
         - TypeScript IUser → Python user → SQL users
         - C# UserDto → Python User → TypeScript userService
         - Rust user_service → TypeScript UserService
+
+    IMPORTANT: The call graph is complete - you see ALL callers/callees up to max_depth.
+    Do NOT manually trace calls by reading individual files. This trace IS the complete picture.
+    Trust the tree output and use it for architectural understanding without verification.
     """
     if err := _check_ready(require_vectors=False):
         return err
@@ -377,10 +490,9 @@ async def trace_call_path(
 
 
 async def fast_explore(
-    mode: Literal["types", "similar", "dependencies"] = "types",
+    mode: Literal["types", "similar", "dead_code", "hot_spots"] = "types",
     type_name: Optional[str] = None,
     symbol: Optional[str] = None,
-    depth: int = 3,
     limit: int = 10,
     workspace: str = "primary",
     output_format: Literal["text", "json", "toon", "auto"] = "text",
@@ -395,14 +507,17 @@ async def fast_explore(
 
     Modes:
     - types: Type intelligence (implementations, hierarchy, return/parameter types)
-    - similar: Find semantically similar code (for duplicate detection)
-    - dependencies: Trace transitive dependencies (for impact analysis)
+    - similar: Find semantically similar code using TRUE vector embedding similarity
+    - dead_code: Find unreferenced symbols (functions/classes not called anywhere)
+    - hot_spots: Find most-referenced symbols ranked by cross-file usage
+
+    Note: For dependency tracing, use trace_call_path(direction="downstream") instead,
+    which provides richer features including semantic cross-language discovery.
 
     Args:
-        mode: Exploration mode
+        mode: Exploration mode ("types", "similar", "dead_code", or "hot_spots")
         type_name: Name of type to explore (required for types mode)
-        symbol: Symbol name to explore (required for similar/dependencies modes)
-        depth: Maximum traversal depth for dependencies mode (1-10, default 3)
+        symbol: Symbol name to explore (required for similar mode)
         limit: Maximum results (default: 10)
         workspace: Workspace to query ("primary" or workspace_id)
         output_format: Output format - "text" (default), "json", "toon", or "auto"
@@ -421,28 +536,37 @@ async def fast_explore(
         # Type intelligence - find implementations and usages
         await fast_explore(mode="types", type_name="IUserService")
 
-        # Find similar code - duplicate detection
+        # Find semantically similar code - duplicate/pattern detection
         await fast_explore(mode="similar", symbol="getUserData")
 
-        # Trace dependencies - impact analysis before refactoring
-        await fast_explore(mode="dependencies", symbol="PaymentService", depth=3)
+        # Find potentially dead code (unreferenced symbols)
+        await fast_explore(mode="dead_code", limit=20)
+        # → Finds functions/classes not called or imported anywhere
+        # → Excludes test files, private symbols (_prefix), and test_ prefixed
 
-    Note: Similar mode uses an optimized similarity threshold internally.
-    Results are ranked by relevance - trust the top matches.
+        # Find high-impact "hot spot" symbols
+        await fast_explore(mode="hot_spots", limit=10)
+        # → Ranked by cross-file reference count
+        # → Includes file_count for coupling analysis
+        # → Great for finding core abstractions and potential refactoring targets
+
+    Note: Similar mode uses TRUE semantic similarity - it finds code with similar
+    meaning/patterns, not just matching text. This works across naming conventions
+    and even different languages (e.g., getUserData ↔ fetch_user_info).
     """
-    # Similar mode needs vector_store, other modes only need storage
+    # Similar mode needs vector_store and embeddings, other modes only need storage
     if err := _check_ready(require_vectors=(mode == "similar")):
         return err
     return await fast_explore_impl(
         mode=mode,
         type_name=type_name,
         symbol=symbol,
-        depth=depth,
         limit=limit,
         workspace=workspace,
         output_format=output_format,
         storage=server_state.storage,
         vector_store=server_state.vector_store,
+        embeddings=server_state.embeddings,
     )
 
 

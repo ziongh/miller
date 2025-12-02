@@ -12,7 +12,7 @@ from miller.memory_utils import (
     get_checkpoint_path,
     get_git_context,
     normalize_tags,
-    write_json_file,
+    write_memory_file,
 )
 
 
@@ -29,6 +29,9 @@ async def checkpoint(
 
     IMPORTANT: Don't wait to be asked - checkpoint important findings, decisions,
     and learnings as you go. This builds a knowledge base that makes future work faster.
+
+    NEVER ask "should I checkpoint this?" - the answer is ALWAYS YES. Checkpoints are cheap
+    (<50ms), context is expensive (hours of work). When in doubt, checkpoint it.
 
     Checkpoints are stored in `.memories/YYYY-MM-DD/` (UTC timezone) with
     automatic git context capture (branch, commit, dirty status, changed files).
@@ -78,18 +81,17 @@ async def checkpoint(
     # Normalize tags
     normalized_tags = normalize_tags(tags) if tags else []
 
-    # Create checkpoint data
-    checkpoint_data = {
+    # Create checkpoint metadata (frontmatter)
+    metadata = {
         "id": checkpoint_id,
         "timestamp": timestamp,
         "type": type,
         "git": git_context,
-        "description": description,
         "tags": normalized_tags,
     }
 
-    # Write checkpoint file
+    # Write checkpoint file as markdown with frontmatter
     checkpoint_path = get_checkpoint_path(timestamp)
-    write_json_file(checkpoint_path, checkpoint_data)
+    write_memory_file(checkpoint_path, metadata, description)
 
     return checkpoint_id

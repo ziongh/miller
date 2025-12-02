@@ -469,14 +469,14 @@ async def _apply_edits(
                 errors.append(f"File not found: {file_path}")
                 continue
 
-            content = path.read_text()
+            content = path.read_text(encoding='utf-8')
             original_content = content
 
             # Apply word-boundary replacement
             new_content, count = pattern.subn(new_name, content)
 
             if count > 0:
-                path.write_text(new_content)
+                path.write_text(new_content, encoding='utf-8')
                 files_modified[file_path] = count
 
         except Exception as e:

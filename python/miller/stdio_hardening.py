@@ -33,7 +33,7 @@ def ensure_utf8_encoding() -> None:
     Should be called early in main() before any output is produced.
     """
     # Wrap stdout with UTF-8 if not already
-    if hasattr(sys.stdout, "buffer") and sys.stdout.encoding.lower() != "utf-8":
+    if hasattr(sys.stdout, "buffer") and (sys.stdout.encoding or "").lower() != "utf-8":
         sys.stdout = io.TextIOWrapper(
             sys.stdout.buffer,
             encoding="utf-8",
@@ -42,7 +42,7 @@ def ensure_utf8_encoding() -> None:
         )
 
     # Wrap stderr with UTF-8 if not already
-    if hasattr(sys.stderr, "buffer") and sys.stderr.encoding.lower() != "utf-8":
+    if hasattr(sys.stderr, "buffer") and (sys.stderr.encoding or "").lower() != "utf-8":
         sys.stderr = io.TextIOWrapper(
             sys.stderr.buffer,
             encoding="utf-8",
@@ -82,6 +82,7 @@ def silence_stdout_stderr():
         try:
             devnull.close()
         except Exception:
+            # Suppress close errors - file may already be closed or invalid
             pass
 
 
@@ -115,6 +116,7 @@ def handle_broken_pipe(func: F) -> F:
             try:
                 sys.stderr.flush()
             except Exception:
+                # Ignore flush errors - stderr may be broken too during shutdown
                 pass
             # Exit without error (client disconnect is normal)
             sys.exit(0)

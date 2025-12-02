@@ -92,6 +92,29 @@ SEMANTIC_SIMILARITY_THRESHOLD = 0.7  # Minimum cosine similarity for semantic ma
 DEFAULT_MAX_DEPTH = 3  # Default maximum trace depth
 MAX_ALLOWED_DEPTH = 10  # Maximum allowed depth (prevent infinite recursion)
 MAX_NODES_PER_LEVEL = 100  # Maximum nodes to explore at each level (prevent explosion)
+SEMANTIC_NEIGHBORS_LIMIT = 8  # Max semantic neighbors to search per symbol
+
+
+class SemanticMatch(TypedDict):
+    """
+    A symbol found via semantic similarity (vector search).
+
+    This represents TRUE semantic discovery - symbols found through
+    embedding similarity WITHOUT requiring pre-existing database relationships.
+
+    This is what makes cross-language tracing actually work for cases like:
+    - "authenticate" (Python) → "verifyCredentials" (TypeScript)
+    - "fetchUserData" (JS) → "get_user_info" (Python)
+    - "processPayment" (Go) → "handle_payment" (Rust)
+    """
+    symbol_id: str  # Symbol ID from database
+    name: str  # Symbol name
+    kind: str  # Symbol kind (Function, Class, etc.)
+    language: str  # Programming language
+    file_path: str  # File path
+    line: int  # Line number
+    similarity: float  # Cosine similarity score (0.0-1.0)
+    relationship_kind: str  # Inferred relationship (usually "Call" for semantic bridges)
 
 
 # Error conditions (for documentation purposes)

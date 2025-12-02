@@ -2,7 +2,6 @@
 MCP tool for recall management (retrieve development memories).
 """
 
-import json
 import time
 from datetime import datetime
 from pathlib import Path
@@ -10,13 +9,14 @@ from typing import Any, Optional
 
 from fastmcp import Context
 
-from miller.memory_utils import read_json_file
+from miller.memory_utils import read_memory_file
 
 
 async def recall(
     _ctx: Context,
     query: Optional[str] = None,
     type: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
@@ -39,6 +39,7 @@ async def recall(
         query: Optional natural language search query (enables semantic search mode)
                Example: "authentication bug", "PostgreSQL decision", "indexing performance"
         type: Filter by memory type ("checkpoint", "decision", "learning", "observation")
+        tags: Filter by tags (matches if ANY tag matches). Example: ["auth", "bugfix"]
         since: Memories since this date (ISO 8601: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS")
                Uses local timezone - automatically converted to UTC for filtering
         until: Memories until this date (ISO 8601, same format as since)
@@ -68,19 +69,26 @@ async def recall(
         # What decisions did we make?
         >>> decisions = await recall(ctx, type="decision", limit=20)
 
+        # Filter by tags
+        >>> auth_work = await recall(ctx, tags=["auth", "security"])
+
         # Semantic search - find related work
         >>> auth_bugs = await recall(ctx, query="authentication bug we fixed")
         >>> db_choices = await recall(ctx, query="why PostgreSQL", type="decision")
 
     The memories are complete and accurate - trust them! Past decisions and learnings
     are valuable context for current work.
+
+    CRITICAL: Use recall() at the START of every session. Don't ask permission, don't explain
+    why - just do it. Your past work matters. Future you will thank present you for maintaining
+    continuity. This is NOT optional.
     """
     # SEMANTIC SEARCH MODE: Use indexed embeddings for natural language queries
     if query:
-        results = await _recall_semantic(query, type, since, until, limit)
+        results = await _recall_semantic(query, type, tags, since, until, limit)
     else:
         # FILESYSTEM SCAN MODE: Fast time-based filtering (original implementation)
-        results = await _recall_filesystem(type, since, until, limit)
+        results = await _recall_filesystem(type, tags, since, until, limit)
 
     # Apply output format
     if output_format == "json":
@@ -115,6 +123,7 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
         "decision": "🎯",
         "learning": "💡",
         "observation": "👁️",
+        "plan": "📋",
     }
 
     count = len(results)
@@ -130,7 +139,18 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
         mem_type = mem.get("type", "checkpoint")
         icon = icons.get(mem_type, "•")
         mem_id = mem.get("id", "?")
-        description = mem.get("description", "")
+        # Plans: show title only (content is too large)
+        # Checkpoints: show description, truncated for readability
+        if mem_type == "plan":
+            # Plans have title in metadata, content in description - only show title
+            display_text = mem.get("title", mem_id)
+        else:
+            # Checkpoints/decisions/learnings: show description, truncated
+            description = mem.get("description", "")
+            if len(description) > 200:
+                display_text = description[:197] + "..."
+            else:
+                display_text = description
         tags = mem.get("tags", [])
         timestamp = mem.get("timestamp", 0)
         git = mem.get("git", {})
@@ -152,7 +172,7 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
 
         # Format: icon id (time) [branch]
         output.append(f"{icon} {mem_id} ({rel_time}) [{branch}]")
-        output.append(f"  {description}")
+        output.append(f"  {display_text}")
 
         if tags:
             output.append(f"  Tags: {', '.join(tags)}")
@@ -169,37 +189,65 @@ def _format_recall_as_text(results: list[dict[str, Any]], query: Optional[str] =
 async def _recall_semantic(
     query: str,
     type: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """
-    Semantic search over indexed memories using hybrid text+semantic search.
+    Semantic search over indexed memories using vector similarity.
 
     Flow:
-    1. Search vector store with query (get more results for filtering)
-    2. Filter to only .memories/ paths
-    3. Load actual JSON files
-    4. Apply time/type filters
-    5. Return top results by relevance score
+    1. Search vector store with file_path filter to ONLY search .memories/ files
+    2. Load memory files (markdown or legacy JSON)
+    3. Apply time/type/tag filters
+    4. Return top results by relevance score
+
+    IMPORTANT: We filter to .memories/ DURING search (not after) to prevent
+    code files from crowding out memory files in search results.
     """
     # Import server globals for vector_store access
     from miller.server import vector_store
 
     if vector_store is None:
         # Indexing not complete yet - fall back to filesystem scan
-        return await _recall_filesystem(type, since, until, limit)
+        return await _recall_filesystem(type, tags, since, until, limit)
 
-    # Search with higher limit since we'll filter by path
-    # Use hybrid search for best results (combines text + semantic)
-    search_results = vector_store.search(query, method="hybrid", limit=limit * 5)
+    # Access LanceDB table and embeddings directly for filtered search
+    table = vector_store._table
+    embeddings = vector_store._embeddings
 
-    # Filter to only memory files (.memories/ paths)
-    memory_paths = set()
+    if table is None:
+        return await _recall_filesystem(type, tags, since, until, limit)
+
+    # Generate query embedding
+    if embeddings is None:
+        from miller.embeddings.manager import EmbeddingManager
+        embeddings = EmbeddingManager()
+
+    query_vec = embeddings.embed_query(query)
+
+    # Search with file_path filter - search ONLY .memories/ files
+    # This is critical: without this filter, memory files get crowded out
+    # by code files that may have higher similarity scores for technical queries
+    search_results = (
+        table.search(query_vec.tolist())
+        .where("file_path LIKE '.memories%'", prefilter=True)
+        .limit(limit * 3)  # Get extra for time/type/tag filtering
+        .to_list()
+    )
+
+    # Extract unique file paths with best relevance score per file
+    # Plans have multiple embeddings (one per heading), so we track the best match
+    # Lower distance = more relevant
+    file_distances: dict[str, float] = {}
     for result in search_results:
         file_path = result.get("file_path", "")
-        if file_path.startswith(".memories/") and file_path.endswith(".json"):
-            memory_paths.add(file_path)
+        if file_path.endswith(".md") or file_path.endswith(".json"):
+            distance = result.get("_distance", float("inf"))
+            # Keep the best (lowest) distance for each file
+            if file_path not in file_distances or distance < file_distances[file_path]:
+                file_distances[file_path] = distance
 
     # Parse date filters
     since_timestamp = None
@@ -221,19 +269,35 @@ async def _recall_semantic(
         except ValueError:
             pass
 
-    # Load JSON files and apply filters
+    # Load memory files (markdown or legacy JSON) and apply filters
     all_checkpoints = []
-    for file_path in memory_paths:
+    for file_path in file_distances.keys():
         try:
             full_path = Path(file_path)
             if not full_path.exists():
                 continue
 
-            data = read_json_file(full_path)
+            # read_memory_file handles both .md and .json formats
+            metadata, content = read_memory_file(full_path)
+
+            # Reconstruct data with correct key based on type:
+            # - Plans use "content" (consistent with plan tool)
+            # - Checkpoints/decisions/learnings use "description"
+            mem_type = metadata.get("type", "checkpoint")
+            if mem_type == "plan":
+                data = {**metadata, "content": content}
+            else:
+                data = {**metadata, "description": content}
 
             # Apply type filter
             if type and data.get("type") != type:
                 continue
+
+            # Apply tags filter (match if ANY tag matches)
+            if tags:
+                memory_tags = set(data.get("tags", []))
+                if not memory_tags.intersection(tags):
+                    continue
 
             # Apply time filters
             checkpoint_timestamp = data.get("timestamp", 0)
@@ -244,20 +308,27 @@ async def _recall_semantic(
             if until_timestamp and checkpoint_timestamp > until_timestamp:
                 continue
 
+            # Attach relevance score for sorting (lower = more relevant)
+            data["_relevance_distance"] = file_distances.get(file_path, float("inf"))
             all_checkpoints.append(data)
 
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, KeyError):
             continue
 
-    # Sort by timestamp descending (most recent first)
-    all_checkpoints.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+    # Sort by relevance (lowest distance = most relevant first)
+    # This preserves semantic search ordering instead of recency
+    all_checkpoints.sort(key=lambda x: x.get("_relevance_distance", float("inf")))
 
-    # Apply limit
-    return all_checkpoints[:limit]
+    # Apply limit and clean up internal fields
+    results = all_checkpoints[:limit]
+    for r in results:
+        r.pop("_relevance_distance", None)
+    return results
 
 
 async def _recall_filesystem(
     type: Optional[str] = None,
+    tags: Optional[list[str]] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     limit: int = 10,
@@ -302,14 +373,31 @@ async def _recall_filesystem(
         if date_dir.name.count("-") != 2:
             continue
 
-        # Scan JSON files in this directory
-        for checkpoint_file in date_dir.glob("*.json"):
+        # Scan memory files (.md and legacy .json) in this directory
+        memory_files = list(date_dir.glob("*.md")) + list(date_dir.glob("*.json"))
+        for checkpoint_file in memory_files:
             try:
-                data = read_json_file(checkpoint_file)
+                # read_memory_file handles both .md and .json formats
+                metadata, content = read_memory_file(checkpoint_file)
+
+                # Reconstruct data with correct key based on type:
+                # - Plans use "content" (consistent with plan tool)
+                # - Checkpoints/decisions/learnings use "description"
+                mem_type = metadata.get("type", "checkpoint")
+                if mem_type == "plan":
+                    data = {**metadata, "content": content}
+                else:
+                    data = {**metadata, "description": content}
 
                 # Apply filters
                 if type and data.get("type") != type:
                     continue
+
+                # Apply tags filter (match if ANY tag matches)
+                if tags:
+                    memory_tags = set(data.get("tags", []))
+                    if not memory_tags.intersection(tags):
+                        continue
 
                 checkpoint_timestamp = data.get("timestamp", 0)
 
@@ -321,8 +409,8 @@ async def _recall_filesystem(
 
                 all_checkpoints.append(data)
 
-            except (json.JSONDecodeError, KeyError):
-                # Skip invalid JSON files
+            except (ValueError, KeyError):
+                # Skip invalid files
                 continue
 
     # Sort by timestamp descending (most recent first)

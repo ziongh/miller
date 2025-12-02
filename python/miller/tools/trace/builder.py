@@ -7,7 +7,7 @@ from typing import Any, Optional
 from miller.storage import StorageManager
 from miller.tools.trace_types import TraceDirection, TraceNode
 from miller.tools.naming import generate_variants
-from .search import _find_variant_matches, _compute_semantic_similarity
+from .search import _find_variant_matches, _compute_semantic_similarity, semantic_neighbors
 
 
 def _build_trace_node(
@@ -24,6 +24,7 @@ def _build_trace_node(
     cycles_detected_ref: list[int],
     enable_semantic: bool = False,
     embeddings=None,
+    vector_store=None,  # NEW: For true semantic discovery
 ) -> TraceNode:
     """
     Recursively build trace tree starting from a symbol.
@@ -76,7 +77,7 @@ def _build_trace_node(
     # Find related symbols
     related = _find_related_symbols(
         storage, symbol_id, symbol["name"], direction, visited, cycles_detected_ref,
-        enable_semantic, embeddings
+        enable_semantic, embeddings, vector_store, symbol  # Pass vector_store + full symbol for semantic discovery
     )
 
     for rel_symbol, relationship_kind, match_type in related:
@@ -99,6 +100,7 @@ def _build_trace_node(
             cycles_detected_ref=cycles_detected_ref,
             enable_semantic=enable_semantic,
             embeddings=embeddings,
+            vector_store=vector_store,  # Pass through for recursive semantic discovery
         )
 
         # Normalize relationship kind (tree-sitter uses lowercase plural, we use singular capitalized)
@@ -124,11 +126,14 @@ def _find_related_symbols(
     cycles_detected_ref: list[int],
     enable_semantic: bool = False,
     embeddings=None,
+    vector_store=None,  # NEW: For true semantic discovery
+    source_symbol: dict[str, Any] = None,  # NEW: Full symbol for semantic search
 ) -> list[tuple[dict[str, Any], str, str]]:
     """
     Find symbols related to the given symbol via relationships.
 
-    Uses naming variants for cross-language matching.
+    Uses naming variants for cross-language matching, and optionally
+    TRUE semantic discovery via vector search.
 
     Args:
         storage: StorageManager instance
@@ -136,6 +141,8 @@ def _find_related_symbols(
         symbol_name: Name of current symbol
         direction: Trace direction
         visited: Set of already-visited symbol IDs
+        vector_store: VectorStore for semantic discovery (optional)
+        source_symbol: Full symbol dict for semantic embedding (optional)
 
     Returns:
         List of (symbol_dict, relationship_kind, match_type) tuples
@@ -180,22 +187,13 @@ def _find_related_symbols(
                 "doc_comment": row[10],
             }
 
-            # Determine match type: variant, semantic, or exact
+            # Determine match type: reflects HOW the match was found
+            # "exact" = found via database relationship query
+            # "variant" = name matches a naming variant
+            # "semantic" = found via vector search (only from semantic_neighbors)
             related_name = symbol_dict["name"]
-            if related_name == symbol_name:
-                match_type = "exact"
-            elif related_name in variant_names:
+            if related_name in variant_names and related_name != symbol_name:
                 match_type = "variant"
-            elif enable_semantic and embeddings:
-                # Check semantic similarity using embeddings
-                similarity = _compute_semantic_similarity(
-                    symbol_name, related_name, embeddings
-                )
-                if similarity >= 0.7:  # Threshold for semantic match
-                    match_type = "semantic"
-                    symbol_dict["confidence"] = similarity
-                else:
-                    match_type = "exact"  # Below threshold, treat as exact
             else:
                 match_type = "exact"
             results.append((symbol_dict, relationship_kind, match_type))
@@ -233,22 +231,10 @@ def _find_related_symbols(
                 "doc_comment": row[10],
             }
 
-            # Determine match type: variant, semantic, or exact
+            # Determine match type: reflects HOW the match was found
             related_name = symbol_dict["name"]
-            if related_name == symbol_name:
-                match_type = "exact"
-            elif related_name in variant_names:
+            if related_name in variant_names and related_name != symbol_name:
                 match_type = "variant"
-            elif enable_semantic and embeddings:
-                # Check semantic similarity using embeddings
-                similarity = _compute_semantic_similarity(
-                    symbol_name, related_name, embeddings
-                )
-                if similarity >= 0.7:  # Threshold for semantic match
-                    match_type = "semantic"
-                    symbol_dict["confidence"] = similarity
-                else:
-                    match_type = "exact"  # Below threshold, treat as exact
             else:
                 match_type = "exact"
             results.append((symbol_dict, relationship_kind, match_type))
@@ -302,6 +288,49 @@ def _find_related_symbols(
             storage, symbol_name, variant_names, visited, direction
         )
         results.extend(variant_results)
+
+    # TRUE SEMANTIC DISCOVERY: Use vector search to find cross-language connections
+    # This finds symbols with semantically similar names/docs even when:
+    # - No database relationship exists
+    # - No naming variant matches
+    # Example: "authenticate" → "verifyCredentials" → "check_auth"
+    if enable_semantic and vector_store is not None and source_symbol is not None:
+        # Get IDs we've already found to avoid duplicates
+        found_ids = {r[0].get("id") for r in results}
+
+        semantic_matches = semantic_neighbors(
+            storage=storage,
+            vector_store=vector_store,
+            embeddings=embeddings,
+            symbol=source_symbol,
+            limit=8,
+            threshold=0.7,
+            cross_language_only=True,  # Focus on cross-language discovery
+        )
+
+        for match in semantic_matches:
+            match_id = match.get("symbol_id")
+
+            # Skip if already found via other methods or already visited
+            if match_id in found_ids or match_id in visited:
+                continue
+
+            # Convert SemanticMatch to symbol dict format
+            symbol_dict = {
+                "id": match["symbol_id"],
+                "name": match["name"],
+                "kind": match["kind"],
+                "language": match["language"],
+                "file_path": match["file_path"],
+                "start_line": match["line"],
+                "end_line": match.get("line", 0),  # Use same line if not available
+                "signature": match.get("signature"),
+                "doc_comment": match.get("doc_comment"),
+                "confidence": match["similarity"],  # Store similarity as confidence
+            }
+
+            results.append((symbol_dict, match["relationship_kind"], "semantic"))
+            found_ids.add(match_id)
 
     return results
 

@@ -33,7 +33,7 @@ class TestWorkspaceRegistry:
                 path="/path/to/project", name="My Project", workspace_type="primary"
             )
 
-            assert workspace_id.startswith("my-project_")
+            assert workspace_id.startswith("workspace_")
             workspaces = registry.list_workspaces()
             assert len(workspaces) == 1
             assert workspaces[0]["name"] == "My Project"

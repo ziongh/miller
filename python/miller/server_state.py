@@ -15,5 +15,6 @@ vector_store = None
 embeddings = None
 scanner = None
 workspace_root = None
+file_watcher = None  # FileWatcher instance for real-time indexing
 
-__all__ = ["storage", "vector_store", "embeddings", "scanner", "workspace_root"]
+__all__ = ["storage", "vector_store", "embeddings", "scanner", "workspace_root", "file_watcher"]

@@ -21,23 +21,21 @@ jobs:
             target: universal2-apple-darwin
             name: macOS (Universal)
 
-          # Linux builds (x86_64 + aarch64)
+          # Linux builds (x86_64 only - aarch64 has cross-compilation issues with tree-sitter grammars)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: Linux x86_64
 
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            name: Linux ARM64
+          # NOTE: aarch64-unknown-linux-gnu removed - cross-compilation toolchain
+          # has C99 compatibility issues with harper-tree-sitter-dart scanner.c
+          # Julie doesn't build this target either for the same reason.
 
-          # Windows builds (x64 + ARM64)
+          # Windows builds (x64 only - ARM64 has same cross-compilation issues)
           - os: windows-latest
             target: x64
             name: Windows x64
 
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            name: Windows ARM64
+          # NOTE: aarch64-pc-windows-msvc removed - Julie doesn't build this either
 
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +57,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: 'true'
-          manylinux: auto
+          # Use manylinux_2_28 (glibc 2.28, RHEL 8) instead of auto (2_17)
+          # Fixes: undefined symbol: le16toh (byte-order conversion macro)
+          # Tree-sitter grammars use le16toh which needs newer glibc
+          manylinux: '2_28'
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -94,17 +95,49 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Install wheel
+      - name: Install wheel (no deps - just testing Rust extension)
         run: |
-          uv pip install --system --find-links dist miller
+          # Install ONLY our wheel, skip heavy dependencies (torch, lancedb, etc.)
+          # We only need to verify the Rust extension works, not the full ML stack
+          # The Rust extension (miller_core) is self-contained - no Python deps needed
+          uv pip install --system --no-deps --find-links dist miller-core
 
-      - name: Test import
-        run: python -c "from miller import miller_core; print('✅ Miller core imported successfully')"
-
-      - name: Run basic tests
+      - name: Debug - Show wheel contents
         run: |
-          uv pip install --system pytest
-          pytest python/tests/ -v -k "test_core" || echo "⚠️ Core tests not found, skipping"
+          echo "=== Installed files ==="
+          python -c "import miller; print(miller.__file__)"
+          python -c "import os, miller; print(os.listdir(os.path.dirname(miller.__file__)))"
+
+      - name: Verify Rust extension works
+        shell: python
+        run: |
+          import sys
+          import os
+
+          # Direct import of Rust extension - don't use __init__.py which swallows errors
+          try:
+              import miller.miller_core as miller_core
+          except ImportError as e:
+              print(f'IMPORT ERROR: {e}', file=sys.stderr)
+              import miller
+              miller_dir = os.path.dirname(miller.__file__)
+              print(f'miller directory: {miller_dir}', file=sys.stderr)
+              print(f'Contents: {os.listdir(miller_dir)}', file=sys.stderr)
+              raise
+
+          print(f'miller_core version: {miller_core.__version__}')
+
+          # Test symbol extraction (core functionality)
+          result = miller_core.extract_file('def hello(): pass', 'python', 'test.py')
+          assert len(result.symbols) > 0, f'Expected symbols, got {len(result.symbols)}'
+          print(f'Extracted {len(result.symbols)} symbols from Python')
+
+          # Test language detection
+          lang = miller_core.detect_language('test.rs')
+          assert lang == 'rust', f'Expected rust, got {lang}'
+          print(f'Language detection: test.rs -> {lang}')
+
+          print('All smoke tests passed!')
 
   # Build source distribution
   build_sdist:

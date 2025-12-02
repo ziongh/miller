@@ -181,6 +181,9 @@ class TestSearchResultHydration:
                     "signature": "def foo()" if symbol_id == "abc123" else "def bar()",
                 }
 
+            def get_symbols_by_ids(self, symbol_ids):
+                return {sid: self.get_symbol_by_id(sid) for sid in symbol_ids}
+
         hydrated = _hydrate_search_results(search_results, MockStorage())
 
         # Should have code_context from storage
@@ -199,6 +202,9 @@ class TestSearchResultHydration:
             def get_symbol_by_id(self, symbol_id):
                 return {"id": symbol_id, "name": "test", "score": 0.5}  # Different score
 
+            def get_symbols_by_ids(self, symbol_ids):
+                return {sid: self.get_symbol_by_id(sid) for sid in symbol_ids}
+
         hydrated = _hydrate_search_results(search_results, MockStorage())
 
         # Should keep search score, not storage score
@@ -213,6 +219,9 @@ class TestSearchResultHydration:
         class MockStorage:
             def get_symbol_by_id(self, symbol_id):
                 return None  # Symbol not found
+
+            def get_symbols_by_ids(self, symbol_ids):
+                return {}  # No symbols found
 
         hydrated = _hydrate_search_results(search_results, MockStorage())
 

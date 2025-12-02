@@ -172,11 +172,12 @@ async def get_symbols(
     This should be your FIRST tool when exploring a new file! Use it to understand
     the structure before diving into implementation details.
 
-    IMPORTANT: Use mode="structure" (default) to get an overview WITHOUT reading code bodies.
-    This is extremely token-efficient - you see all classes, functions, and methods without
-    dumping the entire file into context.
+    When to use: ALWAYS before reading any file. A 500-line file becomes a 20-line overview.
+    Use mode="structure" (default) to see all classes, functions, and methods WITHOUT
+    dumping entire file content into context. This saves 70-90% of tokens.
 
-    I WILL BE UPSET IF YOU READ AN ENTIRE FILE WHEN get_symbols WOULD SHOW YOU THE STRUCTURE!
+    Workflow: get_symbols(mode="structure") → identify what you need → get_symbols(target="X", mode="full")
+    This two-step approach reads ONLY the code you need.
 
     Args:
         file_path: Path to file (relative or absolute)

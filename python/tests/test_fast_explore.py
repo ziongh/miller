@@ -464,14 +464,15 @@ class TestFastExploreFormatSwitching:
     @pytest.mark.asyncio
     async def test_text_vs_json_format_switching(self, storage_with_types):
         """Test that output_format parameter controls format."""
-        from miller.server import fast_explore
+        from miller.tools.explore_wrapper import fast_explore
 
-        # Get text format (default)
+        # Get text format (default) - pass storage explicitly for test
         text_result = await fast_explore(
             mode="types",
             type_name="IUser",
             output_format="text",
             workspace="primary",
+            storage=storage_with_types,
         )
 
         assert isinstance(text_result, str)
@@ -483,6 +484,7 @@ class TestFastExploreFormatSwitching:
             type_name="IUser",
             output_format="json",
             workspace="primary",
+            storage=storage_with_types,
         )
 
         assert isinstance(json_result, dict)

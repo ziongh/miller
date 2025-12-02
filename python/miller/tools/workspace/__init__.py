@@ -27,25 +27,26 @@ async def manage_workspace(
 
     Operations:
     - list: Show all registered workspaces
-    - stats: Show workspace statistics for a specific workspace
-    - index: Index current or specified workspace (manual trigger)
-             Note: Indexing also runs automatically in background after server starts
+    - stats: Show workspace statistics (defaults to primary workspace)
+    - index: Index workspace (registers if new, skips if already indexed unless force=True)
     - add: Add reference workspace (indexes into separate storage)
-    - remove: Remove workspace and delete its data
+    - remove: Remove workspace and delete its data (REQUIRES workspace parameter)
     - clean: Clean up orphaned data (workspaces with deleted paths)
-    - refresh: Re-index workspace to detect new/changed/deleted files
+    - refresh: Re-index existing workspace (REQUIRES workspace parameter)
     - health: System health check (registry status, aggregate stats)
 
-    Index vs Refresh:
-    - index: Initial indexing of workspace, force rebuilds with force=True
-    - refresh: Incremental update, detects file changes since last index
+    Index vs Refresh (aligned with Julie):
+    - index: For initial setup or force rebuild. Uses path, registers if new.
+             If already indexed (has symbols), returns early unless force=True.
+    - refresh: For updating existing registered workspace. REQUIRES workspace_id.
+               Always incremental (no force option).
 
     Args:
         operation: Operation to perform
         path: Workspace path (for index, add)
         name: Workspace display name (for add)
-        workspace: Workspace to query ("primary" or workspace_id). Defaults to primary workspace.
-        force: Force re-indexing even if up-to-date (for index, refresh)
+        workspace: Workspace ID (REQUIRED for remove, refresh. Optional for stats)
+        force: Force complete re-indexing (for index only)
         detailed: Include detailed per-workspace info (for health)
         output_format: Output format - "text" (default, lean) or "json"
 
@@ -53,29 +54,30 @@ async def manage_workspace(
         Operation result message
 
     Examples:
-        # Index current workspace
+        # Index current workspace (skips if already indexed)
         manage_workspace(operation="index")
 
-        # Force rebuild index
+        # Force complete rebuild of index
         manage_workspace(operation="index", force=True)
 
         # Add reference workspace
         manage_workspace(operation="add", path="/path/to/lib", name="MyLibrary")
 
-        # Get stats for primary workspace (workspace_id defaults to primary)
+        # Get stats for primary workspace
         manage_workspace(operation="stats")
 
-        # Refresh workspace to detect changes (defaults to primary)
-        manage_workspace(operation="refresh")
+        # Refresh specific workspace (workspace parameter REQUIRED)
+        manage_workspace(operation="refresh", workspace="workspace_abc123")
 
         # System health check
         manage_workspace(operation="health", detailed=True)
     """
     registry = WorkspaceRegistry()
 
-    # Default to primary workspace when workspace not provided
+    # Default to primary workspace when workspace not provided (for stats only)
+    # Note: refresh and remove REQUIRE workspace_id (aligned with Julie)
     workspace_id = workspace
-    if workspace_id is None and operation in ("stats", "remove", "refresh"):
+    if workspace_id is None and operation == "stats":
         workspaces = registry.list_workspaces()
         primary = next((w for w in workspaces if w.get("workspace_type") == "primary"), None)
         if primary:

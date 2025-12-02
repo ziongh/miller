@@ -29,9 +29,9 @@ class TestManageWorkspaceRemove:
             try:
                 result = await manage_workspace(operation="remove")
 
-                # Should return error
-                assert "error" in result.lower() or "required" in result.lower()
-                assert "workspace_id" in result.lower()
+                # Should return error indicating workspace parameter is required
+                assert "error" in result.lower()
+                assert "'workspace' parameter required" in result.lower()
 
             finally:
                 os.chdir(original_dir)
