@@ -253,7 +253,8 @@ async def _lookup_single_symbol(
                 if score <= 0.80:  # High threshold to avoid false positives
                     continue
 
-                matched_sym = storage.get_symbol_by_id(match.get("symbol_id"))
+                # LanceDB schema uses "id" field, not "symbol_id"
+                matched_sym = storage.get_symbol_by_id(match.get("id"))
                 if not matched_sym:
                     matched_sym = storage.get_symbol_by_name(match.get("name", ""))
                 if matched_sym:

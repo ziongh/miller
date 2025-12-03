@@ -108,9 +108,10 @@ class TestFastLookupSemanticFallback:
         class LowScoreVectorStore:
             def search(self, query, method="auto", limit=10, **kwargs):
                 # Return matches with scores below threshold
+                # Note: "id" field matches LanceDB schema (not "symbol_id")
                 return [
                     {
-                        "symbol_id": "sym_something",
+                        "id": "sym_something",
                         "name": "SomethingElse",
                         "kind": "class",
                         "file_path": "other.py",
@@ -118,7 +119,7 @@ class TestFastLookupSemanticFallback:
                         "score": 0.75,  # Below 0.80 threshold
                     },
                     {
-                        "symbol_id": "sym_another",
+                        "id": "sym_another",
                         "name": "AnotherThing",
                         "kind": "function",
                         "file_path": "another.py",
@@ -147,11 +148,12 @@ class TestFastLookupSemanticFallback:
         from miller.tools.navigation import fast_lookup
 
         # Create a mock vector store that returns high-score matches
+        # Note: "id" field matches LanceDB schema (not "symbol_id")
         class HighScoreVectorStore:
             def search(self, query, method="auto", limit=10, **kwargs):
                 return [
                     {
-                        "symbol_id": "sym_testclass",
+                        "id": "sym_testclass",  # Matches fixture's symbol ID
                         "name": "TestClass",
                         "kind": "class",
                         "file_path": "test.py",
@@ -172,6 +174,52 @@ class TestFastLookupSemanticFallback:
         assert "✗" in result and "→" in result  # Fallback indicator
         # Score should be shown (may be fuzzy 0.89 or vector 0.85)
         assert "0.8" in result  # Score starts with 0.8x
+
+
+class TestFastLookupVectorStoreFieldNames:
+    """Tests for correct handling of LanceDB field names."""
+
+    @pytest.mark.asyncio
+    async def test_lookup_uses_id_field_not_symbol_id(self, lookup_workspace):
+        """fast_lookup uses 'id' field from LanceDB, not 'symbol_id'.
+
+        LanceDB schema defines the field as 'id', but the code was incorrectly
+        looking for 'symbol_id'. This test verifies the fix by using a symbol ID
+        that exists in storage but with a different name in the vector result.
+        """
+        from miller.tools.navigation import fast_lookup
+
+        # Get the actual symbol ID from the fixture's storage
+        # The fixture creates a symbol with id starting with "sym_"
+        storage = lookup_workspace["storage"]
+
+        # Mock vector store that returns results with 'id' field (matching LanceDB schema)
+        # We use the REAL symbol ID from the fixture so get_symbol_by_id will find it
+        class CorrectFieldNameVectorStore:
+            def search(self, query, method="auto", limit=10, **kwargs):
+                return [
+                    {
+                        "id": "sym_testclass",  # Must match an ID in the fixture
+                        "name": "WrongNameInVector",  # Name doesn't match - ID lookup should work
+                        "kind": "class",
+                        "file_path": "test.py",
+                        "start_line": 10,
+                        "score": 0.90,
+                    },
+                ]
+
+        # Use a query that won't match anything via fuzzy search, only vector
+        result = await fast_lookup(
+            ["XyzNonExistent12345"],  # Won't fuzzy-match anything
+            storage=storage,
+            vector_store=CorrectFieldNameVectorStore(),
+        )
+
+        assert isinstance(result, str)
+        # The key test: we should find TestClass (the real symbol in storage)
+        # via the ID lookup, not "WrongNameInVector" from the fallback name lookup
+        assert "TestClass" in result  # Found via ID lookup from storage
+        assert "semantic" in result.lower()
 
 
 class TestFastLookupImportPaths:
