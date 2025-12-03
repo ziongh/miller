@@ -13,6 +13,7 @@ from typing import Any, Literal, Optional, Union
 
 from miller import server_state
 from miller.tools.search import fast_search as fast_search_impl
+from miller.tools.search_multi import fast_search_multi as fast_search_multi_impl
 from miller.tools.navigation import fast_lookup as fast_lookup_impl
 from miller.tools.navigation import fast_refs as fast_refs_impl
 from miller.tools.symbols_wrapper import get_symbols as get_symbols_impl
@@ -636,4 +637,79 @@ async def rename_symbol(
         output_format=output_format,
         storage=server_state.storage,
         vector_store=server_state.vector_store,
+    )
+
+
+async def fast_search_multi(
+    query: str,
+    workspaces: list[str] = None,
+    method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
+    limit: int = 20,
+    output_format: Literal["text", "json", "toon"] = "text",
+    rerank: bool = True,
+    language: Optional[str] = None,
+    file_pattern: Optional[str] = None,
+) -> Union[list[dict[str, Any]], str]:
+    """
+    Search across multiple workspaces simultaneously.
+
+    Use this when you need to find code across multiple repositories at once.
+    Results are merged and re-ranked by relevance, with workspace attribution.
+
+    This is the cross-workspace counterpart to fast_search. Use fast_search for
+    single-workspace queries (faster), and fast_search_multi when you need to
+    search across multiple indexed codebases.
+
+    Args:
+        query: Search query (code patterns, keywords, or natural language)
+        workspaces: List of workspace IDs to search, or None/empty for ALL registered workspaces.
+                   Use manage_workspace(operation="list") to see available workspace IDs.
+        method: Search method (auto-detects by default)
+            - auto: Detects query type automatically (RECOMMENDED)
+            - text: Full-text search with stemming
+            - pattern: Code idioms (: BaseClass, ILogger<, etc.)
+            - semantic: Vector similarity (conceptual matches)
+            - hybrid: Combines text + semantic with RRF fusion
+        limit: Maximum total results to return after merging (default: 20)
+        output_format: Output format - "text" (default), "json", or "toon"
+        rerank: Re-rank merged results for better relevance (default: True)
+        language: Filter by programming language (e.g., "python", "rust")
+        file_pattern: Filter by file glob pattern (e.g., "*.py", "src/**")
+
+    Returns:
+        Merged results from all specified workspaces, with workspace attribution.
+        Each result includes a "workspace" field identifying its source.
+
+    Examples:
+        # Search all registered workspaces
+        fast_search_multi("authentication")
+
+        # Search specific workspaces only
+        fast_search_multi("user model", workspaces=["workspace_abc", "workspace_def"])
+
+        # Filter by language across all workspaces
+        fast_search_multi("config parser", language="python")
+
+        # Combine with file pattern filter
+        fast_search_multi("test helper", file_pattern="tests/**")
+
+    Typical Workflow:
+        1. manage_workspace(operation="list") → See available workspaces
+        2. fast_search_multi("query") → Search all workspaces
+        3. Or: fast_search_multi("query", workspaces=["ws1", "ws2"]) → Search specific ones
+    """
+    if err := _check_ready():
+        return err
+    return await fast_search_multi_impl(
+        query=query,
+        workspaces=workspaces,
+        method=method,
+        limit=limit,
+        output_format=output_format,
+        rerank=rerank,
+        language=language,
+        file_pattern=file_pattern,
+        vector_store=server_state.vector_store,
+        storage=server_state.storage,
+        embeddings=server_state.embeddings,
     )

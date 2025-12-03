@@ -51,6 +51,7 @@ logger.info("✓ FastMCP server created (components will initialize post-handsha
 # Import tool wrappers (thin delegating functions for FastMCP)
 from miller.tools_wrappers import (
     fast_search,
+    fast_search_multi,
     get_symbols,
     fast_lookup,
     fast_refs,
@@ -64,6 +65,7 @@ from miller.tools_wrappers import (
 # output_schema=None disables structured content wrapping (avoids {"result": ...} for strings)
 # All tools that return text/TOON strings need this to render properly
 mcp.tool(output_schema=None)(fast_search)      # Returns text/TOON string (default: text)
+mcp.tool(output_schema=None)(fast_search_multi)  # Cross-workspace search (returns text/TOON)
 mcp.tool(output_schema=None)(get_symbols)      # Returns text/TOON/code string
 mcp.tool(output_schema=None)(fast_lookup)      # Returns lean text string (batch symbol lookup)
 mcp.tool(output_schema=None)(fast_refs)        # Returns text/TOON string (default: text)
@@ -158,6 +160,68 @@ def main():
 
         sys.stderr.write("Client disconnected. Shutting down.\n")
         sys.exit(0)
+
+
+def main_http(host: str = None, port: int = None):
+    """
+    HTTP entry point for multi-client Miller server.
+
+    Unlike STDIO mode, this allows multiple clients to connect
+    to a single running server instance simultaneously.
+
+    This is useful when you have:
+    - A wrapper process that needs to query Miller
+    - Claude Code also needing to access the same Miller instance
+    - Multiple AI agents sharing one Miller server
+
+    Args:
+        host: Host to bind to (default: 127.0.0.1, or MILLER_HOST env var)
+        port: Port to listen on (default: 8765, or MILLER_PORT env var)
+    """
+    import os
+
+    # Support environment variable configuration
+    host = host or os.environ.get("MILLER_HOST", "127.0.0.1")
+    port = port or int(os.environ.get("MILLER_PORT", "8765"))
+
+    logger.info(f"🚀 Starting Miller MCP server (HTTP mode)")
+    logger.info(f"📡 Listening on http://{host}:{port}/mcp")
+    logger.info(f"📚 Multiple clients can connect to this instance")
+
+    try:
+        mcp.run(transport="http", host=host, port=port)
+    except KeyboardInterrupt:
+        logger.info("🛑 Shutting down Miller HTTP server...")
+
+
+def main_http_cli():
+    """
+    CLI entry point with argument parsing for HTTP server.
+
+    Usage:
+        miller-server-http --host 0.0.0.0 --port 8765
+
+    Or via environment variables:
+        MILLER_HOST=0.0.0.0 MILLER_PORT=8765 miller-server-http
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Miller MCP Server (HTTP mode) - allows multiple clients to connect"
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Host to bind to (default: 127.0.0.1, or MILLER_HOST env var)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to listen on (default: 8765, or MILLER_PORT env var)",
+    )
+    args = parser.parse_args()
+    main_http(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

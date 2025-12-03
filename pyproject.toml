@@ -37,6 +37,7 @@ dependencies = [
 
 [project.scripts]
 miller-server = "miller.server:main"
+miller-server-http = "miller.server:main_http_cli"
 
 [project.optional-dependencies]
 dev = [
