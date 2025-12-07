@@ -642,7 +642,7 @@ async def rename_symbol(
 
 async def fast_search_multi(
     query: str,
-    workspaces: list[str] = None,
+    workspaces: Optional[list[str]] = None,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 20,
     output_format: Literal["text", "json", "toon"] = "text",

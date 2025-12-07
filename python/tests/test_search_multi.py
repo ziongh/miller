@@ -281,10 +281,12 @@ class TestFastSearchMultiIntegration:
                 new_callable=AsyncMock,
             ) as mock_search:
                 # Each workspace returns 10 results
-                mock_search.return_value = [
-                    {"name": f"func{i}", "file_path": "test.py", "start_line": i}
-                    for i in range(10)
-                ]
+                async def search_side_effect(**kwargs):
+                    return [
+                        {"name": f"func{i}", "file_path": "test.py", "start_line": i}
+                        for i in range(10)
+                    ]
+                mock_search.side_effect = search_side_effect
 
                 result = await fast_search_multi(
                     query="test",

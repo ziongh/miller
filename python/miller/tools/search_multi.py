@@ -22,7 +22,7 @@ logger = logging.getLogger("miller.search_multi")
 
 async def fast_search_multi(
     query: str,
-    workspaces: list[str] = None,
+    workspaces: Optional[list[str]] = None,
     method: Literal["auto", "text", "pattern", "semantic", "hybrid"] = "auto",
     limit: int = 20,
     output_format: Literal["text", "json", "toon"] = "text",
@@ -42,7 +42,7 @@ async def fast_search_multi(
 
     Args:
         query: Search query (code patterns, keywords, or natural language)
-        workspaces: List of workspace IDs to search, or None for ALL registered workspaces.
+        workspaces: List of workspace IDs to search, or None/empty list for ALL registered workspaces.
                    Use manage_workspace(operation="list") to see available workspace IDs.
         method: Search method (auto-detects by default)
             - auto: Detects query type automatically (RECOMMENDED)
@@ -111,7 +111,7 @@ async def fast_search_multi(
             results = await single_workspace_search(
                 query=query,
                 method=method,
-                limit=limit,  # Get limit per workspace, then merge
+                limit=limit,  # Get up to limit results per workspace (will be merged and re-ranked later)
                 workspace=ws_id,
                 output_format="json",  # Always structured for merging
                 rerank=False,  # We'll rerank merged results
