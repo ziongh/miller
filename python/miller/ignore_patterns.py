@@ -9,7 +9,12 @@ from pathlib import Path
 
 from pathspec import PathSpec
 
-from miller.ignore_defaults import DEFAULT_IGNORES, VENDOR_DIRECTORY_NAMES
+from miller.ignore_defaults import (
+    DEFAULT_IGNORES,
+    DEFAULT_MAX_FILE_SIZE,
+    EXTENSION_SIZE_LIMITS,
+    VENDOR_DIRECTORY_NAMES,
+)
 
 # Get logger instance
 logger = logging.getLogger("miller.ignore_patterns")
@@ -46,13 +51,79 @@ def load_gitignore(workspace_root: Path) -> PathSpec:
     return PathSpec.from_lines("gitwildmatch", patterns)
 
 
-def should_ignore(file_path: Path, workspace_root: Path) -> bool:
+# ═══════════════════════════════════════════════════════════════════════════════
+# File Size Filtering
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def get_max_file_size(extension: str) -> int:
     """
-    Check if a file should be ignored based on .gitignore patterns.
+    Get the maximum allowed file size for a given extension.
+
+    Args:
+        extension: File extension including dot (e.g., ".py", ".md")
+
+    Returns:
+        Maximum file size in bytes (uses DEFAULT_MAX_FILE_SIZE if no override)
+    """
+    # Normalize extension to lowercase with leading dot
+    ext = extension.lower()
+    if not ext.startswith("."):
+        ext = f".{ext}"
+
+    # Check for extension-specific limit
+    if ext in EXTENSION_SIZE_LIMITS:
+        return EXTENSION_SIZE_LIMITS[ext]
+
+    # Special case: .d.ts files (compound extension)
+    if ext == ".ts" and extension.lower().endswith(".d.ts"):
+        return EXTENSION_SIZE_LIMITS.get(".d.ts", DEFAULT_MAX_FILE_SIZE)
+
+    return DEFAULT_MAX_FILE_SIZE
+
+
+def is_file_too_large(file_path: Path, max_size: int | None = None) -> bool:
+    """
+    Check if a file exceeds its size limit.
+
+    Args:
+        file_path: Path to the file to check
+        max_size: Optional explicit size limit (overrides extension-based limit)
+
+    Returns:
+        True if file is too large, False otherwise
+    """
+    try:
+        file_size = file_path.stat().st_size
+    except OSError:
+        # Can't stat file - don't filter it out
+        return False
+
+    # Use explicit limit if provided, otherwise derive from extension
+    if max_size is not None:
+        limit = max_size
+    else:
+        # Get extension (handle compound extensions like .d.ts)
+        suffix = file_path.suffix.lower()
+        name = file_path.name.lower()
+
+        # Check for .d.ts specifically
+        if name.endswith(".d.ts"):
+            limit = EXTENSION_SIZE_LIMITS.get(".d.ts", DEFAULT_MAX_FILE_SIZE)
+        else:
+            limit = get_max_file_size(suffix)
+
+    return file_size > limit
+
+
+def should_ignore(file_path: Path, workspace_root: Path, check_size: bool = False) -> bool:
+    """
+    Check if a file should be ignored based on .gitignore patterns and optionally size.
 
     Args:
         file_path: Absolute path to file
         workspace_root: Absolute path to workspace root
+        check_size: If True, also filter files that exceed size limits
 
     Returns:
         True if file should be ignored, False otherwise
@@ -66,17 +137,26 @@ def should_ignore(file_path: Path, workspace_root: Path) -> bool:
         # File is not in workspace, ignore it
         return True
 
-    # PathSpec.match_file expects string path
-    return spec.match_file(str(relative_path))
+    # Check pattern-based ignore first
+    if spec.match_file(str(relative_path)):
+        return True
+
+    # Optionally check file size
+    if check_size and is_file_too_large(file_path):
+        logger.debug(f"📏 Skipping oversized file: {relative_path}")
+        return True
+
+    return False
 
 
-def filter_files(files: list[Path], workspace_root: Path) -> list[Path]:
+def filter_files(files: list[Path], workspace_root: Path, check_size: bool = False) -> list[Path]:
     """
     Filter a list of files, removing ignored paths.
 
     Args:
         files: List of file paths to filter
         workspace_root: Workspace root directory
+        check_size: If True, also filter files that exceed size limits
 
     Returns:
         Filtered list of files (non-ignored only)
@@ -96,9 +176,16 @@ def filter_files(files: list[Path], workspace_root: Path) -> list[Path]:
             # Not in workspace, skip
             continue
 
-        # Check if should be ignored
-        if not spec.match_file(str(relative_path)):
-            filtered.append(file_path)
+        # Check pattern-based ignore
+        if spec.match_file(str(relative_path)):
+            continue
+
+        # Optionally check file size
+        if check_size and is_file_too_large(file_path):
+            logger.debug(f"📏 Filtering oversized file: {relative_path}")
+            continue
+
+        filtered.append(file_path)
 
     return filtered
 
@@ -360,61 +447,18 @@ def generate_millerignore(workspace_root: Path, patterns: list[str]) -> None:
     content = f"""# .millerignore - Miller Code Intelligence Exclusion Patterns
 # Auto-generated by Miller on {datetime.now().strftime("%Y-%m-%d")}
 #
-# ═══════════════════════════════════════════════════════════════
-# What Miller Did Automatically
-# ═══════════════════════════════════════════════════════════════
-# Miller analyzed your project and detected vendor/third-party code patterns.
-# These patterns exclude files from:
-# • Symbol extraction (function/class definitions)
-# • Semantic search embeddings (AI-powered search)
+# These patterns exclude files from symbol extraction and semantic search.
+# Files can still be searched as TEXT using fast_search(method="text").
 #
-# Files can still be searched as TEXT using fast_search(method="text"),
-# but won't clutter symbol navigation or semantic search results.
+# To modify: Add/remove patterns (gitignore syntax), then run
+# manage_workspace(operation="refresh") to reindex.
 #
-# ═══════════════════════════════════════════════════════════════
-# Why Exclude Vendor Code?
-# ═══════════════════════════════════════════════════════════════
-# 1. Search Quality: Prevents vendor code from polluting search results
-# 2. Performance: Skips symbol extraction for thousands of vendor functions
-# 3. Relevance: Semantic search focuses on YOUR code, not libraries
-#
-# ═══════════════════════════════════════════════════════════════
-# How to Modify This File
-# ═══════════════════════════════════════════════════════════════
-# • Add patterns: Just add new lines with glob patterns (gitignore syntax)
-# • Remove patterns: Delete lines or comment out with #
-# • Check impact: Use manage_workspace(operation="health")
-#
-# FALSE POSITIVE? If Miller excluded something important:
-# 1. Delete or comment out the pattern below
-# 2. Run manage_workspace(operation="refresh") to reindex
-#
-# DISABLE AUTO-GENERATION: Create this file manually before first run
-#
-# ═══════════════════════════════════════════════════════════════
-# Auto-Detected Vendor Directories
-# ═══════════════════════════════════════════════════════════════
+# Auto-Detected Vendor Directories:
 {pattern_lines}
 
-# ═══════════════════════════════════════════════════════════════
-# Common Patterns (Uncomment if needed in your project)
-# ═══════════════════════════════════════════════════════════════
+# Common Patterns (uncomment if needed):
 # *.min.js
 # *.min.css
-# jquery*.js
-# bootstrap*.js
-# angular*.js
-# react*.js
-
-# ═══════════════════════════════════════════════════════════════
-# Debugging: If Search Isn't Finding Files
-# ═══════════════════════════════════════════════════════════════
-# Use manage_workspace(operation="health") to see:
-# • How many files are excluded by each pattern
-# • Whether patterns are too broad
-#
-# If a pattern excludes files it shouldn't, comment it out or make
-# it more specific (e.g., "src/vendor/lib/" vs "lib/")
 """
 
     millerignore_path = workspace_root / ".millerignore"

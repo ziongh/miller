@@ -115,11 +115,14 @@ class WorkspaceScanner:
             f"{len(buffer.file_data_list)} files"
         )
 
-        # Embedding (GPU)
+        # Embedding (GPU) - run in thread pool to release event loop
+        # This prevents file watcher callbacks from being blocked during batch indexing
         all_vectors = None
         if buffer.symbols:
             embedding_start = time.time()
-            all_vectors = self.embeddings.embed_batch(buffer.symbols)
+            all_vectors = await asyncio.to_thread(
+                self.embeddings.embed_batch, buffer.symbols
+            )
             timings["embedding"] += time.time() - embedding_start
 
         # SQLite write (atomic)
@@ -207,22 +210,24 @@ class WorkspaceScanner:
             ]
 
         # Embedding (GPU) - extract only the text fields needed
+        # IMPORTANT: Run in thread pool to release event loop during GPU operations.
+        # This prevents file watcher callbacks from being blocked, which could cause
+        # the event loop to freeze if many events queue up during batch indexing.
         all_vectors = None
         if symbols_table.num_rows > 0:
             embedding_start = time.time()
             # Get embedding texts from Arrow buffer (minimal Python strings)
             # This is the ONLY place we create Python strings in the Arrow path
             embedding_texts = buffer.get_embedding_texts()
-            all_vectors = self.embeddings.embed_texts(embedding_texts)
+            # Run embedding in thread pool to free event loop for other tasks
+            all_vectors = await asyncio.to_thread(
+                self.embeddings.embed_texts, embedding_texts
+            )
             timings["embedding"] += time.time() - embedding_start
 
         # SQLite writes (files, symbols, identifiers, relationships)
         try:
             db_start = time.time()
-
-            # Delete old data for files being updated
-            if qualified_files_to_clean:
-                self.storage.delete_files_batch(qualified_files_to_clean)
 
             # Temporarily disable FK constraints for batch insert
             # Arrow data is internally consistent from Rust extraction, but
@@ -230,6 +235,10 @@ class WorkspaceScanner:
             # that aren't in this batch (cross-file references are common)
             self.storage.conn.execute("PRAGMA foreign_keys = OFF")
             try:
+                # Delete old data for files being updated
+                if qualified_files_to_clean:
+                    self.storage.delete_files_batch(qualified_files_to_clean)
+
                 # Insert new data from Arrow tables
                 self.storage.add_files_from_arrow(files_table, workspace_id=self.workspace_id)
                 self.storage.add_symbols_from_arrow(symbols_table, workspace_id=self.workspace_id)
@@ -262,6 +271,32 @@ class WorkspaceScanner:
         # Clear buffer - Arrow tables are dropped, freeing contiguous memory blocks
         buffer.clear()
 
+        # SAFE to gc.collect() here in Arrow path!
+        # Unlike the legacy PyO3 path, Arrow memory is managed by Arrow's allocator,
+        # not Python's gc. After buffer.clear():
+        # 1. Arrow RecordBatches are dropped → memory returned to Arrow pool → OS
+        # 2. SQLite writes are committed → no pending native operations
+        # 3. LanceDB writes are committed → no pending native operations
+        # 4. Only Python intermediates remain (lists from .to_pylist())
+        #
+        # This reclaims memory from:
+        # - Temporary lists created during column extraction
+        # - Any Python string intermediates from embedding text generation
+        # - PyArrow Table wrapper objects (lightweight, but still gc-tracked)
+        import gc
+        gc.collect()
+
+        # On Linux/glibc, explicitly return freed memory to OS
+        # glibc's malloc keeps freed memory in process heap by default (lazy return)
+        # malloc_trim(0) forces return of free memory at top of heap to OS
+        # This turns the memory graph from "staircase" to "sawtooth"
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except (OSError, AttributeError):
+            pass  # Not on Linux/glibc, skip
+
     async def _index_file(self, file_path: Path) -> bool:
         """
         Index a single file (for real-time re-indexing via file watcher).
@@ -271,7 +306,13 @@ class WorkspaceScanner:
         - SQLite storage (file, symbols, identifiers, relationships)
         - Vector store updates (deletes old embeddings, adds new ones)
 
-        Includes per-file locking to prevent concurrent indexing of the same file.
+        Includes global indexing lock to prevent conflicts with batch indexing,
+        plus per-file locking to prevent concurrent indexing of the same file.
+
+        The "Single-Lane Bridge" Pattern:
+        PyTorch (GPU) and LanceDB (Native) resources are not safe for concurrent
+        access. We serialize all indexing operations (batch and single-file) using
+        the global indexing lock.
 
         Args:
             file_path: Absolute path to file to index
@@ -280,30 +321,39 @@ class WorkspaceScanner:
             True if successful, False if error or file doesn't exist
         """
         from .indexer import index_file
+        from .. import server_state
 
-        # Acquire per-file lock to prevent concurrent indexing
-        # (e.g. from rapid file watcher events)
-        async with self._locks_lock:
-            if file_path not in self._file_locks:
-                self._file_locks[file_path] = asyncio.Lock()
-            lock = self._file_locks[file_path]
+        # Acquire global indexing lock to prevent conflict with batch indexing
+        # This ensures GPU and LanceDB get exclusive access (no concurrent writes)
+        indexing_lock = server_state.get_indexing_lock()
 
-        async with lock:
-            try:
-                return await index_file(
-                    file_path=file_path,
-                    workspace_root=self.workspace_root,
-                    storage=self.storage,
-                    embeddings=self.embeddings,
-                    vector_store=self.vector_store,
-                    workspace_id=self.workspace_id,
-                )
-            finally:
-                # Cleanup lock if no longer used? 
-                # Hard to know if others are waiting without race condition.
-                # For now, we keep the lock object. 
-                # With normal workspace sizes (<50k files), this memory usage is negligible.
-                pass
+        if indexing_lock.locked():
+            logger.debug(f"⏳ _index_file waiting for global indexing lock: {file_path.name}")
+
+        async with indexing_lock:
+            # Acquire per-file lock to prevent concurrent indexing of SAME file
+            # (e.g. from rapid file watcher events for the same file)
+            async with self._locks_lock:
+                if file_path not in self._file_locks:
+                    self._file_locks[file_path] = asyncio.Lock()
+                lock = self._file_locks[file_path]
+
+            async with lock:
+                try:
+                    return await index_file(
+                        file_path=file_path,
+                        workspace_root=self.workspace_root,
+                        storage=self.storage,
+                        embeddings=self.embeddings,
+                        vector_store=self.vector_store,
+                        workspace_id=self.workspace_id,
+                    )
+                finally:
+                    # Cleanup lock if no longer used?
+                    # Hard to know if others are waiting without race condition.
+                    # For now, we keep the lock object.
+                    # With normal workspace sizes (<50k files), this memory usage is negligible.
+                    pass
 
     def _walk_directory(self) -> list[Path]:
         """

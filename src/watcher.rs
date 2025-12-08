@@ -248,29 +248,106 @@ impl PyFileWatcher {
             .collect()
     }
 }
+/// Default ignore patterns (always applied)
+/// Matches the Python DEFAULT_IGNORES list
+const DEFAULT_IGNORES: &[&str] = &[
+    // ═══════════════════════════════════════════
+    // Version Control
+    // ═══════════════════════════════════════════
+    ".git/", ".svn/", ".hg/", ".bzr/",
 
-/// Build a gitignore matcher from the workspace .gitignore file
+    // ═══════════════════════════════════════════
+    // IDE and Editor
+    // ═══════════════════════════════════════════
+    ".vs/", ".vscode/", ".idea/", ".eclipse/",
+    "*.swp", "*.swo",
+
+    // ═══════════════════════════════════════════
+    // Build and Output Directories
+    // ═══════════════════════════════════════════
+    "bin/", "obj/", "build/", "dist/", "out/",
+    "target/", "Debug/", "Release/",
+    ".next/", ".nuxt/", "DerivedData/",
+
+    // ═══════════════════════════════════════════
+    // Package Managers and Dependencies
+    // ═══════════════════════════════════════════
+    "node_modules/", "packages/", ".npm/", "bower_components/",
+    "vendor/", "Pods/",
+
+    // ═══════════════════════════════════════════
+    // Python Virtual Environments and Cache
+    // ═══════════════════════════════════════════
+    ".venv/", "venv/", "env/", ".env/",
+    "__pycache__/", "*.pyc", "*.pyo", "*.pyd",
+    ".pytest_cache/", ".mypy_cache/", ".ruff_cache/",
+    ".tox/", ".eggs/", "*.egg-info/",
+    ".coverage", "htmlcov/", ".hypothesis/",
+
+    // ═══════════════════════════════════════════
+    // Cache and Temporary Files
+    // ═══════════════════════════════════════════
+    ".cache/", ".temp/", ".tmp/", "tmp/", "temp/", ".sass-cache/",
+    "*.tmp", "*.tmp.*", "*.temp", "*.swp", "*.lock", "*.pid",
+    "*~", "*.bak", "[#]*[#]", ".#*", "*.orig", "*.rej",
+
+    // ═══════════════════════════════════════════
+    // Code Intelligence Tools (our own dirs)
+    // ═══════════════════════════════════════════
+    ".miller/", ".julie/", ".coa/", ".codenav/",
+
+    // ═══════════════════════════════════════════
+    // Binary Files (Executables, libs, media, archives)
+    // ═══════════════════════════════════════════
+    // Executables/Libs
+    "*.dll", "*.exe", "*.pdb", "*.so", "*.dylib", "*.lib",
+    "*.a", "*.o", "*.obj", "*.bin",
+    // Media
+    "*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.ico", "*.svg", "*.webp", "*.tiff",
+    "*.mp3", "*.mp4", "*.avi", "*.mov", "*.wmv", "*.flv", "*.webm", "*.mkv", "*.wav",
+    // Archives
+    "*.zip", "*.rar", "*.7z", "*.tar", "*.gz", "*.bz2", "*.xz", "*.dmg", "*.pkg",
+    // Database/Logs
+    "*.db", "*.sqlite", "*.sqlite3", "*.mdf", "*.ldf", "*.bak",
+    "*.log", "*.dump", "*.core",
+    // Fonts
+    "*.ttf", "*.otf", "*.woff", "*.woff2", "*.eot",
+    // Documents (Binary)
+    "*.pdf", "*.doc", "*.docx", "*.xls", "*.xlsx", "*.ppt", "*.pptx",
+
+    // ═══════════════════════════════════════════
+    // System Files
+    // ═══════════════════════════════════════════
+    ".DS_Store", "Thumbs.db", "desktop.ini",
+
+    // ═══════════════════════════════════════════
+    // Noisy/Generated Files
+    // ═══════════════════════════════════════════
+    // Locks
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock",
+    "poetry.lock", "Gemfile.lock", "composer.lock", "Pipfile.lock", "bun.lockb",
+    // Minified/Bundled
+    "*.min.js", "*.min.css", "*.bundle.js", "*.chunk.js", "*.map", "*.d.ts.map",
+];
+
+/// Build a gitignore matcher from defaults and the workspace .gitignore file
 fn build_gitignore(workspace: &Path) -> Option<Gitignore> {
-    let gitignore_path = workspace.join(".gitignore");
-    if !gitignore_path.exists() {
-        return None;
-    }
-
     let mut builder = GitignoreBuilder::new(workspace);
 
-    // Add common default ignores
-    let _ = builder.add_line(None, ".git/");
-    let _ = builder.add_line(None, ".miller/");
-    let _ = builder.add_line(None, "__pycache__/");
-    let _ = builder.add_line(None, "*.pyc");
-    let _ = builder.add_line(None, "node_modules/");
-    let _ = builder.add_line(None, "target/");
-    let _ = builder.add_line(None, ".venv/");
-    let _ = builder.add_line(None, "venv/");
+    // 1. Add all default ignores (Global patterns)
+    for pattern in DEFAULT_IGNORES {
+        // We use None for the root so these match globally relative to workspace
+        if let Err(e) = builder.add_line(None, pattern) {
+            warn!("Failed to add default ignore pattern '{}': {}", pattern, e);
+        }
+    }
 
-    // Add patterns from .gitignore
-    if let Some(e) = builder.add(&gitignore_path) {
-        warn!("Failed to parse .gitignore: {:?}", e);
+    // 2. Add patterns from workspace .gitignore (if it exists)
+    let gitignore_path = workspace.join(".gitignore");
+    if gitignore_path.exists() {
+        if let Some(e) = builder.add(&gitignore_path) {
+            warn!("Failed to parse .gitignore: {:?}", e);
+        }
     }
 
     match builder.build() {
@@ -656,6 +733,56 @@ mod tests {
             &workspace.join(".julieignore"),
             workspace,
             &None,
+            &[]
+        ));
+    }
+
+    #[test]
+    fn test_should_ignore_temp_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace = temp_dir.path();
+
+        // Create .gitignore to enable gitignore matching
+        fs::write(workspace.join(".gitignore"), "").unwrap();
+        let gitignore = build_gitignore(workspace);
+
+        // Should ignore .tmp files
+        assert!(should_ignore(
+            &workspace.join("file.tmp"),
+            workspace,
+            &gitignore,
+            &[]
+        ));
+
+        // Should ignore pytest-style temp files (file.py.tmp.12345.67890)
+        assert!(should_ignore(
+            &workspace.join("test_file.py.tmp.64850.1765224011536"),
+            workspace,
+            &gitignore,
+            &[]
+        ));
+
+        // Should ignore editor backup files
+        assert!(should_ignore(
+            &workspace.join("file.py~"),
+            workspace,
+            &gitignore,
+            &[]
+        ));
+
+        // Should ignore vim swap files
+        assert!(should_ignore(
+            &workspace.join("file.py.swp"),
+            workspace,
+            &gitignore,
+            &[]
+        ));
+
+        // Should NOT ignore normal Python files
+        assert!(!should_ignore(
+            &workspace.join("test_file.py"),
+            workspace,
+            &gitignore,
             &[]
         ));
     }

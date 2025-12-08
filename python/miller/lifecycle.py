@@ -343,49 +343,55 @@ async def _background_initialization_and_indexing():
         logger.info("✅ Miller components initialized and ready")
 
         # PHASE 2: Check if indexing needed and run if stale (uses hashes + mtime)
+        # Wrap in global indexing lock to prevent conflicts with file watcher callbacks
+        # that may trigger during startup. This implements the "Single-Lane Bridge" pattern
+        # ensuring GPU and LanceDB get exclusive access.
         init_phase = "indexing"
-        logger.info("🔍 Checking if workspace indexing needed...")
-        if await server_state.scanner.check_if_indexing_needed():
-            logger.info("📚 Workspace needs indexing - starting background indexing")
-            stats = await server_state.scanner.index_workspace()
-            logger.info(
-                f"✅ Indexing complete: {stats['indexed']} indexed, "
-                f"{stats['updated']} updated, {stats['skipped']} skipped, "
-                f"{stats['deleted']} deleted, {stats['errors']} errors"
-            )
+        indexing_lock = server_state.get_indexing_lock()
 
-            # Run DB maintenance after heavy writes
-            # - PRAGMA optimize: Updates query planner statistics
-            # - wal_checkpoint(TRUNCATE): Clears WAL file for clean state
-            logger.info("🔧 Running DB optimization after indexing...")
-            server_state.storage.optimize()
-            logger.info("✅ DB optimized (query stats updated, WAL checkpointed)")
+        async with indexing_lock:
+            logger.info("🔍 Checking if workspace indexing needed...")
+            if await server_state.scanner.check_if_indexing_needed():
+                logger.info("📚 Workspace needs indexing - starting background indexing")
+                stats = await server_state.scanner.index_workspace()
+                logger.info(
+                    f"✅ Indexing complete: {stats['indexed']} indexed, "
+                    f"{stats['updated']} updated, {stats['skipped']} skipped, "
+                    f"{stats['deleted']} deleted, {stats['errors']} errors"
+                )
 
-            # Compute transitive closure for fast impact analysis
-            # Run in thread pool to avoid blocking the event loop (O(V·E) BFS)
-            from miller.closure import compute_transitive_closure
+                # Run DB maintenance after heavy writes
+                # - PRAGMA optimize: Updates query planner statistics
+                # - wal_checkpoint(TRUNCATE): Clears WAL file for clean state
+                logger.info("🔧 Running DB optimization after indexing...")
+                server_state.storage.optimize()
+                logger.info("✅ DB optimized (query stats updated, WAL checkpointed)")
 
-            logger.info("🔗 Computing transitive closure for impact analysis...")
-            closure_start = time.time()
-            closure_count = await asyncio.to_thread(
-                compute_transitive_closure, server_state.storage, max_depth=10
-            )
-            closure_time = (time.time() - closure_start) * 1000
-            logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
-        else:
-            logger.info("✅ Workspace already indexed - ready for search")
+                # Compute transitive closure for fast impact analysis
+                # Run in thread pool to avoid blocking the event loop (O(V·E) BFS)
+                from miller.closure import compute_transitive_closure
 
-            # Check if reachability needs to be computed (may be empty from older versions)
-            from miller.closure import should_compute_closure, compute_transitive_closure
-
-            if await asyncio.to_thread(should_compute_closure, server_state.storage):
-                logger.info("🔗 Reachability table empty - computing transitive closure...")
+                logger.info("🔗 Computing transitive closure for impact analysis...")
                 closure_start = time.time()
                 closure_count = await asyncio.to_thread(
                     compute_transitive_closure, server_state.storage, max_depth=10
                 )
                 closure_time = (time.time() - closure_start) * 1000
                 logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
+            else:
+                logger.info("✅ Workspace already indexed - ready for search")
+
+                # Check if reachability needs to be computed (may be empty from older versions)
+                from miller.closure import should_compute_closure, compute_transitive_closure
+
+                if await asyncio.to_thread(should_compute_closure, server_state.storage):
+                    logger.info("🔗 Reachability table empty - computing transitive closure...")
+                    closure_start = time.time()
+                    closure_count = await asyncio.to_thread(
+                        compute_transitive_closure, server_state.storage, max_depth=10
+                    )
+                    closure_time = (time.time() - closure_start) * 1000
+                    logger.info(f"✅ Transitive closure: {closure_count} reachability entries ({closure_time:.0f}ms)")
 
         # Always update registry stats (ensures consistency after manual DB changes)
         cursor = server_state.storage.conn.cursor()

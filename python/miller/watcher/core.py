@@ -316,6 +316,19 @@ class FileWatcher:
         """Check if a file path should be ignored based on patterns."""
         import fnmatch
 
+        # Hardcoded check for temporary files (defense in depth)
+        # These cause race conditions when created/deleted rapidly by tests, editors, etc.
+        file_name = file_path.name
+        if (
+            file_name.endswith(".tmp")
+            or ".tmp." in file_name  # pytest-style: file.py.tmp.12345.67890
+            or file_name.endswith("~")  # Editor backup files
+            or file_name.endswith(".swp")  # Vim swap
+            or file_name.endswith(".swo")  # Vim swap
+            or file_name.startswith(".#")  # Emacs lock files
+        ):
+            return True
+
         rel_path = str(file_path.relative_to(self._workspace_path))
 
         for pattern in self._ignore_patterns:

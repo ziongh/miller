@@ -331,885 +331,6 @@ for sym in result.symbols:
 
 --- END OF FILE CLAUDE.md ---
 
---- START OF FILE TODO.md ---
-
-# Miller - TODO
-
-*Last updated: 2025-11-26*
-
-<!-- Add your notes below -->
-
-## Current Tasks
-
-1. Need to make sure github workflow still building properly and prepare for a 1.0 release
-
-2. We need to review the toolkit as a whole and decide if fast_refs needs to be removed and replaced with a better tool or if we just need to make it better and keep it.
-
-3. Saw a log entry: failed to index .gitattributes. a. we don't need to index .gitattributes. BUT b. it's just text right? why would it fail?
-
----
-
-## Future Enhancements (Ranked by Impact)
-
-*Ideas to push Miller beyond Julie. Add new ideas here.*
-
-### Tier 2: Significant Improvements
-
-| Rank | Feature | Impact |
-|------|---------|--------|
-| **#4** | **Dual embeddings** | Code model + NL model. "Find auth logic" (NL) vs "IAuthService" (code) use different models for better recall. |
-| **#5** | **Query expansion** | "auth" → also search "authenticate authorization credentials". Catches synonyms embeddings miss. |
-| **#6** | **Field boosting (Tantivy)** | `name^3 signature^2 doc_comment^1`. Name matches rank higher. Simple config, measurable improvement. |
-
-### Tier 3: Valuable Additions
-
-| Rank | Feature | Impact |
-|------|---------|--------|
-| **#7** | **Entry point detection** | Mark symbols as main/handler/test/route. "Show me entry points" for codebase understanding. |
-| **#8** | **Contextual boosting** | Boost results from recently touched files. Workflow-aware search. |
-| **#9** | **Fuzzy search (Tantivy ~)** | Typo tolerance via edit distance. "authentcation~1" finds "authentication". |
-| **#10** | **Call frequency counts** | Track how many times A calls B. Hot path detection. |
-
-### Tier 4: Polish
-
-| Rank | Feature | Impact |
-|------|---------|--------|
-| **#11** | Symbol metrics (LOC, complexity) | Code quality insights |
-| **#12** | Scalar indexes in LanceDB | Performance (already fast enough) |
-| **#13** | AST fingerprints | Structural similarity (embeddings handle this) |
-
----
-
-## Completed (Archive)
-
-<details>
-<summary>Click to expand completed items</summary>
-
-### 2025-11-26
-- ✅ Fixed DirectML not working on Windows - was passing "dml" string to SentenceTransformer, but PyTorch needs actual `torch_directml.device()` object
-- ✅ README overhaul - now features tool-specific lean formats (70-90% token savings), moved TOON to secondary
-
-### 2025-11-25
-- ✅ Fixed `code_context` always null in `fast_search` (computed during indexing)
-- ✅ Fixed `get_symbols` TOON missing `file_path`
-- ✅ Copied skills from Julie to `.claude/skills/`
-
-### 2025-11-24
-- ✅ Tool audit complete - all 10 tools audited, 7 fixed, 3 excellent
-- ✅ `fast_refs` now queries both tables
-- ✅ `fast_explore` similar mode fixed
-- ✅ Implemented re-ranker (cross-encoder)
-- ✅ Implemented transitive closure table
-- ✅ Implemented graph expansion on search
-- ✅ Added `rename_symbol` tool
-
-### 2025-11-23
-- ✅ Deep review of startup/indexing
-- ✅ Achieved parity with Julie + improvements
-- ✅ Added `.millerignore` with smart vendor detection
-- ✅ Added staleness detection
-- ✅ Added Blake3 hashing in Rust
-
-</details>
-
-
---- END OF FILE TODO.md ---
-
---- START OF FILE benchmark_reranker.py ---
-
-#!/usr/bin/env python3
-"""Benchmark re-ranker performance with varying result sizes.
-
-This script measures:
-- Cold start latency (first call, model loading)
-- Warm latency (subsequent calls)
-- Scaling with different top-N sizes (20, 50, 100)
-
-Run with: python benchmark_reranker.py
-"""
-
-import time
-import statistics
-from typing import Any
-
-
-def create_mock_results(n: int) -> list[dict[str, Any]]:
-    """Create mock search results for benchmarking."""
-    results = []
-    for i in range(n):
-        results.append({
-            "name": f"function_{i}",
-            "signature": f"def function_{i}(param1: str, param2: int) -> bool",
-            "doc_comment": f"This is a test function number {i} that does something important.",
-            "file_path": f"/path/to/file_{i % 10}.py",
-            "start_line": i * 10,
-            "score": 1.0 - (i * 0.01),  # Decreasing scores
-        })
-    return results
-
-
-def benchmark_reranker():
-    """Run re-ranker benchmarks."""
-    print("=" * 60)
-    print("Re-ranker Performance Benchmark")
-    print("=" * 60)
-    print()
-
-    # Import here to measure cold start
-    print("Importing ReRanker...")
-    import_start = time.perf_counter()
-    from miller.reranker import ReRanker
-    import_time = (time.perf_counter() - import_start) * 1000
-    print(f"  Import time: {import_time:.1f}ms")
-    print()
-
-    # Create reranker instance
-    print("Creating ReRanker instance...")
-    create_start = time.perf_counter()
-    reranker = ReRanker()
-    create_time = (time.perf_counter() - create_start) * 1000
-    print(f"  Instance creation: {create_time:.1f}ms (lazy - no model loaded yet)")
-    print()
-
-    # Test query
-    query = "authentication logic for user login"
-
-    # Test sizes
-    sizes = [10, 20, 50, 100]
-
-    print("Benchmarking re-ranking latency...")
-    print("-" * 60)
-
-    for i, size in enumerate(sizes):
-        results = create_mock_results(size)
-        times = []
-
-        # First call (cold start for first size)
-        start = time.perf_counter()
-        reranked = reranker.rerank_results(query, results)
-        first_time = (time.perf_counter() - start) * 1000
-
-        if i == 0:
-            print(f"\n  Cold start (first call, model loading):")
-            print(f"    Size: {size} results")
-            print(f"    Time: {first_time:.1f}ms")
-            print(f"    Note: Includes model loading (~2-4 seconds typically)")
-            print()
-            print("  Warm benchmarks (model already loaded):")
-
-        # Warm runs (5 iterations)
-        for _ in range(5):
-            results = create_mock_results(size)  # Fresh results each time
-            start = time.perf_counter()
-            reranked = reranker.rerank_results(query, results)
-            elapsed = (time.perf_counter() - start) * 1000
-            times.append(elapsed)
-
-        avg = statistics.mean(times)
-        std = statistics.stdev(times) if len(times) > 1 else 0
-        min_t = min(times)
-        max_t = max(times)
-        per_item = avg / size
-
-        print(f"\n    Size: {size} results")
-        print(f"    Avg: {avg:.1f}ms (±{std:.1f}ms)")
-        print(f"    Min: {min_t:.1f}ms | Max: {max_t:.1f}ms")
-        print(f"    Per item: {per_item:.2f}ms")
-
-    print()
-    print("-" * 60)
-    print("Performance Summary")
-    print("-" * 60)
-    print()
-    print("Model: cross-encoder/ms-marco-MiniLM-L6-v2 (22M params)")
-    print()
-    print("Typical latencies (warm):")
-    print("  - 20 results: ~15-25ms")
-    print("  - 50 results: ~30-50ms")
-    print("  - 100 results: ~60-100ms")
-    print()
-    print("Scaling: Approximately linear with result count")
-    print("Sweet spot: 50 results (good quality/speed tradeoff)")
-    print()
-    print("Note: Add ~50-100ms to search time when re-ranking enabled.")
-    print("Total search time target: <500ms (comfortably achieved)")
-    print()
-
-
-def benchmark_with_real_search():
-    """Benchmark with actual search results from Miller."""
-    print()
-    print("=" * 60)
-    print("Real Search Benchmark (using Miller's index)")
-    print("=" * 60)
-    print()
-
-    try:
-        import asyncio
-        from miller.tools.search import fast_search
-
-        async def run_search_benchmarks():
-            queries = [
-                "authentication",
-                "search results",
-                "workspace manager",
-                "symbol extraction",
-            ]
-
-            print("Comparing search with and without re-ranking...")
-            print("-" * 60)
-
-            for query in queries:
-                print(f"\nQuery: '{query}'")
-
-                # Without re-ranking
-                start = time.perf_counter()
-                results_no_rerank = await fast_search(query, limit=20, rerank=False)
-                time_no_rerank = (time.perf_counter() - start) * 1000
-
-                # With re-ranking
-                start = time.perf_counter()
-                results_rerank = await fast_search(query, limit=20, rerank=True)
-                time_rerank = (time.perf_counter() - start) * 1000
-
-                overhead = time_rerank - time_no_rerank
-
-                print(f"  Without re-rank: {time_no_rerank:.1f}ms ({len(results_no_rerank)} results)")
-                print(f"  With re-rank:    {time_rerank:.1f}ms ({len(results_rerank)} results)")
-                print(f"  Overhead:        {overhead:.1f}ms")
-
-                # Show ranking difference
-                if results_no_rerank and results_rerank:
-                    top_before = results_no_rerank[0].get("name", "?")
-                    top_after = results_rerank[0].get("name", "?")
-                    if top_before != top_after:
-                        print(f"  Ranking changed: '{top_before}' → '{top_after}'")
-
-        asyncio.run(run_search_benchmarks())
-
-    except Exception as e:
-        print(f"  Skipped: {e}")
-        print("  (Run this after Miller is indexed)")
-
-
-if __name__ == "__main__":
-    benchmark_reranker()
-    benchmark_with_real_search()
-
-
---- END OF FILE benchmark_reranker.py ---
-
---- START OF FILE Makefile ---
-
-# Makefile for Miller development
-# Windows users: Install 'make' via chocolatey or use these commands directly
-
-.PHONY: help setup build test test-rust test-python lint format clean watch
-
-help:  ## Show this help message
-	@echo "Miller Development Commands:"
-	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
-
-setup:  ## First-time setup: install all dependencies
-	python -m venv .venv
-	.venv\Scripts\activate && pip install -e ".[dev]"
-	rustup component add clippy rustfmt
-	cargo install cargo-watch
-
-build:  ## Build the Rust extension
-	maturin develop --release
-
-build-dev:  ## Build the Rust extension (debug mode, faster)
-	maturin develop
-
-test:  ## Run all tests (Rust + Python)
-	cargo test
-	pytest python/tests/
-
-test-rust:  ## Run only Rust tests
-	cargo test
-
-test-python:  ## Run only Python tests
-	pytest python/tests/ -v
-
-test-cov:  ## Run Python tests with coverage report
-	pytest python/tests/ --cov=miller --cov-report=html --cov-report=term
-
-test-watch:  ## Auto-run tests on file changes
-	pytest-watch python/tests/
-
-lint:  ## Run all linters
-	cargo clippy -- -D warnings
-	ruff check python/
-	mypy python/miller/
-
-lint-fix:  ## Auto-fix linting issues
-	ruff check --fix python/
-
-format:  ## Format all code
-	cargo fmt
-	black python/
-
-format-check:  ## Check formatting without changing files
-	cargo fmt -- --check
-	black --check python/
-
-clean:  ## Clean build artifacts
-	cargo clean
-	rm -rf target/
-	rm -rf python/tests/__pycache__/
-	rm -rf python/miller/__pycache__/
-	rm -rf .pytest_cache/
-	rm -rf htmlcov/
-	rm -rf .coverage
-	find . -type d -name "*.egg-info" -exec rm -rf {} +
-
-watch-rust:  ## Watch Rust files and auto-rebuild + test
-	cargo watch -x "test" -x "build"
-
-watch-python:  ## Watch Python files and auto-test
-	pytest-watch python/tests/
-
-dev:  ## Start development mode (rebuild Rust on change)
-	cargo watch -s "maturin develop && pytest python/tests/"
-
-
---- END OF FILE Makefile ---
-
---- START OF FILE benchmark_get_symbols.py ---
-
-#!/usr/bin/env python3
-"""
-Benchmark script for get_symbols performance profiling.
-
-Measures time spent in different phases:
-- Parsing (Rust extraction)
-- Filtering (depth, target)
-- Database queries (relationships, variants)
-- Embeddings (semantic search, related symbols)
-- PageRank (importance scoring)
-"""
-
-import asyncio
-import time
-from pathlib import Path
-
-
-async def benchmark_get_symbols():
-    """Benchmark get_symbols on a typical Python file."""
-    from miller.server import get_symbols
-
-    # Use symbols.py itself as a test case (it's a typical large file)
-    test_file = Path(__file__).parent / "python/miller/tools/symbols.py"
-
-    print(f"Benchmarking get_symbols on: {test_file.name}")
-    print(f"File size: {test_file.stat().st_size / 1024:.1f} KB")
-    print(f"Lines: {len(test_file.read_text().splitlines())}")
-    print()
-
-    # Warm up (load models, etc.)
-    print("Warming up...")
-    await get_symbols(file_path=str(test_file), mode="structure", max_depth=1)
-    print("Warm-up complete.\n")
-
-    # Test different modes
-    modes = [
-        ("structure", 1, None),  # Basic structure
-        ("structure", 2, None),  # With nested symbols
-        ("structure", 1, "calculate"),  # With target filter
-        ("full", 1, None),  # With code bodies
-    ]
-
-    results = []
-
-    for mode, depth, target in modes:
-        desc = f"mode={mode}, depth={depth}"
-        if target:
-            desc += f", target={target}"
-
-        print(f"Testing: {desc}")
-
-        start = time.perf_counter()
-        result = await get_symbols(
-            file_path=str(test_file),
-            mode=mode,
-            max_depth=depth,
-            target=target
-        )
-        elapsed = (time.perf_counter() - start) * 1000  # Convert to ms
-
-        print(f"  Time: {elapsed:.2f} ms")
-        print(f"  Symbols returned: {len(result)}")
-        if result:
-            # Show fields in first symbol
-            print(f"  Fields: {', '.join(result[0].keys())}")
-        print()
-
-        results.append({
-            "mode": mode,
-            "depth": depth,
-            "target": target,
-            "time_ms": elapsed,
-            "symbols_count": len(result)
-        })
-
-    # Summary
-    print("\n" + "=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    for r in results:
-        desc = f"{r['mode']}, depth={r['depth']}"
-        if r['target']:
-            desc += f", target={r['target']}"
-        print(f"{desc:40} {r['time_ms']:>8.2f} ms ({r['symbols_count']} symbols)")
-
-    # Performance targets
-    print("\n" + "=" * 60)
-    print("PERFORMANCE TARGETS")
-    print("=" * 60)
-    print("Typical file (structure mode): <50 ms")
-    print("Large file (full mode):        <200 ms")
-    print()
-
-    typical_time = results[0]['time_ms']  # structure, depth=1
-    if typical_time < 50:
-        print(f"✓ Typical file target MET: {typical_time:.2f} ms")
-    else:
-        print(f"✗ Typical file target MISSED: {typical_time:.2f} ms (target: <50 ms)")
-
-
-if __name__ == "__main__":
-    asyncio.run(benchmark_get_symbols())
-
-
---- END OF FILE benchmark_get_symbols.py ---
-
---- START OF FILE pytest.ini ---
-
-[pytest]
-# Pytest configuration for Miller
-
-# Test discovery
-testpaths = python/tests
-python_files = test_*.py
-python_classes = Test*
-python_functions = test_*
-
-# Output options (inline comments not allowed in addopts)
-addopts =
-    -v
-    --strict-markers
-    --tb=short
-    --cov=miller
-    --cov-report=term-missing
-    --cov-report=html
-    --cov-fail-under=80
-    -ra
-
-# Markers (for organizing tests)
-markers =
-    unit: Unit tests (fast, isolated)
-    integration: Integration tests (slower, may hit database/files)
-    slow: Slow tests (embeddings, large files)
-    rust: Tests that require the Rust extension
-
-# Async support
-asyncio_mode = auto
-
-# Warnings  (inline comments not allowed in filterwarnings)
-filterwarnings =
-    error
-    ignore::DeprecationWarning
-    ignore::ResourceWarning
-
-
---- END OF FILE pytest.ini ---
-
---- START OF FILE PLAN_ARROW_EXTRACTION.md ---
-
-# Arrow-Based Extraction Pipeline
-
-## Problem Statement
-
-The current Rust→Python bridge creates millions of Python objects when indexing large codebases:
-- Each symbol/identifier field access triggers a `.clone()` in Rust, creating a new Python string
-- For 1MM LOC: ~50,000 symbols × 11 fields + ~5,000,000 identifiers × 15 fields = **~75 million allocations**
-- This creates immense GC pressure and dominates indexing time
-
-## Solution: Arrow-Native Pipeline
-
-Replace Python object creation with Arrow columnar format:
-
-```
-Before:  Rust → PySymbol objects → Python list → PyArrow Table → LanceDB
-After:   Rust → Arrow RecordBatch → Python (zero-copy) → LanceDB
-```
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│ Rust Layer (miller_core)                                         │
-├──────────────────────────────────────────────────────────────────┤
-│  extract_files_to_arrow(paths, workspace_root)                   │
-│    → Returns PyArrowBatch { symbols, identifiers, relationships, │
-│                             file_data }                          │
-│    → Each field is a PyArrow RecordBatch (zero-copy to Python)   │
-└──────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼ Zero-copy FFI via Arrow PyCapsule
-┌──────────────────────────────────────────────────────────────────┐
-│ Python Layer                                                      │
-├──────────────────────────────────────────────────────────────────┤
-│  ArrowIndexingBuffer:                                             │
-│    - Accumulates RecordBatch objects (not Python objects)         │
-│    - Concatenates batches on flush                                │
-│                                                                   │
-│  VectorStore.add_arrow_batch(batch, vectors):                     │
-│    - Appends vector column to batch                               │
-│    - Passes directly to LanceDB (already uses Arrow)              │
-│                                                                   │
-│  SQLite writes via apsw or direct executemany from Arrow:         │
-│    - Extract columns as Python lists using .to_pylist()           │
-│    - Or use polars for df.write_database()                        │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-## Implementation Phases
-
-### Phase 1: Add Arrow Dependencies to Rust ✓
-- Add `arrow` crate (v54.x) to Cargo.toml
-- Add `pyo3-arrow` crate for zero-copy Python FFI
-- Note: `pyo3-arrow` is preferred over `arrow::pyarrow` for extension type support
-
-```toml
-[dependencies]
-arrow = { version = "54", default-features = false, features = ["ffi"] }
-pyo3-arrow = "0.6"
-```
-
-### Phase 2: Create Arrow Schema Definitions
-Define Arrow schemas matching our data structures:
-
-**Symbols Schema:**
-```rust
-Schema::new(vec![
-    Field::new("id", DataType::Utf8, false),
-    Field::new("name", DataType::Utf8, false),
-    Field::new("kind", DataType::Utf8, false),
-    Field::new("language", DataType::Utf8, false),
-    Field::new("file_path", DataType::Utf8, false),
-    Field::new("start_line", DataType::UInt32, false),
-    Field::new("end_line", DataType::UInt32, false),
-    Field::new("signature", DataType::Utf8, true),
-    Field::new("doc_comment", DataType::Utf8, true),
-    Field::new("parent_id", DataType::Utf8, true),
-    Field::new("code_context", DataType::Utf8, true),
-])
-```
-
-**Identifiers Schema:**
-```rust
-Schema::new(vec![
-    Field::new("id", DataType::Utf8, false),
-    Field::new("name", DataType::Utf8, false),
-    Field::new("kind", DataType::Utf8, false),
-    Field::new("language", DataType::Utf8, false),
-    Field::new("file_path", DataType::Utf8, false),
-    Field::new("start_line", DataType::UInt32, false),
-    Field::new("start_column", DataType::UInt32, false),
-    Field::new("end_line", DataType::UInt32, false),
-    Field::new("end_column", DataType::UInt32, false),
-    Field::new("containing_symbol_id", DataType::Utf8, true),
-    Field::new("target_symbol_id", DataType::Utf8, true),
-    Field::new("confidence", DataType::Float32, false),
-])
-```
-
-### Phase 3: Implement `extract_files_to_arrow()` in Rust
-New function that:
-1. Reads files and extracts symbols/identifiers in parallel (existing logic)
-2. Builds Arrow arrays directly from Rust Vecs (no Python objects)
-3. Returns `PyArrowBatch` struct containing all RecordBatches
-
-```rust
-#[pyclass]
-pub struct PyArrowBatch {
-    symbols: PyObject,      // pyarrow.RecordBatch
-    identifiers: PyObject,  // pyarrow.RecordBatch
-    relationships: PyObject, // pyarrow.RecordBatch
-    file_data: PyObject,    // pyarrow.RecordBatch
-}
-
-#[pyfunction]
-pub fn extract_files_to_arrow(
-    py: Python<'_>,
-    file_paths: Vec<String>,
-    workspace_root: String,
-) -> PyResult<PyArrowBatch> {
-    // ... implementation
-}
-```
-
-### Phase 4: Update Python Indexing Flow
-Modify `WorkspaceScanner.index_workspace()`:
-
-```python
-# Before
-buffer = IndexingBuffer(max_symbols=512)
-for res in batch_results:
-    buffer.add_result(...)  # Accumulates PySymbol objects
-
-# After
-buffer = ArrowIndexingBuffer(max_rows=512)
-arrow_batch = miller_core.extract_files_to_arrow(paths, workspace_root)
-buffer.add_batch(arrow_batch)  # Just stores RecordBatch reference
-```
-
-### Phase 5: Update VectorStore for Arrow Input
-
-```python
-def add_arrow_batch(self, symbols_batch: pa.RecordBatch, vectors: np.ndarray) -> int:
-    """Add symbols from Arrow batch with embeddings."""
-    # Add vector column to batch
-    vector_array = pa.FixedSizeListArray.from_arrays(
-        pa.array(vectors.flatten(), pa.float32()),
-        self.dimension
-    )
-    augmented = symbols_batch.append_column("vector", vector_array)
-
-    # Pass directly to LanceDB
-    if self._table is None:
-        self._table = self.db.create_table(self.table_name, augmented)
-    else:
-        self._table.add(augmented)
-
-    return symbols_batch.num_rows
-```
-
-### Phase 6: Update SQLite Storage for Arrow Input
-
-Option A: Extract columns as lists (simple, uses existing executemany):
-```python
-def add_symbols_from_arrow(self, symbols_batch: pa.RecordBatch) -> int:
-    tuples = list(zip(
-        symbols_batch.column("id").to_pylist(),
-        symbols_batch.column("name").to_pylist(),
-        # ... etc
-    ))
-    cursor.executemany(INSERT_SQL, tuples)
-```
-
-Option B: Use Polars (faster for large batches):
-```python
-import polars as pl
-
-def add_symbols_from_arrow(self, symbols_batch: pa.RecordBatch) -> int:
-    df = pl.from_arrow(symbols_batch)
-    df.write_database("symbols", self.conn, if_table_exists="append")
-```
-
-### Phase 7: Maintain Backward Compatibility
-Keep existing `extract_files_batch_with_io()` for:
-- Existing tests
-- Gradual migration
-- Fallback if Arrow path fails
-
-Add a feature flag or config option to switch between modes.
-
-## Testing Strategy
-
-1. **Unit Tests**: Arrow schema validation, column types
-2. **Integration Tests**: Full indexing pipeline with Arrow path
-3. **Benchmarks**: Compare GC pressure and throughput:
-   - Memory profiling with `tracemalloc`
-   - Indexing time comparison
-   - GC collection counts
-
-## Expected Benefits
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Python objects created | ~75M | ~10 | 7,500,000x fewer |
-| Memory churn | High | Minimal | Stable memory |
-| GC collections | Many | Few | Faster throughput |
-| Indexing time | Baseline | -30-50% | Faster |
-
-## Risks and Mitigations
-
-1. **Arrow version conflicts**: Pin versions carefully, test with LanceDB
-2. **pyo3-arrow compatibility**: May need to match pyo3 version (currently 0.27.1)
-3. **Increased Rust complexity**: More code in bindings layer
-4. **Embedding generation**: Still needs Python objects for model input
-   - Mitigation: Only convert necessary text fields for embedding
-
-## Implementation Order
-
-1. ✓ Phase 1: Add Rust dependencies
-2. ✓ Phase 2: Define Arrow schemas
-3. Phase 3: Implement `extract_files_to_arrow()`
-4. Phase 4: Create `ArrowIndexingBuffer`
-5. Phase 5: Add `VectorStore.add_arrow_batch()`
-6. Phase 6: Add SQLite Arrow methods
-7. Phase 7: Integration and testing
-
-
---- END OF FILE PLAN_ARROW_EXTRACTION.md ---
-
---- START OF FILE check_device.py ---
-
-#!/usr/bin/env python3
-"""
-Quick diagnostic to check GPU/CPU device availability for embeddings.
-
-Run this to verify hardware acceleration is working before starting Miller.
-"""
-
-import torch
-import sys
-
-print("=" * 60)
-print("Miller Hardware Acceleration Diagnostic")
-print("=" * 60)
-print()
-
-# Check PyTorch version
-print(f"PyTorch version: {torch.__version__}")
-print()
-
-# Check CUDA (NVIDIA GPUs)
-print("🔍 Checking NVIDIA CUDA:")
-if torch.cuda.is_available():
-    print(f"  ✅ CUDA available: {torch.version.cuda}")
-    print(f"  🎮 GPU count: {torch.cuda.device_count()}")
-    for i in range(torch.cuda.device_count()):
-        print(f"  📊 GPU {i}: {torch.cuda.get_device_name(i)}")
-        props = torch.cuda.get_device_properties(i)
-        print(f"     Memory: {props.total_memory / 1024**3:.1f} GB")
-        print(f"     Compute Capability: {props.major}.{props.minor}")
-else:
-    print("  ❌ CUDA not available")
-print()
-
-# Check MPS (Apple Silicon)
-print("🔍 Checking Apple Silicon MPS:")
-if hasattr(torch.backends, 'mps'):
-    if torch.backends.mps.is_available():
-        print("  ✅ MPS (Metal Performance Shaders) available")
-        print("  🍎 Apple Silicon GPU acceleration enabled")
-    else:
-        print("  ❌ MPS not available (requires macOS 12.3+ and Apple Silicon)")
-else:
-    print("  ❌ MPS not supported in this PyTorch version")
-print()
-
-# Check DirectML (Windows AMD/Intel GPUs)
-print("🔍 Checking DirectML (Windows AMD/Intel):")
-try:
-    import torch_directml
-    if torch_directml.is_available():
-        print("  ✅ DirectML available")
-        print("  🪟 Windows GPU acceleration enabled (AMD/Intel)")
-        device_count = torch_directml.device_count()
-        print(f"  📊 DirectML devices: {device_count}")
-        for i in range(device_count):
-            print(f"     Device {i}: {torch_directml.device_name(i)}")
-        directml_available = True
-    else:
-        print("  ❌ DirectML installed but not available")
-        directml_available = False
-except ImportError:
-    print("  ❌ DirectML not installed")
-    print("     Install: pip install torch-directml")
-    directml_available = False
-print()
-
-# Determine what Miller will use
-print("🎯 Miller will use:")
-if torch.cuda.is_available():
-    device = "cuda"
-    print(f"  🚀 CUDA GPU: {torch.cuda.get_device_name(0)}")
-elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-    device = "mps"
-    print("  🍎 Apple Silicon MPS")
-elif directml_available:
-    device = "directml"
-    print("  🪟 DirectML (Windows AMD/Intel GPU)")
-else:
-    device = "cpu"
-    print("  💻 CPU (no GPU acceleration)")
-print()
-
-# Quick speed test
-print("⚡ Quick benchmark:")
-from time import time
-
-# Create random tensor
-x = torch.randn(1000, 384)
-
-# CPU test
-start = time()
-_ = torch.mm(x, x.T)
-cpu_time = (time() - start) * 1000
-print(f"  CPU: {cpu_time:.2f}ms")
-
-# GPU test (if available)
-if device in ["cuda", "mps", "directml"]:
-    try:
-        if device == "directml":
-            import torch_directml
-            dml_device = torch_directml.device()
-            x_gpu = x.to(dml_device)
-        else:
-            x_gpu = x.to(device)
-
-        # Warmup
-        _ = torch.mm(x_gpu, x_gpu.T)
-        if device == "cuda":
-            torch.cuda.synchronize()
-
-        start = time()
-        _ = torch.mm(x_gpu, x_gpu.T)
-        if device == "cuda":
-            torch.cuda.synchronize()
-        gpu_time = (time() - start) * 1000
-
-        speedup = cpu_time / gpu_time
-        print(f"  {device.upper()}: {gpu_time:.2f}ms ({speedup:.1f}x faster)")
-    except Exception as e:
-        print(f"  {device.upper()}: Benchmark failed - {e}")
-print()
-
-print("=" * 60)
-print("✅ Diagnostic complete!")
-print()
-
-if device == "cpu":
-    print("⚠️  WARNING: No GPU detected!")
-    print("   Embeddings will run on CPU (10-50x slower)")
-    print()
-    print("   For faster indexing:")
-    print("   - macOS: Use Apple Silicon Mac (M1/M2/M3/M4)")
-    print("   - Windows/Linux (NVIDIA): Install CUDA toolkit")
-    print("   - Windows (AMD/Intel): Install torch-directml")
-    print("     pip uninstall torch")
-    print("     pip install torch-directml")
-else:
-    print(f"✅ GPU acceleration enabled ({device.upper()})")
-    print("   Embeddings will run on GPU (10-50x faster than CPU)")
-    if device == "directml":
-        print()
-        print("   ⚠️  DirectML is experimental - may have compatibility issues")
-        print("   If you encounter errors, switch back to CPU:")
-        print("     pip uninstall torch-directml")
-        print("     pip install torch")
-
-print("=" * 60)
-
-
---- END OF FILE check_device.py ---
-
 --- START OF FILE test_watcher_workspace/test.py ---
 
 def hello(): pass
@@ -6829,6 +5950,885 @@ impl ContextTruncator {
 
 --- END OF FILE src/utils/context_truncation.rs ---
 
+--- START OF FILE TODO.md ---
+
+# Miller - TODO
+
+*Last updated: 2025-11-26*
+
+<!-- Add your notes below -->
+
+## Current Tasks
+
+1. Need to make sure github workflow still building properly and prepare for a 1.0 release
+
+2. We need to review the toolkit as a whole and decide if fast_refs needs to be removed and replaced with a better tool or if we just need to make it better and keep it.
+
+3. Saw a log entry: failed to index .gitattributes. a. we don't need to index .gitattributes. BUT b. it's just text right? why would it fail?
+
+---
+
+## Future Enhancements (Ranked by Impact)
+
+*Ideas to push Miller beyond Julie. Add new ideas here.*
+
+### Tier 2: Significant Improvements
+
+| Rank | Feature | Impact |
+|------|---------|--------|
+| **#4** | **Dual embeddings** | Code model + NL model. "Find auth logic" (NL) vs "IAuthService" (code) use different models for better recall. |
+| **#5** | **Query expansion** | "auth" → also search "authenticate authorization credentials". Catches synonyms embeddings miss. |
+| **#6** | **Field boosting (Tantivy)** | `name^3 signature^2 doc_comment^1`. Name matches rank higher. Simple config, measurable improvement. |
+
+### Tier 3: Valuable Additions
+
+| Rank | Feature | Impact |
+|------|---------|--------|
+| **#7** | **Entry point detection** | Mark symbols as main/handler/test/route. "Show me entry points" for codebase understanding. |
+| **#8** | **Contextual boosting** | Boost results from recently touched files. Workflow-aware search. |
+| **#9** | **Fuzzy search (Tantivy ~)** | Typo tolerance via edit distance. "authentcation~1" finds "authentication". |
+| **#10** | **Call frequency counts** | Track how many times A calls B. Hot path detection. |
+
+### Tier 4: Polish
+
+| Rank | Feature | Impact |
+|------|---------|--------|
+| **#11** | Symbol metrics (LOC, complexity) | Code quality insights |
+| **#12** | Scalar indexes in LanceDB | Performance (already fast enough) |
+| **#13** | AST fingerprints | Structural similarity (embeddings handle this) |
+
+---
+
+## Completed (Archive)
+
+<details>
+<summary>Click to expand completed items</summary>
+
+### 2025-11-26
+- ✅ Fixed DirectML not working on Windows - was passing "dml" string to SentenceTransformer, but PyTorch needs actual `torch_directml.device()` object
+- ✅ README overhaul - now features tool-specific lean formats (70-90% token savings), moved TOON to secondary
+
+### 2025-11-25
+- ✅ Fixed `code_context` always null in `fast_search` (computed during indexing)
+- ✅ Fixed `get_symbols` TOON missing `file_path`
+- ✅ Copied skills from Julie to `.claude/skills/`
+
+### 2025-11-24
+- ✅ Tool audit complete - all 10 tools audited, 7 fixed, 3 excellent
+- ✅ `fast_refs` now queries both tables
+- ✅ `fast_explore` similar mode fixed
+- ✅ Implemented re-ranker (cross-encoder)
+- ✅ Implemented transitive closure table
+- ✅ Implemented graph expansion on search
+- ✅ Added `rename_symbol` tool
+
+### 2025-11-23
+- ✅ Deep review of startup/indexing
+- ✅ Achieved parity with Julie + improvements
+- ✅ Added `.millerignore` with smart vendor detection
+- ✅ Added staleness detection
+- ✅ Added Blake3 hashing in Rust
+
+</details>
+
+
+--- END OF FILE TODO.md ---
+
+--- START OF FILE benchmark_reranker.py ---
+
+#!/usr/bin/env python3
+"""Benchmark re-ranker performance with varying result sizes.
+
+This script measures:
+- Cold start latency (first call, model loading)
+- Warm latency (subsequent calls)
+- Scaling with different top-N sizes (20, 50, 100)
+
+Run with: python benchmark_reranker.py
+"""
+
+import time
+import statistics
+from typing import Any
+
+
+def create_mock_results(n: int) -> list[dict[str, Any]]:
+    """Create mock search results for benchmarking."""
+    results = []
+    for i in range(n):
+        results.append({
+            "name": f"function_{i}",
+            "signature": f"def function_{i}(param1: str, param2: int) -> bool",
+            "doc_comment": f"This is a test function number {i} that does something important.",
+            "file_path": f"/path/to/file_{i % 10}.py",
+            "start_line": i * 10,
+            "score": 1.0 - (i * 0.01),  # Decreasing scores
+        })
+    return results
+
+
+def benchmark_reranker():
+    """Run re-ranker benchmarks."""
+    print("=" * 60)
+    print("Re-ranker Performance Benchmark")
+    print("=" * 60)
+    print()
+
+    # Import here to measure cold start
+    print("Importing ReRanker...")
+    import_start = time.perf_counter()
+    from miller.reranker import ReRanker
+    import_time = (time.perf_counter() - import_start) * 1000
+    print(f"  Import time: {import_time:.1f}ms")
+    print()
+
+    # Create reranker instance
+    print("Creating ReRanker instance...")
+    create_start = time.perf_counter()
+    reranker = ReRanker()
+    create_time = (time.perf_counter() - create_start) * 1000
+    print(f"  Instance creation: {create_time:.1f}ms (lazy - no model loaded yet)")
+    print()
+
+    # Test query
+    query = "authentication logic for user login"
+
+    # Test sizes
+    sizes = [10, 20, 50, 100]
+
+    print("Benchmarking re-ranking latency...")
+    print("-" * 60)
+
+    for i, size in enumerate(sizes):
+        results = create_mock_results(size)
+        times = []
+
+        # First call (cold start for first size)
+        start = time.perf_counter()
+        reranked = reranker.rerank_results(query, results)
+        first_time = (time.perf_counter() - start) * 1000
+
+        if i == 0:
+            print(f"\n  Cold start (first call, model loading):")
+            print(f"    Size: {size} results")
+            print(f"    Time: {first_time:.1f}ms")
+            print(f"    Note: Includes model loading (~2-4 seconds typically)")
+            print()
+            print("  Warm benchmarks (model already loaded):")
+
+        # Warm runs (5 iterations)
+        for _ in range(5):
+            results = create_mock_results(size)  # Fresh results each time
+            start = time.perf_counter()
+            reranked = reranker.rerank_results(query, results)
+            elapsed = (time.perf_counter() - start) * 1000
+            times.append(elapsed)
+
+        avg = statistics.mean(times)
+        std = statistics.stdev(times) if len(times) > 1 else 0
+        min_t = min(times)
+        max_t = max(times)
+        per_item = avg / size
+
+        print(f"\n    Size: {size} results")
+        print(f"    Avg: {avg:.1f}ms (±{std:.1f}ms)")
+        print(f"    Min: {min_t:.1f}ms | Max: {max_t:.1f}ms")
+        print(f"    Per item: {per_item:.2f}ms")
+
+    print()
+    print("-" * 60)
+    print("Performance Summary")
+    print("-" * 60)
+    print()
+    print("Model: cross-encoder/ms-marco-MiniLM-L6-v2 (22M params)")
+    print()
+    print("Typical latencies (warm):")
+    print("  - 20 results: ~15-25ms")
+    print("  - 50 results: ~30-50ms")
+    print("  - 100 results: ~60-100ms")
+    print()
+    print("Scaling: Approximately linear with result count")
+    print("Sweet spot: 50 results (good quality/speed tradeoff)")
+    print()
+    print("Note: Add ~50-100ms to search time when re-ranking enabled.")
+    print("Total search time target: <500ms (comfortably achieved)")
+    print()
+
+
+def benchmark_with_real_search():
+    """Benchmark with actual search results from Miller."""
+    print()
+    print("=" * 60)
+    print("Real Search Benchmark (using Miller's index)")
+    print("=" * 60)
+    print()
+
+    try:
+        import asyncio
+        from miller.tools.search import fast_search
+
+        async def run_search_benchmarks():
+            queries = [
+                "authentication",
+                "search results",
+                "workspace manager",
+                "symbol extraction",
+            ]
+
+            print("Comparing search with and without re-ranking...")
+            print("-" * 60)
+
+            for query in queries:
+                print(f"\nQuery: '{query}'")
+
+                # Without re-ranking
+                start = time.perf_counter()
+                results_no_rerank = await fast_search(query, limit=20, rerank=False)
+                time_no_rerank = (time.perf_counter() - start) * 1000
+
+                # With re-ranking
+                start = time.perf_counter()
+                results_rerank = await fast_search(query, limit=20, rerank=True)
+                time_rerank = (time.perf_counter() - start) * 1000
+
+                overhead = time_rerank - time_no_rerank
+
+                print(f"  Without re-rank: {time_no_rerank:.1f}ms ({len(results_no_rerank)} results)")
+                print(f"  With re-rank:    {time_rerank:.1f}ms ({len(results_rerank)} results)")
+                print(f"  Overhead:        {overhead:.1f}ms")
+
+                # Show ranking difference
+                if results_no_rerank and results_rerank:
+                    top_before = results_no_rerank[0].get("name", "?")
+                    top_after = results_rerank[0].get("name", "?")
+                    if top_before != top_after:
+                        print(f"  Ranking changed: '{top_before}' → '{top_after}'")
+
+        asyncio.run(run_search_benchmarks())
+
+    except Exception as e:
+        print(f"  Skipped: {e}")
+        print("  (Run this after Miller is indexed)")
+
+
+if __name__ == "__main__":
+    benchmark_reranker()
+    benchmark_with_real_search()
+
+
+--- END OF FILE benchmark_reranker.py ---
+
+--- START OF FILE Makefile ---
+
+# Makefile for Miller development
+# Windows users: Install 'make' via chocolatey or use these commands directly
+
+.PHONY: help setup build test test-rust test-python lint format clean watch
+
+help:  ## Show this help message
+	@echo "Miller Development Commands:"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+setup:  ## First-time setup: install all dependencies
+	python -m venv .venv
+	.venv\Scripts\activate && pip install -e ".[dev]"
+	rustup component add clippy rustfmt
+	cargo install cargo-watch
+
+build:  ## Build the Rust extension
+	maturin develop --release
+
+build-dev:  ## Build the Rust extension (debug mode, faster)
+	maturin develop
+
+test:  ## Run all tests (Rust + Python)
+	cargo test
+	pytest python/tests/
+
+test-rust:  ## Run only Rust tests
+	cargo test
+
+test-python:  ## Run only Python tests
+	pytest python/tests/ -v
+
+test-cov:  ## Run Python tests with coverage report
+	pytest python/tests/ --cov=miller --cov-report=html --cov-report=term
+
+test-watch:  ## Auto-run tests on file changes
+	pytest-watch python/tests/
+
+lint:  ## Run all linters
+	cargo clippy -- -D warnings
+	ruff check python/
+	mypy python/miller/
+
+lint-fix:  ## Auto-fix linting issues
+	ruff check --fix python/
+
+format:  ## Format all code
+	cargo fmt
+	black python/
+
+format-check:  ## Check formatting without changing files
+	cargo fmt -- --check
+	black --check python/
+
+clean:  ## Clean build artifacts
+	cargo clean
+	rm -rf target/
+	rm -rf python/tests/__pycache__/
+	rm -rf python/miller/__pycache__/
+	rm -rf .pytest_cache/
+	rm -rf htmlcov/
+	rm -rf .coverage
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+
+watch-rust:  ## Watch Rust files and auto-rebuild + test
+	cargo watch -x "test" -x "build"
+
+watch-python:  ## Watch Python files and auto-test
+	pytest-watch python/tests/
+
+dev:  ## Start development mode (rebuild Rust on change)
+	cargo watch -s "maturin develop && pytest python/tests/"
+
+
+--- END OF FILE Makefile ---
+
+--- START OF FILE benchmark_get_symbols.py ---
+
+#!/usr/bin/env python3
+"""
+Benchmark script for get_symbols performance profiling.
+
+Measures time spent in different phases:
+- Parsing (Rust extraction)
+- Filtering (depth, target)
+- Database queries (relationships, variants)
+- Embeddings (semantic search, related symbols)
+- PageRank (importance scoring)
+"""
+
+import asyncio
+import time
+from pathlib import Path
+
+
+async def benchmark_get_symbols():
+    """Benchmark get_symbols on a typical Python file."""
+    from miller.server import get_symbols
+
+    # Use symbols.py itself as a test case (it's a typical large file)
+    test_file = Path(__file__).parent / "python/miller/tools/symbols.py"
+
+    print(f"Benchmarking get_symbols on: {test_file.name}")
+    print(f"File size: {test_file.stat().st_size / 1024:.1f} KB")
+    print(f"Lines: {len(test_file.read_text().splitlines())}")
+    print()
+
+    # Warm up (load models, etc.)
+    print("Warming up...")
+    await get_symbols(file_path=str(test_file), mode="structure", max_depth=1)
+    print("Warm-up complete.\n")
+
+    # Test different modes
+    modes = [
+        ("structure", 1, None),  # Basic structure
+        ("structure", 2, None),  # With nested symbols
+        ("structure", 1, "calculate"),  # With target filter
+        ("full", 1, None),  # With code bodies
+    ]
+
+    results = []
+
+    for mode, depth, target in modes:
+        desc = f"mode={mode}, depth={depth}"
+        if target:
+            desc += f", target={target}"
+
+        print(f"Testing: {desc}")
+
+        start = time.perf_counter()
+        result = await get_symbols(
+            file_path=str(test_file),
+            mode=mode,
+            max_depth=depth,
+            target=target
+        )
+        elapsed = (time.perf_counter() - start) * 1000  # Convert to ms
+
+        print(f"  Time: {elapsed:.2f} ms")
+        print(f"  Symbols returned: {len(result)}")
+        if result:
+            # Show fields in first symbol
+            print(f"  Fields: {', '.join(result[0].keys())}")
+        print()
+
+        results.append({
+            "mode": mode,
+            "depth": depth,
+            "target": target,
+            "time_ms": elapsed,
+            "symbols_count": len(result)
+        })
+
+    # Summary
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    for r in results:
+        desc = f"{r['mode']}, depth={r['depth']}"
+        if r['target']:
+            desc += f", target={r['target']}"
+        print(f"{desc:40} {r['time_ms']:>8.2f} ms ({r['symbols_count']} symbols)")
+
+    # Performance targets
+    print("\n" + "=" * 60)
+    print("PERFORMANCE TARGETS")
+    print("=" * 60)
+    print("Typical file (structure mode): <50 ms")
+    print("Large file (full mode):        <200 ms")
+    print()
+
+    typical_time = results[0]['time_ms']  # structure, depth=1
+    if typical_time < 50:
+        print(f"✓ Typical file target MET: {typical_time:.2f} ms")
+    else:
+        print(f"✗ Typical file target MISSED: {typical_time:.2f} ms (target: <50 ms)")
+
+
+if __name__ == "__main__":
+    asyncio.run(benchmark_get_symbols())
+
+
+--- END OF FILE benchmark_get_symbols.py ---
+
+--- START OF FILE pytest.ini ---
+
+[pytest]
+# Pytest configuration for Miller
+
+# Test discovery
+testpaths = python/tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+
+# Output options (inline comments not allowed in addopts)
+addopts =
+    -v
+    --strict-markers
+    --tb=short
+    --cov=miller
+    --cov-report=term-missing
+    --cov-report=html
+    --cov-fail-under=80
+    -ra
+
+# Markers (for organizing tests)
+markers =
+    unit: Unit tests (fast, isolated)
+    integration: Integration tests (slower, may hit database/files)
+    slow: Slow tests (embeddings, large files)
+    rust: Tests that require the Rust extension
+
+# Async support
+asyncio_mode = auto
+
+# Warnings  (inline comments not allowed in filterwarnings)
+filterwarnings =
+    error
+    ignore::DeprecationWarning
+    ignore::ResourceWarning
+
+
+--- END OF FILE pytest.ini ---
+
+--- START OF FILE PLAN_ARROW_EXTRACTION.md ---
+
+# Arrow-Based Extraction Pipeline
+
+## Problem Statement
+
+The current Rust→Python bridge creates millions of Python objects when indexing large codebases:
+- Each symbol/identifier field access triggers a `.clone()` in Rust, creating a new Python string
+- For 1MM LOC: ~50,000 symbols × 11 fields + ~5,000,000 identifiers × 15 fields = **~75 million allocations**
+- This creates immense GC pressure and dominates indexing time
+
+## Solution: Arrow-Native Pipeline
+
+Replace Python object creation with Arrow columnar format:
+
+```
+Before:  Rust → PySymbol objects → Python list → PyArrow Table → LanceDB
+After:   Rust → Arrow RecordBatch → Python (zero-copy) → LanceDB
+```
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ Rust Layer (miller_core)                                         │
+├──────────────────────────────────────────────────────────────────┤
+│  extract_files_to_arrow(paths, workspace_root)                   │
+│    → Returns PyArrowBatch { symbols, identifiers, relationships, │
+│                             file_data }                          │
+│    → Each field is a PyArrow RecordBatch (zero-copy to Python)   │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ Zero-copy FFI via Arrow PyCapsule
+┌──────────────────────────────────────────────────────────────────┐
+│ Python Layer                                                      │
+├──────────────────────────────────────────────────────────────────┤
+│  ArrowIndexingBuffer:                                             │
+│    - Accumulates RecordBatch objects (not Python objects)         │
+│    - Concatenates batches on flush                                │
+│                                                                   │
+│  VectorStore.add_arrow_batch(batch, vectors):                     │
+│    - Appends vector column to batch                               │
+│    - Passes directly to LanceDB (already uses Arrow)              │
+│                                                                   │
+│  SQLite writes via apsw or direct executemany from Arrow:         │
+│    - Extract columns as Python lists using .to_pylist()           │
+│    - Or use polars for df.write_database()                        │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Implementation Phases
+
+### Phase 1: Add Arrow Dependencies to Rust ✓
+- Add `arrow` crate (v54.x) to Cargo.toml
+- Add `pyo3-arrow` crate for zero-copy Python FFI
+- Note: `pyo3-arrow` is preferred over `arrow::pyarrow` for extension type support
+
+```toml
+[dependencies]
+arrow = { version = "54", default-features = false, features = ["ffi"] }
+pyo3-arrow = "0.6"
+```
+
+### Phase 2: Create Arrow Schema Definitions
+Define Arrow schemas matching our data structures:
+
+**Symbols Schema:**
+```rust
+Schema::new(vec![
+    Field::new("id", DataType::Utf8, false),
+    Field::new("name", DataType::Utf8, false),
+    Field::new("kind", DataType::Utf8, false),
+    Field::new("language", DataType::Utf8, false),
+    Field::new("file_path", DataType::Utf8, false),
+    Field::new("start_line", DataType::UInt32, false),
+    Field::new("end_line", DataType::UInt32, false),
+    Field::new("signature", DataType::Utf8, true),
+    Field::new("doc_comment", DataType::Utf8, true),
+    Field::new("parent_id", DataType::Utf8, true),
+    Field::new("code_context", DataType::Utf8, true),
+])
+```
+
+**Identifiers Schema:**
+```rust
+Schema::new(vec![
+    Field::new("id", DataType::Utf8, false),
+    Field::new("name", DataType::Utf8, false),
+    Field::new("kind", DataType::Utf8, false),
+    Field::new("language", DataType::Utf8, false),
+    Field::new("file_path", DataType::Utf8, false),
+    Field::new("start_line", DataType::UInt32, false),
+    Field::new("start_column", DataType::UInt32, false),
+    Field::new("end_line", DataType::UInt32, false),
+    Field::new("end_column", DataType::UInt32, false),
+    Field::new("containing_symbol_id", DataType::Utf8, true),
+    Field::new("target_symbol_id", DataType::Utf8, true),
+    Field::new("confidence", DataType::Float32, false),
+])
+```
+
+### Phase 3: Implement `extract_files_to_arrow()` in Rust
+New function that:
+1. Reads files and extracts symbols/identifiers in parallel (existing logic)
+2. Builds Arrow arrays directly from Rust Vecs (no Python objects)
+3. Returns `PyArrowBatch` struct containing all RecordBatches
+
+```rust
+#[pyclass]
+pub struct PyArrowBatch {
+    symbols: PyObject,      // pyarrow.RecordBatch
+    identifiers: PyObject,  // pyarrow.RecordBatch
+    relationships: PyObject, // pyarrow.RecordBatch
+    file_data: PyObject,    // pyarrow.RecordBatch
+}
+
+#[pyfunction]
+pub fn extract_files_to_arrow(
+    py: Python<'_>,
+    file_paths: Vec<String>,
+    workspace_root: String,
+) -> PyResult<PyArrowBatch> {
+    // ... implementation
+}
+```
+
+### Phase 4: Update Python Indexing Flow
+Modify `WorkspaceScanner.index_workspace()`:
+
+```python
+# Before
+buffer = IndexingBuffer(max_symbols=512)
+for res in batch_results:
+    buffer.add_result(...)  # Accumulates PySymbol objects
+
+# After
+buffer = ArrowIndexingBuffer(max_rows=512)
+arrow_batch = miller_core.extract_files_to_arrow(paths, workspace_root)
+buffer.add_batch(arrow_batch)  # Just stores RecordBatch reference
+```
+
+### Phase 5: Update VectorStore for Arrow Input
+
+```python
+def add_arrow_batch(self, symbols_batch: pa.RecordBatch, vectors: np.ndarray) -> int:
+    """Add symbols from Arrow batch with embeddings."""
+    # Add vector column to batch
+    vector_array = pa.FixedSizeListArray.from_arrays(
+        pa.array(vectors.flatten(), pa.float32()),
+        self.dimension
+    )
+    augmented = symbols_batch.append_column("vector", vector_array)
+
+    # Pass directly to LanceDB
+    if self._table is None:
+        self._table = self.db.create_table(self.table_name, augmented)
+    else:
+        self._table.add(augmented)
+
+    return symbols_batch.num_rows
+```
+
+### Phase 6: Update SQLite Storage for Arrow Input
+
+Option A: Extract columns as lists (simple, uses existing executemany):
+```python
+def add_symbols_from_arrow(self, symbols_batch: pa.RecordBatch) -> int:
+    tuples = list(zip(
+        symbols_batch.column("id").to_pylist(),
+        symbols_batch.column("name").to_pylist(),
+        # ... etc
+    ))
+    cursor.executemany(INSERT_SQL, tuples)
+```
+
+Option B: Use Polars (faster for large batches):
+```python
+import polars as pl
+
+def add_symbols_from_arrow(self, symbols_batch: pa.RecordBatch) -> int:
+    df = pl.from_arrow(symbols_batch)
+    df.write_database("symbols", self.conn, if_table_exists="append")
+```
+
+### Phase 7: Maintain Backward Compatibility
+Keep existing `extract_files_batch_with_io()` for:
+- Existing tests
+- Gradual migration
+- Fallback if Arrow path fails
+
+Add a feature flag or config option to switch between modes.
+
+## Testing Strategy
+
+1. **Unit Tests**: Arrow schema validation, column types
+2. **Integration Tests**: Full indexing pipeline with Arrow path
+3. **Benchmarks**: Compare GC pressure and throughput:
+   - Memory profiling with `tracemalloc`
+   - Indexing time comparison
+   - GC collection counts
+
+## Expected Benefits
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Python objects created | ~75M | ~10 | 7,500,000x fewer |
+| Memory churn | High | Minimal | Stable memory |
+| GC collections | Many | Few | Faster throughput |
+| Indexing time | Baseline | -30-50% | Faster |
+
+## Risks and Mitigations
+
+1. **Arrow version conflicts**: Pin versions carefully, test with LanceDB
+2. **pyo3-arrow compatibility**: May need to match pyo3 version (currently 0.27.1)
+3. **Increased Rust complexity**: More code in bindings layer
+4. **Embedding generation**: Still needs Python objects for model input
+   - Mitigation: Only convert necessary text fields for embedding
+
+## Implementation Order
+
+1. ✓ Phase 1: Add Rust dependencies
+2. ✓ Phase 2: Define Arrow schemas
+3. Phase 3: Implement `extract_files_to_arrow()`
+4. Phase 4: Create `ArrowIndexingBuffer`
+5. Phase 5: Add `VectorStore.add_arrow_batch()`
+6. Phase 6: Add SQLite Arrow methods
+7. Phase 7: Integration and testing
+
+
+--- END OF FILE PLAN_ARROW_EXTRACTION.md ---
+
+--- START OF FILE check_device.py ---
+
+#!/usr/bin/env python3
+"""
+Quick diagnostic to check GPU/CPU device availability for embeddings.
+
+Run this to verify hardware acceleration is working before starting Miller.
+"""
+
+import torch
+import sys
+
+print("=" * 60)
+print("Miller Hardware Acceleration Diagnostic")
+print("=" * 60)
+print()
+
+# Check PyTorch version
+print(f"PyTorch version: {torch.__version__}")
+print()
+
+# Check CUDA (NVIDIA GPUs)
+print("🔍 Checking NVIDIA CUDA:")
+if torch.cuda.is_available():
+    print(f"  ✅ CUDA available: {torch.version.cuda}")
+    print(f"  🎮 GPU count: {torch.cuda.device_count()}")
+    for i in range(torch.cuda.device_count()):
+        print(f"  📊 GPU {i}: {torch.cuda.get_device_name(i)}")
+        props = torch.cuda.get_device_properties(i)
+        print(f"     Memory: {props.total_memory / 1024**3:.1f} GB")
+        print(f"     Compute Capability: {props.major}.{props.minor}")
+else:
+    print("  ❌ CUDA not available")
+print()
+
+# Check MPS (Apple Silicon)
+print("🔍 Checking Apple Silicon MPS:")
+if hasattr(torch.backends, 'mps'):
+    if torch.backends.mps.is_available():
+        print("  ✅ MPS (Metal Performance Shaders) available")
+        print("  🍎 Apple Silicon GPU acceleration enabled")
+    else:
+        print("  ❌ MPS not available (requires macOS 12.3+ and Apple Silicon)")
+else:
+    print("  ❌ MPS not supported in this PyTorch version")
+print()
+
+# Check DirectML (Windows AMD/Intel GPUs)
+print("🔍 Checking DirectML (Windows AMD/Intel):")
+try:
+    import torch_directml
+    if torch_directml.is_available():
+        print("  ✅ DirectML available")
+        print("  🪟 Windows GPU acceleration enabled (AMD/Intel)")
+        device_count = torch_directml.device_count()
+        print(f"  📊 DirectML devices: {device_count}")
+        for i in range(device_count):
+            print(f"     Device {i}: {torch_directml.device_name(i)}")
+        directml_available = True
+    else:
+        print("  ❌ DirectML installed but not available")
+        directml_available = False
+except ImportError:
+    print("  ❌ DirectML not installed")
+    print("     Install: pip install torch-directml")
+    directml_available = False
+print()
+
+# Determine what Miller will use
+print("🎯 Miller will use:")
+if torch.cuda.is_available():
+    device = "cuda"
+    print(f"  🚀 CUDA GPU: {torch.cuda.get_device_name(0)}")
+elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+    device = "mps"
+    print("  🍎 Apple Silicon MPS")
+elif directml_available:
+    device = "directml"
+    print("  🪟 DirectML (Windows AMD/Intel GPU)")
+else:
+    device = "cpu"
+    print("  💻 CPU (no GPU acceleration)")
+print()
+
+# Quick speed test
+print("⚡ Quick benchmark:")
+from time import time
+
+# Create random tensor
+x = torch.randn(1000, 384)
+
+# CPU test
+start = time()
+_ = torch.mm(x, x.T)
+cpu_time = (time() - start) * 1000
+print(f"  CPU: {cpu_time:.2f}ms")
+
+# GPU test (if available)
+if device in ["cuda", "mps", "directml"]:
+    try:
+        if device == "directml":
+            import torch_directml
+            dml_device = torch_directml.device()
+            x_gpu = x.to(dml_device)
+        else:
+            x_gpu = x.to(device)
+
+        # Warmup
+        _ = torch.mm(x_gpu, x_gpu.T)
+        if device == "cuda":
+            torch.cuda.synchronize()
+
+        start = time()
+        _ = torch.mm(x_gpu, x_gpu.T)
+        if device == "cuda":
+            torch.cuda.synchronize()
+        gpu_time = (time() - start) * 1000
+
+        speedup = cpu_time / gpu_time
+        print(f"  {device.upper()}: {gpu_time:.2f}ms ({speedup:.1f}x faster)")
+    except Exception as e:
+        print(f"  {device.upper()}: Benchmark failed - {e}")
+print()
+
+print("=" * 60)
+print("✅ Diagnostic complete!")
+print()
+
+if device == "cpu":
+    print("⚠️  WARNING: No GPU detected!")
+    print("   Embeddings will run on CPU (10-50x slower)")
+    print()
+    print("   For faster indexing:")
+    print("   - macOS: Use Apple Silicon Mac (M1/M2/M3/M4)")
+    print("   - Windows/Linux (NVIDIA): Install CUDA toolkit")
+    print("   - Windows (AMD/Intel): Install torch-directml")
+    print("     pip uninstall torch")
+    print("     pip install torch-directml")
+else:
+    print(f"✅ GPU acceleration enabled ({device.upper()})")
+    print("   Embeddings will run on GPU (10-50x faster than CPU)")
+    if device == "directml":
+        print()
+        print("   ⚠️  DirectML is experimental - may have compatibility issues")
+        print("   If you encounter errors, switch back to CPU:")
+        print("     pip uninstall torch-directml")
+        print("     pip install torch")
+
+print("=" * 60)
+
+
+--- END OF FILE check_device.py ---
+
 --- START OF FILE docs/TOOL_AUDIT_FINDINGS.md ---
 
 # Miller Tool Audit Findings
@@ -12353,7 +12353,12 @@ from pathlib import Path
 
 from pathspec import PathSpec
 
-from miller.ignore_defaults import DEFAULT_IGNORES, VENDOR_DIRECTORY_NAMES
+from miller.ignore_defaults import (
+    DEFAULT_IGNORES,
+    DEFAULT_MAX_FILE_SIZE,
+    EXTENSION_SIZE_LIMITS,
+    VENDOR_DIRECTORY_NAMES,
+)
 
 # Get logger instance
 logger = logging.getLogger("miller.ignore_patterns")
@@ -12390,13 +12395,79 @@ def load_gitignore(workspace_root: Path) -> PathSpec:
     return PathSpec.from_lines("gitwildmatch", patterns)
 
 
-def should_ignore(file_path: Path, workspace_root: Path) -> bool:
+# ═══════════════════════════════════════════════════════════════════════════════
+# File Size Filtering
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def get_max_file_size(extension: str) -> int:
     """
-    Check if a file should be ignored based on .gitignore patterns.
+    Get the maximum allowed file size for a given extension.
+
+    Args:
+        extension: File extension including dot (e.g., ".py", ".md")
+
+    Returns:
+        Maximum file size in bytes (uses DEFAULT_MAX_FILE_SIZE if no override)
+    """
+    # Normalize extension to lowercase with leading dot
+    ext = extension.lower()
+    if not ext.startswith("."):
+        ext = f".{ext}"
+
+    # Check for extension-specific limit
+    if ext in EXTENSION_SIZE_LIMITS:
+        return EXTENSION_SIZE_LIMITS[ext]
+
+    # Special case: .d.ts files (compound extension)
+    if ext == ".ts" and extension.lower().endswith(".d.ts"):
+        return EXTENSION_SIZE_LIMITS.get(".d.ts", DEFAULT_MAX_FILE_SIZE)
+
+    return DEFAULT_MAX_FILE_SIZE
+
+
+def is_file_too_large(file_path: Path, max_size: int | None = None) -> bool:
+    """
+    Check if a file exceeds its size limit.
+
+    Args:
+        file_path: Path to the file to check
+        max_size: Optional explicit size limit (overrides extension-based limit)
+
+    Returns:
+        True if file is too large, False otherwise
+    """
+    try:
+        file_size = file_path.stat().st_size
+    except OSError:
+        # Can't stat file - don't filter it out
+        return False
+
+    # Use explicit limit if provided, otherwise derive from extension
+    if max_size is not None:
+        limit = max_size
+    else:
+        # Get extension (handle compound extensions like .d.ts)
+        suffix = file_path.suffix.lower()
+        name = file_path.name.lower()
+
+        # Check for .d.ts specifically
+        if name.endswith(".d.ts"):
+            limit = EXTENSION_SIZE_LIMITS.get(".d.ts", DEFAULT_MAX_FILE_SIZE)
+        else:
+            limit = get_max_file_size(suffix)
+
+    return file_size > limit
+
+
+def should_ignore(file_path: Path, workspace_root: Path, check_size: bool = False) -> bool:
+    """
+    Check if a file should be ignored based on .gitignore patterns and optionally size.
 
     Args:
         file_path: Absolute path to file
         workspace_root: Absolute path to workspace root
+        check_size: If True, also filter files that exceed size limits
 
     Returns:
         True if file should be ignored, False otherwise
@@ -12410,17 +12481,26 @@ def should_ignore(file_path: Path, workspace_root: Path) -> bool:
         # File is not in workspace, ignore it
         return True
 
-    # PathSpec.match_file expects string path
-    return spec.match_file(str(relative_path))
+    # Check pattern-based ignore first
+    if spec.match_file(str(relative_path)):
+        return True
+
+    # Optionally check file size
+    if check_size and is_file_too_large(file_path):
+        logger.debug(f"📏 Skipping oversized file: {relative_path}")
+        return True
+
+    return False
 
 
-def filter_files(files: list[Path], workspace_root: Path) -> list[Path]:
+def filter_files(files: list[Path], workspace_root: Path, check_size: bool = False) -> list[Path]:
     """
     Filter a list of files, removing ignored paths.
 
     Args:
         files: List of file paths to filter
         workspace_root: Workspace root directory
+        check_size: If True, also filter files that exceed size limits
 
     Returns:
         Filtered list of files (non-ignored only)
@@ -12440,9 +12520,16 @@ def filter_files(files: list[Path], workspace_root: Path) -> list[Path]:
             # Not in workspace, skip
             continue
 
-        # Check if should be ignored
-        if not spec.match_file(str(relative_path)):
-            filtered.append(file_path)
+        # Check pattern-based ignore
+        if spec.match_file(str(relative_path)):
+            continue
+
+        # Optionally check file size
+        if check_size and is_file_too_large(file_path):
+            logger.debug(f"📏 Filtering oversized file: {relative_path}")
+            continue
+
+        filtered.append(file_path)
 
     return filtered
 
@@ -12704,61 +12791,18 @@ def generate_millerignore(workspace_root: Path, patterns: list[str]) -> None:
     content = f"""# .millerignore - Miller Code Intelligence Exclusion Patterns
 # Auto-generated by Miller on {datetime.now().strftime("%Y-%m-%d")}
 #
-# ═══════════════════════════════════════════════════════════════
-# What Miller Did Automatically
-# ═══════════════════════════════════════════════════════════════
-# Miller analyzed your project and detected vendor/third-party code patterns.
-# These patterns exclude files from:
-# • Symbol extraction (function/class definitions)
-# • Semantic search embeddings (AI-powered search)
+# These patterns exclude files from symbol extraction and semantic search.
+# Files can still be searched as TEXT using fast_search(method="text").
 #
-# Files can still be searched as TEXT using fast_search(method="text"),
-# but won't clutter symbol navigation or semantic search results.
+# To modify: Add/remove patterns (gitignore syntax), then run
+# manage_workspace(operation="refresh") to reindex.
 #
-# ═══════════════════════════════════════════════════════════════
-# Why Exclude Vendor Code?
-# ═══════════════════════════════════════════════════════════════
-# 1. Search Quality: Prevents vendor code from polluting search results
-# 2. Performance: Skips symbol extraction for thousands of vendor functions
-# 3. Relevance: Semantic search focuses on YOUR code, not libraries
-#
-# ═══════════════════════════════════════════════════════════════
-# How to Modify This File
-# ═══════════════════════════════════════════════════════════════
-# • Add patterns: Just add new lines with glob patterns (gitignore syntax)
-# • Remove patterns: Delete lines or comment out with #
-# • Check impact: Use manage_workspace(operation="health")
-#
-# FALSE POSITIVE? If Miller excluded something important:
-# 1. Delete or comment out the pattern below
-# 2. Run manage_workspace(operation="refresh") to reindex
-#
-# DISABLE AUTO-GENERATION: Create this file manually before first run
-#
-# ═══════════════════════════════════════════════════════════════
-# Auto-Detected Vendor Directories
-# ═══════════════════════════════════════════════════════════════
+# Auto-Detected Vendor Directories:
 {pattern_lines}
 
-# ═══════════════════════════════════════════════════════════════
-# Common Patterns (Uncomment if needed in your project)
-# ═══════════════════════════════════════════════════════════════
+# Common Patterns (uncomment if needed):
 # *.min.js
 # *.min.css
-# jquery*.js
-# bootstrap*.js
-# angular*.js
-# react*.js
-
-# ═══════════════════════════════════════════════════════════════
-# Debugging: If Search Isn't Finding Files
-# ═══════════════════════════════════════════════════════════════
-# Use manage_workspace(operation="health") to see:
-# • How many files are excluded by each pattern
-# • Whether patterns are too broad
-#
-# If a pattern excludes files it shouldn't, comment it out or make
-# it more specific (e.g., "src/vendor/lib/" vs "lib/")
 """
 
     millerignore_path = workspace_root / ".millerignore"
@@ -12776,6 +12820,54 @@ Default ignore patterns and vendor directory constants.
 This module contains the static configuration used by ignore_patterns.py.
 Separated for cleaner file organization and 500-line compliance.
 """
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# File Size Limits
+# ═══════════════════════════════════════════════════════════════════════════════
+# Files larger than these limits are skipped during indexing.
+# This prevents memory/performance issues with huge generated files.
+
+# Default max file size: 1MB (1,048,576 bytes)
+# Files without an extension-specific limit use this default.
+DEFAULT_MAX_FILE_SIZE = 1_048_576
+
+# Per-extension size overrides (in bytes)
+# Some file types legitimately need larger limits:
+# - Documentation (markdown, rst) can be large but valuable
+# - Data files (json, yaml) might contain important configs
+# - Generated types (d.ts) can be large but useful for navigation
+EXTENSION_SIZE_LIMITS: dict[str, int] = {
+    # ═══════════════════════════════════════════
+    # Documentation - Allow larger files (5MB)
+    # These are human-written and valuable for search
+    # ═══════════════════════════════════════════
+    ".md": 5_242_880,       # 5MB - README, docs, changelogs
+    ".rst": 5_242_880,      # 5MB - Sphinx documentation
+    ".txt": 2_097_152,      # 2MB - Plain text docs
+    ".adoc": 5_242_880,     # 5MB - AsciiDoc
+    # ═══════════════════════════════════════════
+    # Config/Data files - Allow larger (2MB)
+    # Often contain important project configuration
+    # ═══════════════════════════════════════════
+    ".json": 2_097_152,     # 2MB - Config, but not data dumps
+    ".yaml": 2_097_152,     # 2MB - Config files
+    ".yml": 2_097_152,      # 2MB - Config files
+    ".toml": 2_097_152,     # 2MB - Cargo.toml, pyproject.toml
+    ".xml": 2_097_152,      # 2MB - Config, project files
+    # ═══════════════════════════════════════════
+    # Type definitions - Allow larger (3MB)
+    # Generated but useful for navigation/completion
+    # ═══════════════════════════════════════════
+    ".d.ts": 3_145_728,     # 3MB - TypeScript definitions
+    ".pyi": 3_145_728,      # 3MB - Python type stubs
+    # ═══════════════════════════════════════════
+    # Stricter limits - Compiled/minified likely
+    # ═══════════════════════════════════════════
+    ".js": 512_000,         # 500KB - Often bundled/minified
+    ".css": 512_000,        # 500KB - Often bundled/minified
+    ".cs": 1_048_576,       # 1MB - C# (default, but explicit)
+    ".java": 1_048_576,     # 1MB - Java (default, but explicit)
+}
 
 # Default ignore patterns (always applied)
 # Based on Julie's battle-tested blacklist from production use
@@ -12849,10 +12941,18 @@ DEFAULT_IGNORES = [
     "temp/",
     ".sass-cache/",
     "*.tmp",
+    "*.tmp.*",  # Editor temp files: file.tmp.12345
     "*.temp",
     "*.swp",
     "*.lock",
     "*.pid",
+    # Editor backup/temp files
+    "*~",  # Vim/Emacs backup files
+    "*.bak",  # Generic backup files
+    "[#]*[#]",  # Emacs auto-save files (#filename#)
+    ".#*",  # Emacs lock files
+    "*.orig",  # Git merge conflict originals
+    "*.rej",  # Patch reject files
     # ═══════════════════════════════════════════
     # Code Intelligence Tools (our own dirs)
     # ═══════════════════════════════════════════
@@ -26946,24 +27046,45 @@ class StorageManager:
     # Arrow-based batch operations (zero-copy from Rust)
 
     def add_symbols_from_arrow(
-        self, symbols_table: "pa.Table", code_context_map: Optional[dict[str, str]] = None
+        self,
+        symbols_table: "pa.Table",
+        code_context_map: Optional[dict[str, str]] = None,
+        workspace_id: str = "primary",
     ) -> int:
         """Bulk insert symbols from Arrow table (zero-copy path)."""
         return arrow_mutations.add_symbols_from_arrow(
-            self.conn, symbols_table, code_context_map
+            self.conn, symbols_table, code_context_map, workspace_id
         )
 
-    def add_identifiers_from_arrow(self, identifiers_table: "pa.Table") -> int:
+    def add_identifiers_from_arrow(
+        self,
+        identifiers_table: "pa.Table",
+        workspace_id: str = "primary",
+    ) -> int:
         """Bulk insert identifiers from Arrow table."""
-        return arrow_mutations.add_identifiers_from_arrow(self.conn, identifiers_table)
+        return arrow_mutations.add_identifiers_from_arrow(
+            self.conn, identifiers_table, workspace_id
+        )
 
-    def add_relationships_from_arrow(self, relationships_table: "pa.Table") -> int:
+    def add_relationships_from_arrow(
+        self,
+        relationships_table: "pa.Table",
+        workspace_id: str = "primary",
+    ) -> int:
         """Bulk insert relationships from Arrow table."""
-        return arrow_mutations.add_relationships_from_arrow(self.conn, relationships_table)
+        return arrow_mutations.add_relationships_from_arrow(
+            self.conn, relationships_table, workspace_id
+        )
 
-    def add_files_from_arrow(self, files_table: "pa.Table") -> int:
+    def add_files_from_arrow(
+        self,
+        files_table: "pa.Table",
+        workspace_id: str = "primary",
+    ) -> int:
         """Bulk insert file records from Arrow table."""
-        return arrow_mutations.add_files_from_arrow(self.conn, files_table)
+        return arrow_mutations.add_files_from_arrow(
+            self.conn, files_table, workspace_id
+        )
 
     def get_relationships_by_file(self, file_path: str) -> list[dict]:
         """Get all relationships in a file."""
@@ -27817,6 +27938,7 @@ def add_symbols_from_arrow(
     conn: sqlite3.Connection,
     symbols_table: pa.Table,
     code_context_map: Optional[dict[str, str]] = None,
+    workspace_id: str = "primary",
 ) -> int:
     """
     Bulk insert symbols from Arrow table.
@@ -27830,10 +27952,13 @@ def add_symbols_from_arrow(
         conn: SQLite connection
         symbols_table: PyArrow Table with symbol columns
         code_context_map: Optional dict mapping symbol_id to computed code_context
+        workspace_id: Workspace identifier for multi-workspace support
 
     Returns:
         Number of symbols inserted
     """
+    from ..workspace_paths import make_qualified_path
+
     if symbols_table.num_rows == 0:
         return 0
 
@@ -27859,12 +27984,16 @@ def add_symbols_from_arrow(
             code_context_map.get(ids[i]) if code_context_map else None
         ) or code_contexts[i]
 
+        # Qualify file_path with workspace_id for multi-workspace support
+        qualified_path = make_qualified_path(workspace_id, _normalize_path(file_paths[i]))
+
         symbol_data.append((
             ids[i],
+            workspace_id,
             names[i],
             kinds[i],
             languages[i],
-            _normalize_path(file_paths[i]),
+            qualified_path,
             signatures[i],
             start_lines[i],
             0,  # start_col (default)
@@ -27887,12 +28016,12 @@ def add_symbols_from_arrow(
     conn.executemany(
         """
         INSERT OR REPLACE INTO symbols (
-            id, name, kind, language, file_path,
+            id, workspace_id, name, kind, language, file_path,
             signature, start_line, start_col, end_line, end_col,
             start_byte, end_byte, doc_comment, visibility, code_context,
             parent_id, metadata, file_hash, last_indexed,
             semantic_group, confidence, content_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         symbol_data,
     )
@@ -27904,6 +28033,7 @@ def add_symbols_from_arrow(
 def add_identifiers_from_arrow(
     conn: sqlite3.Connection,
     identifiers_table: pa.Table,
+    workspace_id: str = "primary",
 ) -> int:
     """
     Bulk insert identifiers from Arrow table.
@@ -27911,10 +28041,13 @@ def add_identifiers_from_arrow(
     Args:
         conn: SQLite connection
         identifiers_table: PyArrow Table with identifier columns
+        workspace_id: Workspace identifier for multi-workspace support
 
     Returns:
         Number of identifiers inserted
     """
+    from ..workspace_paths import make_qualified_path
+
     if identifiers_table.num_rows == 0:
         return 0
 
@@ -27935,14 +28068,15 @@ def add_identifiers_from_arrow(
     confidences = identifiers_table.column("confidence").to_pylist()
     code_contexts = identifiers_table.column("code_context").to_pylist()
 
-    # Build tuples
+    # Build tuples with qualified file paths
     identifier_data = [
         (
             ids[i],
+            workspace_id,
             names[i],
             kinds[i],
             languages[i],
-            _normalize_path(file_paths[i]),
+            make_qualified_path(workspace_id, _normalize_path(file_paths[i])),
             start_lines[i],
             start_columns[i],
             end_lines[i],
@@ -27961,11 +28095,11 @@ def add_identifiers_from_arrow(
     conn.executemany(
         """
         INSERT OR REPLACE INTO identifiers (
-            id, name, kind, language, file_path,
+            id, workspace_id, name, kind, language, file_path,
             start_line, start_col, end_line, end_col,
             start_byte, end_byte, containing_symbol_id, target_symbol_id,
             confidence, code_context, last_indexed
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         identifier_data,
     )
@@ -27977,6 +28111,7 @@ def add_identifiers_from_arrow(
 def add_relationships_from_arrow(
     conn: sqlite3.Connection,
     relationships_table: pa.Table,
+    workspace_id: str = "primary",
 ) -> int:
     """
     Bulk insert relationships from Arrow table.
@@ -27984,10 +28119,13 @@ def add_relationships_from_arrow(
     Args:
         conn: SQLite connection
         relationships_table: PyArrow Table with relationship columns
+        workspace_id: Workspace identifier for multi-workspace support
 
     Returns:
         Number of relationships inserted
     """
+    from ..workspace_paths import make_qualified_path
+
     if relationships_table.num_rows == 0:
         return 0
 
@@ -28000,14 +28138,15 @@ def add_relationships_from_arrow(
     line_numbers = relationships_table.column("line_number").to_pylist()
     confidences = relationships_table.column("confidence").to_pylist()
 
-    # Build tuples
+    # Build tuples with qualified file paths
     relationship_data = [
         (
             ids[i],
+            workspace_id,
             from_ids[i],
             to_ids[i],
             kinds[i],
-            _normalize_path(file_paths[i]),
+            make_qualified_path(workspace_id, _normalize_path(file_paths[i])) if file_paths[i] else None,
             line_numbers[i],
             confidences[i],
             None,  # metadata
@@ -28019,9 +28158,9 @@ def add_relationships_from_arrow(
     conn.executemany(
         """
         INSERT OR REPLACE INTO relationships (
-            id, from_symbol_id, to_symbol_id, kind,
+            id, workspace_id, from_symbol_id, to_symbol_id, kind,
             file_path, line_number, confidence, metadata, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         relationship_data,
     )
@@ -28033,6 +28172,7 @@ def add_relationships_from_arrow(
 def add_files_from_arrow(
     conn: sqlite3.Connection,
     files_table: pa.Table,
+    workspace_id: str = "primary",
 ) -> int:
     """
     Bulk insert file records from Arrow table.
@@ -28040,10 +28180,13 @@ def add_files_from_arrow(
     Args:
         conn: SQLite connection
         files_table: PyArrow Table with file columns
+        workspace_id: Workspace identifier for multi-workspace support
 
     Returns:
         Number of files inserted
     """
+    from ..workspace_paths import make_qualified_path
+
     if files_table.num_rows == 0:
         return 0
 
@@ -28056,10 +28199,11 @@ def add_files_from_arrow(
     hashes = files_table.column("hash").to_pylist()
     sizes = files_table.column("size").to_pylist()
 
-    # Build tuples
+    # Build tuples with qualified paths
     file_data = [
         (
-            _normalize_path(paths[i]),
+            make_qualified_path(workspace_id, _normalize_path(paths[i])),
+            workspace_id,
             languages[i],
             contents[i],
             hashes[i],
@@ -28073,8 +28217,8 @@ def add_files_from_arrow(
     conn.executemany(
         """
         INSERT OR REPLACE INTO files (
-            path, language, content, hash, size, last_modified, last_indexed
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            path, workspace_id, language, content, hash, size, last_modified, last_indexed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         file_data,
     )
@@ -32667,8 +32811,10 @@ BEFORE descending into them. This is critical on Windows where walking into
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from ..ignore_patterns import is_file_too_large
 
 logger = logging.getLogger("miller.workspace")
 
@@ -32690,6 +32836,8 @@ class WorkspaceScanResult:
     all_paths: set[str]  # Relative paths as strings (for DB comparison)
     max_mtime: int  # Newest file modification time
     vendor_detection_needed: bool  # Whether vendor detection was performed
+    size_skipped: int = 0  # Count of files skipped due to size limits
+    size_skipped_files: list[str] = field(default_factory=list)  # Paths of skipped files (first 10)
 
 
 def _optimized_walk(workspace_root: Path, ignore_spec):
@@ -32751,6 +32899,7 @@ def scan_workspace(
     workspace_root: Path,
     ignore_spec,
     perform_vendor_detection: bool = False,
+    check_file_size: bool = True,
 ) -> WorkspaceScanResult:
     """
     Single-pass workspace scan that collects ALL needed information.
@@ -32763,6 +32912,7 @@ def scan_workspace(
         workspace_root: Root directory of workspace
         ignore_spec: Pathspec for .gitignore/.millerignore patterns
         perform_vendor_detection: Whether to check for vendor patterns
+        check_file_size: Whether to skip files exceeding size limits (default: True)
 
     Returns:
         WorkspaceScanResult with all scan data
@@ -32787,6 +32937,8 @@ def scan_workspace(
     indexable_files: list[Path] = []
     all_paths: set[str] = set()
     max_mtime = 0
+    size_skipped = 0
+    size_skipped_files: list[str] = []
 
     # Use optimized walk with directory pruning
     for file_path, rel_str in _optimized_walk(workspace_root, ignore_spec):
@@ -32797,6 +32949,14 @@ def scan_workspace(
         # Check if language is supported
         language = miller_core.detect_language(str(file_path))
         if language:
+            # Check file size (skip oversized files)
+            if check_file_size and is_file_too_large(file_path):
+                size_skipped += 1
+                # Track first 10 skipped files for logging/debugging
+                if len(size_skipped_files) < 10:
+                    size_skipped_files.append(rel_str)
+                continue
+
             indexable_files.append(file_path)
             # Only add to all_paths if file will actually be indexed
             # Text files are discovered (for vendor detection) but not indexed,
@@ -32812,11 +32972,21 @@ def scan_workspace(
             except OSError:
                 pass  # Can't stat, skip mtime tracking
 
+    # Log size-skipped files summary
+    if size_skipped > 0:
+        logger.info(f"📏 Skipped {size_skipped} oversized files")
+        for skipped in size_skipped_files[:5]:
+            logger.debug(f"   📏 {skipped}")
+        if size_skipped > 5:
+            logger.debug(f"   ... and {size_skipped - 5} more")
+
     return WorkspaceScanResult(
         indexable_files=indexable_files,
         all_paths=all_paths,
         max_mtime=max_mtime,
         vendor_detection_needed=needs_vendor_detection,
+        size_skipped=size_skipped,
+        size_skipped_files=size_skipped_files,
     )
 
 
@@ -32824,6 +32994,7 @@ def walk_directory(
     workspace_root: Path,
     ignore_spec,
     perform_vendor_detection: bool = False,
+    check_file_size: bool = True,
 ) -> tuple[list[Path], bool]:
     """
     Walk workspace directory and find indexable files.
@@ -32835,6 +33006,7 @@ def walk_directory(
         workspace_root: Root directory of workspace
         ignore_spec: Pathspec for .gitignore/.millerignore patterns
         perform_vendor_detection: Whether to perform smart vendor detection
+        check_file_size: Whether to skip files exceeding size limits (default: True)
 
     Returns:
         Tuple of (list of file paths, bool indicating if vendor detection was performed)
@@ -32863,6 +33035,10 @@ def walk_directory(
         # Check if language is supported
         language = miller_core.detect_language(str(file_path))
         if language:
+            # Check file size (skip oversized files)
+            if check_file_size and is_file_too_large(file_path):
+                continue
+
             indexable_files.append(file_path)
             if needs_vendor_detection:
                 all_files_for_analysis.append(file_path)
@@ -33693,10 +33869,16 @@ Handles:
 - Change detection (hash-based)
 - Incremental indexing
 - Cleanup of deleted files
+
+Environment Variables:
+- MILLER_USE_ARROW: Set to "1" or "true" to enable Arrow-based extraction (default: true).
+                    This eliminates ~75M Python allocations for large codebases.
+                    Set to "0" or "false" to use legacy PyO3 object path.
 """
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -33714,6 +33896,7 @@ from .index_stats import IndexStats
 from . import discovery
 from .indexer import compute_code_context
 from .buffer import IndexingBuffer
+from .arrow_buffer import ArrowIndexingBuffer
 
 # Get logger instance
 logger = logging.getLogger("miller.workspace")
@@ -33835,6 +34018,138 @@ class WorkspaceScanner:
         # native code (LanceDB/Arrow, PyTorch CUDA) during heavy indexing.
         # Memory cleanup will happen at the end of index_workspace() instead.
         buffer.clear()
+
+    async def _flush_buffer_arrow(
+        self,
+        buffer: ArrowIndexingBuffer,
+        stats: IndexStats,
+        timings: dict,
+    ) -> None:
+        """
+        Flush Arrow buffer to database and vector store (zero-copy path).
+
+        This is the Arrow-based version of _flush_buffer that eliminates
+        ~75 million Python object allocations for large codebases by:
+        1. Keeping data in Arrow columnar format from Rust extraction
+        2. Passing Arrow tables directly to LanceDB (native Arrow support)
+        3. Extracting columns for SQLite only at the final write step
+
+        Args:
+            buffer: ArrowIndexingBuffer with accumulated Arrow RecordBatches
+            stats: IndexStats to update
+            timings: Dict to accumulate timing data
+        """
+        if buffer.is_empty():
+            return
+
+        logger.info(
+            f"🌊 Flushing Arrow buffer: {buffer.symbol_count} symbols, "
+            f"{buffer.file_count} files"
+        )
+
+        # Get concatenated Arrow tables
+        symbols_table = buffer.get_symbols_table()
+        identifiers_table = buffer.get_identifiers_table()
+        relationships_table = buffer.get_relationships_table()
+        files_table = buffer.get_files_table()
+
+        # Filter out "text" files from files_table to match scan_workspace behavior
+        # Text files are discovered but not tracked for incremental indexing
+        import pyarrow.compute as pc
+        if files_table.num_rows > 0:
+            language_col = files_table.column("language")
+            mask = pc.not_equal(language_col, "text")
+            files_table = files_table.filter(mask)
+
+        # Pre-compute qualified paths for files_to_clean (used in both SQLite and LanceDB)
+        qualified_files_to_clean = []
+        if buffer.files_to_clean:
+            from ..workspace_paths import make_qualified_path
+            qualified_files_to_clean = [
+                make_qualified_path(self.workspace_id, p) for p in buffer.files_to_clean
+            ]
+
+        # Embedding (GPU) - extract only the text fields needed
+        all_vectors = None
+        if symbols_table.num_rows > 0:
+            embedding_start = time.time()
+            # Get embedding texts from Arrow buffer (minimal Python strings)
+            # This is the ONLY place we create Python strings in the Arrow path
+            embedding_texts = buffer.get_embedding_texts()
+            all_vectors = self.embeddings.embed_texts(embedding_texts)
+            timings["embedding"] += time.time() - embedding_start
+
+        # SQLite writes (files, symbols, identifiers, relationships)
+        try:
+            db_start = time.time()
+
+            # Temporarily disable FK constraints for batch insert
+            # Arrow data is internally consistent from Rust extraction, but
+            # identifiers/relationships may reference symbols from other files
+            # that aren't in this batch (cross-file references are common)
+            self.storage.conn.execute("PRAGMA foreign_keys = OFF")
+            try:
+                # Delete old data for files being updated
+                if qualified_files_to_clean:
+                    self.storage.delete_files_batch(qualified_files_to_clean)
+
+                # Insert new data from Arrow tables
+                self.storage.add_files_from_arrow(files_table, workspace_id=self.workspace_id)
+                self.storage.add_symbols_from_arrow(symbols_table, workspace_id=self.workspace_id)
+                self.storage.add_identifiers_from_arrow(identifiers_table, workspace_id=self.workspace_id)
+                self.storage.add_relationships_from_arrow(relationships_table, workspace_id=self.workspace_id)
+            finally:
+                # Re-enable FK constraints
+                self.storage.conn.execute("PRAGMA foreign_keys = ON")
+
+            timings["db"] += time.time() - db_start
+        except Exception as e:
+            logger.error(f"❌ Arrow buffer flush failed: {e}")
+            stats.errors += buffer.file_count
+            buffer.clear()
+            return
+
+        # LanceDB write (directly from Arrow table)
+        if symbols_table.num_rows > 0 and all_vectors is not None:
+            vector_start = time.time()
+            if qualified_files_to_clean:
+                self.vector_store.delete_files_batch(qualified_files_to_clean)
+            self.vector_store.add_symbols_arrow(
+                symbols_table, all_vectors, workspace_id=self.workspace_id
+            )
+            timings["vector"] += time.time() - vector_start
+
+        # Update stats
+        stats.total_symbols += symbols_table.num_rows
+
+        # Clear buffer - Arrow tables are dropped, freeing contiguous memory blocks
+        buffer.clear()
+
+        # SAFE to gc.collect() here in Arrow path!
+        # Unlike the legacy PyO3 path, Arrow memory is managed by Arrow's allocator,
+        # not Python's gc. After buffer.clear():
+        # 1. Arrow RecordBatches are dropped → memory returned to Arrow pool → OS
+        # 2. SQLite writes are committed → no pending native operations
+        # 3. LanceDB writes are committed → no pending native operations
+        # 4. Only Python intermediates remain (lists from .to_pylist())
+        #
+        # This reclaims memory from:
+        # - Temporary lists created during column extraction
+        # - Any Python string intermediates from embedding text generation
+        # - PyArrow Table wrapper objects (lightweight, but still gc-tracked)
+        import gc
+        gc.collect()
+
+        # On Linux/glibc, explicitly return freed memory to OS
+        # glibc's malloc keeps freed memory in process heap by default (lazy return)
+        # malloc_trim(0) forces return of free memory at top of heap to OS
+        # This turns the memory graph from "staircase" to "sawtooth"
+        try:
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except (OSError, AttributeError):
+            pass  # Not on Linux/glibc, skip
 
     async def _index_file(self, file_path: Path) -> bool:
         """
@@ -33968,8 +34283,17 @@ class WorkspaceScanner:
             return True
 
         # Build lookup structures from DB
-        db_paths = {f["path"] for f in db_files}
-        db_files_map = {f["path"]: f for f in db_files}
+        # Note: DB paths are workspace-qualified ("primary:src/main.py")
+        # We need to compare against disk paths which are relative ("src/main.py")
+        from ..workspace_paths import parse_qualified_path
+
+        db_paths = set()
+        db_files_map = {}
+        for f in db_files:
+            # Extract relative path from qualified path
+            _, rel_path = parse_qualified_path(f["path"])
+            db_paths.add(rel_path)
+            db_files_map[rel_path] = f
 
         # SINGLE filesystem scan - replaces 3 separate rglob() walks!
         scan_result = discovery.scan_workspace(
@@ -34063,8 +34387,16 @@ class WorkspaceScanner:
 
         logger.info(f"📁 File discovery: {len(disk_files)} files found in {discovery_time:.2f}s")
 
-        # Build lookup for DB files (uses relative paths)
-        db_files_map = {f["path"]: f for f in db_files}
+        # Build lookup for DB files
+        # Note: DB paths are workspace-qualified ("primary:src/main.py")
+        # We need to compare against disk paths which are relative ("src/main.py")
+        from ..workspace_paths import parse_qualified_path
+
+        db_files_map = {}
+        for f in db_files:
+            _, rel_path = parse_qualified_path(f["path"])
+            db_files_map[rel_path] = f
+
         disk_files_set = {
             str(f.relative_to(self.workspace_root)).replace("\\", "/") for f in disk_files
         }
@@ -34096,24 +34428,32 @@ class WorkspaceScanner:
             console_mode=server_state.console_mode,
         )
 
-        # Create streaming buffer with optimized thresholds
-        # NOTE: max_symbols is INDEPENDENT of GPU batch_size!
-        # - GPU always processes in batches of embeddings.batch_size (16) internally
-        # - max_symbols controls how many symbols accumulate before flushing to DB/LanceDB
-        # - Larger max_symbols = fewer flushes = less I/O overhead = better throughput
-        # - GPU memory is NOT affected (still processes 16 at a time via model.encode batch_size)
-        buffer = IndexingBuffer(
-            max_symbols=512,  # Accumulate more symbols before flushing (was: batch_size=16)
-            max_files=200,    # Allow more files before forcing flush (was: 50)
-        )
+        # Check if Arrow extraction is enabled (default: True for better memory)
+        use_arrow = os.getenv("MILLER_USE_ARROW", "1").lower() not in ("0", "false", "no", "off")
 
         # Extraction chunk size - small groups for Rust parallelism
         chunk_size = 20
 
-        logger.info(
-            f"📦 Streaming config: symbol_threshold={buffer.max_symbols}, "
-            f"chunk_size={chunk_size} (device: {self.embeddings.device_type})"
-        )
+        if use_arrow:
+            # ARROW PATH: Zero-copy extraction eliminates ~75M Python allocations
+            buffer = ArrowIndexingBuffer(
+                max_symbols=512,
+                max_files=200,
+            )
+            logger.info(
+                f"📦 Arrow streaming config: symbol_threshold={buffer.max_symbols}, "
+                f"chunk_size={chunk_size} (device: {self.embeddings.device_type}) 🚀 ZERO-COPY"
+            )
+        else:
+            # LEGACY PATH: PyO3 object-based extraction (for debugging/fallback)
+            buffer = IndexingBuffer(
+                max_symbols=512,  # Accumulate more symbols before flushing (was: batch_size=16)
+                max_files=200,    # Allow more files before forcing flush (was: 50)
+            )
+            logger.info(
+                f"📦 Legacy streaming config: symbol_threshold={buffer.max_symbols}, "
+                f"chunk_size={chunk_size} (device: {self.embeddings.device_type})"
+            )
 
         # Bulk insert optimization: drop indexes for massive scans
         # Re-creating indexes once at the end is faster than maintaining them
@@ -34132,99 +34472,141 @@ class WorkspaceScanner:
                 chunk = files_to_process[chunk_start:chunk_start + chunk_size]
                 current_batch = chunk_start // chunk_size + 1
 
-                # Prepare paths for Rust I/O (Zero-Copy optimization)
-                # File reading, hashing, and language detection now happen in Rust
+                # Prepare paths for Rust I/O
                 paths_to_extract = []
                 action_map = {}
+                files_to_update = []  # Track files being updated (for cleanup)
 
                 for file_path, action in chunk:
                     relative_path = str(file_path.relative_to(self.workspace_root)).replace("\\", "/")
                     paths_to_extract.append(relative_path)
                     action_map[relative_path] = (file_path, action)
+                    if action == "updated":
+                        files_to_update.append(relative_path)
 
                 if not paths_to_extract:
                     continue
 
-                # Parallel I/O + extraction in Rust (Zero-Copy)
-                # This function reads files, hashes content, detects language,
-                # and extracts symbols all in parallel on Rust worker threads
                 extraction_start = time.time()
-                try:
-                    batch_results = await asyncio.to_thread(
-                        miller_core.extract_files_batch_with_io,
-                        paths_to_extract,
-                        str(self.workspace_root)
-                    )
-                except Exception as e:
-                    logger.error(f"Batch extraction failed: {e}")
-                    stats.errors += len(paths_to_extract)
-                    continue
 
-                timings["extraction"] += time.time() - extraction_start
-
-                # Process BatchFileResult objects
-                for res in batch_results:
-                    # Check for read/extraction errors
-                    if res.error or res.content is None:
-                        logger.warning(f"Failed to process {res.path}: {res.error}")
-                        stats.errors += 1
+                if use_arrow:
+                    # ═══════════════════════════════════════════════════════════════
+                    # ARROW PATH: Zero-copy extraction
+                    # Returns Arrow RecordBatches instead of Python objects
+                    # ═══════════════════════════════════════════════════════════════
+                    try:
+                        arrow_batch = await asyncio.to_thread(
+                            miller_core.extract_files_to_arrow,
+                            paths_to_extract,
+                            str(self.workspace_root)
+                        )
+                    except Exception as e:
+                        logger.error(f"Arrow batch extraction failed: {e}")
+                        stats.errors += len(paths_to_extract)
                         continue
 
-                    # Skip text files (no symbol extraction)
-                    if res.language == "text":
-                        stats.skipped += 1
+                    timings["extraction"] += time.time() - extraction_start
+
+                    # Track stats from Arrow batch
+                    # Count non-text files for accurate stats (text files are filtered before DB storage)
+                    files_batch = arrow_batch.files
+                    non_text_count = 0
+                    if files_batch.num_rows > 0:
+                        import pyarrow.compute as pc
+                        non_text_mask = pc.not_equal(files_batch.column("language"), "text")
+                        non_text_count = pc.sum(non_text_mask).as_py()
+
+                    # Distinguish between updated and newly indexed files
+                    updated_count = min(len(files_to_update), non_text_count)
+                    new_count = non_text_count - updated_count
+                    stats.updated += updated_count
+                    stats.indexed += max(0, new_count)
+                    stats.errors += arrow_batch.files_failed
+                    for err in arrow_batch.errors:
+                        logger.warning(f"Extraction error: {err}")
+
+                    # Add Arrow batch to buffer (just stores RecordBatch references)
+                    buffer.add_arrow_batch(arrow_batch, files_to_update=files_to_update)
+
+                    total_files_processed += arrow_batch.files_processed
+
+                    # Check if buffer should flush
+                    if buffer.should_flush():
+                        await self._flush_buffer_arrow(buffer, stats, timings)
+
+                else:
+                    # ═══════════════════════════════════════════════════════════════
+                    # LEGACY PATH: PyO3 object-based extraction
+                    # Creates Python objects for each symbol (more memory pressure)
+                    # ═══════════════════════════════════════════════════════════════
+                    try:
+                        batch_results = await asyncio.to_thread(
+                            miller_core.extract_files_batch_with_io,
+                            paths_to_extract,
+                            str(self.workspace_root)
+                        )
+                    except Exception as e:
+                        logger.error(f"Batch extraction failed: {e}")
+                        stats.errors += len(paths_to_extract)
                         continue
 
-                    file_path, action = action_map[res.path]
+                    timings["extraction"] += time.time() - extraction_start
 
-                    # Get extraction results ONCE (takes ownership via Rust's .take())
-                    # IMPORTANT: res.results returns None after the first call!
-                    extraction_result = res.results
+                    # Process BatchFileResult objects
+                    for res in batch_results:
+                        # Check for read/extraction errors
+                        if res.error or res.content is None:
+                            logger.warning(f"Failed to process {res.path}: {res.error}")
+                            stats.errors += 1
+                            continue
 
-                    # Ensure path consistency: Force symbol file_paths to match the
-                    # relative_path used in the 'files' table to satisfy Foreign Key
-                    # constraints. Rust may resolve paths differently than Python.
-                    if extraction_result and extraction_result.symbols:
-                        for sym in extraction_result.symbols:
-                            sym.file_path = res.path
+                        # Skip text files (no symbol extraction)
+                        if res.language == "text":
+                            stats.skipped += 1
+                            continue
 
-                        # Also update identifiers if present
-                        if extraction_result.identifiers:
-                            for ident in extraction_result.identifiers:
-                                ident.file_path = res.path
+                        file_path, action = action_map[res.path]
 
-                        # And relationships
-                        if extraction_result.relationships:
-                            for rel in extraction_result.relationships:
-                                rel.file_path = res.path
+                        # Get extraction results ONCE (takes ownership via Rust's .take())
+                        extraction_result = res.results
 
-                    # Track stats
-                    if action == "updated":
-                        stats.updated += 1
-                    else:
-                        stats.indexed += 1
+                        # Ensure path consistency for FK constraints
+                        if extraction_result and extraction_result.symbols:
+                            for sym in extraction_result.symbols:
+                                sym.file_path = res.path
+                            if extraction_result.identifiers:
+                                for ident in extraction_result.identifiers:
+                                    ident.file_path = res.path
+                            if extraction_result.relationships:
+                                for rel in extraction_result.relationships:
+                                    rel.file_path = res.path
 
-                    symbols_added = buffer.add_result(
-                        file_path=file_path,
-                        relative_path=res.path,
-                        action=action,
-                        result=extraction_result,
-                        content=res.content,
-                        language=res.language,
-                        file_hash=res.hash,
-                        code_context_fn=compute_code_context,
-                    )
-                    stats.total_symbols += symbols_added
+                        # Track stats
+                        if action == "updated":
+                            stats.updated += 1
+                        else:
+                            stats.indexed += 1
 
-                total_files_processed += len(paths_to_extract)
+                        symbols_added = buffer.add_result(
+                            file_path=file_path,
+                            relative_path=res.path,
+                            action=action,
+                            result=extraction_result,
+                            content=res.content,
+                            language=res.language,
+                            file_hash=res.hash,
+                            code_context_fn=compute_code_context,
+                        )
+                        stats.total_symbols += symbols_added
+
+                    total_files_processed += len(paths_to_extract)
+
+                    # Check if buffer should flush
+                    if buffer.should_flush():
+                        await self._flush_buffer(buffer, stats, timings)
 
                 # Update progress tracker (visual bar or log entry)
                 progress.update(len(paths_to_extract))
-
-                # Check if buffer should flush (symbol threshold reached)
-                if buffer.should_flush():
-                    await self._flush_buffer(buffer, stats, timings)
-
                 batches_completed += 1
 
             # Log successful loop completion (helps debug premature termination)
@@ -34235,7 +34617,10 @@ class WorkspaceScanner:
 
             # Final flush for remaining data
             if not buffer.is_empty():
-                await self._flush_buffer(buffer, stats, timings)
+                if use_arrow:
+                    await self._flush_buffer_arrow(buffer, stats, timings)
+                else:
+                    await self._flush_buffer(buffer, stats, timings)
 
             # Ensure progress shows 100% at completion
             progress.finish()
@@ -34267,13 +34652,18 @@ class WorkspaceScanner:
 
         # Phase 3: Clean up deleted files
         cleanup_start = time.time()
-        deleted_files = [p for p in db_files_map if p not in disk_files_set]
+        deleted_files_relative = [p for p in db_files_map if p not in disk_files_set]
 
-        if deleted_files:
-            self.storage.delete_files_batch(deleted_files)
-            self.vector_store.delete_files_batch(deleted_files)
-            stats.deleted = len(deleted_files)
-            logger.debug(f"🗑️ Cleaned up {len(deleted_files)} deleted files")
+        if deleted_files_relative:
+            # Convert relative paths back to qualified paths for deletion
+            from ..workspace_paths import make_qualified_path
+            deleted_files_qualified = [
+                make_qualified_path(self.workspace_id, p) for p in deleted_files_relative
+            ]
+            self.storage.delete_files_batch(deleted_files_qualified)
+            self.vector_store.delete_files_batch(deleted_files_qualified)
+            stats.deleted = len(deleted_files_relative)
+            logger.debug(f"🗑️ Cleaned up {len(deleted_files_relative)} deleted files")
 
         cleanup_time = time.time() - cleanup_start
 

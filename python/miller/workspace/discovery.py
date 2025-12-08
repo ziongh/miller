@@ -10,8 +10,10 @@ BEFORE descending into them. This is critical on Windows where walking into
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from ..ignore_patterns import is_file_too_large
 
 logger = logging.getLogger("miller.workspace")
 
@@ -33,6 +35,8 @@ class WorkspaceScanResult:
     all_paths: set[str]  # Relative paths as strings (for DB comparison)
     max_mtime: int  # Newest file modification time
     vendor_detection_needed: bool  # Whether vendor detection was performed
+    size_skipped: int = 0  # Count of files skipped due to size limits
+    size_skipped_files: list[str] = field(default_factory=list)  # Paths of skipped files (first 10)
 
 
 def _optimized_walk(workspace_root: Path, ignore_spec):
@@ -94,6 +98,7 @@ def scan_workspace(
     workspace_root: Path,
     ignore_spec,
     perform_vendor_detection: bool = False,
+    check_file_size: bool = True,
 ) -> WorkspaceScanResult:
     """
     Single-pass workspace scan that collects ALL needed information.
@@ -106,6 +111,7 @@ def scan_workspace(
         workspace_root: Root directory of workspace
         ignore_spec: Pathspec for .gitignore/.millerignore patterns
         perform_vendor_detection: Whether to check for vendor patterns
+        check_file_size: Whether to skip files exceeding size limits (default: True)
 
     Returns:
         WorkspaceScanResult with all scan data
@@ -130,6 +136,8 @@ def scan_workspace(
     indexable_files: list[Path] = []
     all_paths: set[str] = set()
     max_mtime = 0
+    size_skipped = 0
+    size_skipped_files: list[str] = []
 
     # Use optimized walk with directory pruning
     for file_path, rel_str in _optimized_walk(workspace_root, ignore_spec):
@@ -140,6 +148,14 @@ def scan_workspace(
         # Check if language is supported
         language = miller_core.detect_language(str(file_path))
         if language:
+            # Check file size (skip oversized files)
+            if check_file_size and is_file_too_large(file_path):
+                size_skipped += 1
+                # Track first 10 skipped files for logging/debugging
+                if len(size_skipped_files) < 10:
+                    size_skipped_files.append(rel_str)
+                continue
+
             indexable_files.append(file_path)
             # Only add to all_paths if file will actually be indexed
             # Text files are discovered (for vendor detection) but not indexed,
@@ -155,11 +171,21 @@ def scan_workspace(
             except OSError:
                 pass  # Can't stat, skip mtime tracking
 
+    # Log size-skipped files summary
+    if size_skipped > 0:
+        logger.info(f"📏 Skipped {size_skipped} oversized files")
+        for skipped in size_skipped_files[:5]:
+            logger.debug(f"   📏 {skipped}")
+        if size_skipped > 5:
+            logger.debug(f"   ... and {size_skipped - 5} more")
+
     return WorkspaceScanResult(
         indexable_files=indexable_files,
         all_paths=all_paths,
         max_mtime=max_mtime,
         vendor_detection_needed=needs_vendor_detection,
+        size_skipped=size_skipped,
+        size_skipped_files=size_skipped_files,
     )
 
 
@@ -167,6 +193,7 @@ def walk_directory(
     workspace_root: Path,
     ignore_spec,
     perform_vendor_detection: bool = False,
+    check_file_size: bool = True,
 ) -> tuple[list[Path], bool]:
     """
     Walk workspace directory and find indexable files.
@@ -178,6 +205,7 @@ def walk_directory(
         workspace_root: Root directory of workspace
         ignore_spec: Pathspec for .gitignore/.millerignore patterns
         perform_vendor_detection: Whether to perform smart vendor detection
+        check_file_size: Whether to skip files exceeding size limits (default: True)
 
     Returns:
         Tuple of (list of file paths, bool indicating if vendor detection was performed)
@@ -206,6 +234,10 @@ def walk_directory(
         # Check if language is supported
         language = miller_core.detect_language(str(file_path))
         if language:
+            # Check file size (skip oversized files)
+            if check_file_size and is_file_too_large(file_path):
+                continue
+
             indexable_files.append(file_path)
             if needs_vendor_detection:
                 all_files_for_analysis.append(file_path)

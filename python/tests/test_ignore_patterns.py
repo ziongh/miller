@@ -183,3 +183,167 @@ class TestFiltering:
         # Should include source files
         source_files = [f for f in filtered if f.name == "main.py"]
         assert len(source_files) > 0
+bun 
+
+class TestFileSizeLimits:
+    """Test file size filtering with per-extension overrides."""
+
+    @pytest.fixture
+    def size_test_workspace(self):
+        """Create workspace with files of various sizes."""
+        temp_dir = tempfile.mkdtemp(prefix="miller_test_size_")
+        workspace = Path(temp_dir)
+
+        # Create directory structure
+        (workspace / "src").mkdir()
+
+        # Create files of different sizes
+        # Small files (under 1KB)
+        (workspace / "src" / "small.py").write_text("x" * 100)
+        (workspace / "src" / "small.md").write_text("y" * 200)
+        (workspace / "src" / "small.cs").write_text("z" * 150)
+
+        # Medium files (~500KB)
+        (workspace / "src" / "medium.py").write_text("a" * 500_000)
+        (workspace / "src" / "medium.md").write_text("b" * 500_000)
+
+        # Large files (~2MB)
+        (workspace / "src" / "large.py").write_text("c" * 2_000_000)
+        (workspace / "src" / "large.md").write_text("d" * 2_000_000)
+        (workspace / "src" / "large.cs").write_text("e" * 2_000_000)
+
+        # Very large files (~5MB)
+        (workspace / "src" / "huge.js").write_text("f" * 5_000_000)
+
+        yield workspace
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_default_size_limits_exist(self):
+        """Test that default size limit constants are defined."""
+        from miller.ignore_defaults import (
+            DEFAULT_MAX_FILE_SIZE,
+            EXTENSION_SIZE_LIMITS,
+        )
+
+        # Default should be 1MB (1_048_576 bytes)
+        assert DEFAULT_MAX_FILE_SIZE == 1_048_576
+
+        # Extension overrides should be a dict
+        assert isinstance(EXTENSION_SIZE_LIMITS, dict)
+
+    def test_extension_size_limits_structure(self):
+        """Test that extension size limits have expected entries."""
+        from miller.ignore_defaults import EXTENSION_SIZE_LIMITS
+
+        # Markdown should allow larger files (documentation)
+        assert ".md" in EXTENSION_SIZE_LIMITS
+        assert EXTENSION_SIZE_LIMITS[".md"] > 1_048_576  # > 1MB
+
+        # JSON might need larger limit for config files
+        assert ".json" in EXTENSION_SIZE_LIMITS
+
+    def test_get_max_file_size_default(self):
+        """Test getting max size for extension without override."""
+        from miller.ignore_patterns import get_max_file_size
+
+        # Extensions without override should use default
+        default_size = get_max_file_size(".py")
+        assert default_size == 1_048_576  # 1MB default
+
+    def test_get_max_file_size_with_override(self):
+        """Test getting max size for extension with override."""
+        from miller.ignore_patterns import get_max_file_size
+        from miller.ignore_defaults import EXTENSION_SIZE_LIMITS
+
+        # Markdown has override
+        md_size = get_max_file_size(".md")
+        assert md_size == EXTENSION_SIZE_LIMITS[".md"]
+        assert md_size > 1_048_576  # Should be larger than default
+
+    def test_is_file_too_large_small_file(self, size_test_workspace):
+        """Test that small files pass size check."""
+        from miller.ignore_patterns import is_file_too_large
+
+        small_py = size_test_workspace / "src" / "small.py"
+        assert is_file_too_large(small_py) is False
+
+    def test_is_file_too_large_large_file(self, size_test_workspace):
+        """Test that large files fail size check (using default limit)."""
+        from miller.ignore_patterns import is_file_too_large
+
+        large_py = size_test_workspace / "src" / "large.py"  # 2MB
+        assert is_file_too_large(large_py) is True
+
+    def test_is_file_too_large_respects_extension_override(self, size_test_workspace):
+        """Test that extension overrides are respected."""
+        from miller.ignore_patterns import is_file_too_large
+
+        # Large markdown (2MB) should pass if markdown limit is > 2MB
+        large_md = size_test_workspace / "src" / "large.md"
+        # This depends on EXTENSION_SIZE_LIMITS[".md"] being > 2MB
+        # If it's set to 5MB, this should pass
+        result = is_file_too_large(large_md)
+        # We'll configure .md to allow 5MB, so 2MB should pass
+        assert result is False
+
+    def test_is_file_too_large_custom_limit(self, size_test_workspace):
+        """Test is_file_too_large with custom limit parameter."""
+        from miller.ignore_patterns import is_file_too_large
+
+        medium_py = size_test_workspace / "src" / "medium.py"  # 500KB
+
+        # Should pass with 1MB limit
+        assert is_file_too_large(medium_py, max_size=1_048_576) is False
+
+        # Should fail with 100KB limit
+        assert is_file_too_large(medium_py, max_size=100_000) is True
+
+    def test_should_ignore_includes_size_check(self, size_test_workspace):
+        """Test that should_ignore now includes file size checking."""
+        from miller.ignore_patterns import should_ignore
+
+        # Small file should not be ignored
+        small_py = size_test_workspace / "src" / "small.py"
+        assert should_ignore(small_py, size_test_workspace, check_size=True) is False
+
+        # Large file (2MB Python) should be ignored due to size
+        large_py = size_test_workspace / "src" / "large.py"
+        assert should_ignore(large_py, size_test_workspace, check_size=True) is True
+
+    def test_should_ignore_size_check_disabled_by_default(self, size_test_workspace):
+        """Test that size check is opt-in (backwards compatible)."""
+        from miller.ignore_patterns import should_ignore
+
+        # Without check_size=True, large files should NOT be ignored by size
+        large_py = size_test_workspace / "src" / "large.py"
+        # Default behavior (check_size=False) - only pattern matching
+        assert should_ignore(large_py, size_test_workspace) is False
+
+    def test_filter_files_with_size_filtering(self, size_test_workspace):
+        """Test filter_files with size filtering enabled."""
+        from miller.ignore_patterns import filter_files
+
+        all_files = list(size_test_workspace.rglob("*"))
+        filtered = filter_files(all_files, size_test_workspace, check_size=True)
+
+        # Small files should be included
+        assert any(f.name == "small.py" for f in filtered)
+        assert any(f.name == "small.md" for f in filtered)
+
+        # Large Python files should be excluded (2MB > 1MB default)
+        assert not any(f.name == "large.py" for f in filtered)
+
+        # Large markdown might be included (if .md limit > 2MB)
+        # Depends on EXTENSION_SIZE_LIMITS configuration
+
+    def test_filter_files_without_size_filtering(self, size_test_workspace):
+        """Test filter_files without size filtering (backwards compatible)."""
+        from miller.ignore_patterns import filter_files
+
+        all_files = list(size_test_workspace.rglob("*"))
+        filtered = filter_files(all_files, size_test_workspace, check_size=False)
+
+        # All files should be included (no size filtering)
+        assert any(f.name == "large.py" for f in filtered)
+        assert any(f.name == "large.md" for f in filtered)
