@@ -63,22 +63,40 @@ def compute_transitive_closure(
         return 0
 
     # Use Rust graph processor for parallel BFS
-    # This is 10-100x faster than Python for large graphs
     processor = miller_core.PyGraphProcessor(edges)
+    
+    # 1. GC before heavy allocation to clear memory space
+    import gc
+    gc.collect()
+    
+    # 2. Compute closure
+    # This result is a massive list of Rust objects converted to Python objects
     reachability_data = processor.compute_closure(max_depth)
 
-    # Convert to list of tuples for batch insert
-    # Rust returns (source, target, distance) tuples
-    reachability_entries = [
-        (source, target, int(distance))
-        for source, target, distance in reachability_data
-    ]
+    # 3. Batch process the result to avoid creating a second massive list
+    # Instead of list comprehension which duplicates memory, iterate and batch
+    BATCH_SIZE = 10000
+    total_inserted = 0
+    
+    current_batch = []
+    for source, target, distance in reachability_data:
+        current_batch.append((source, target, int(distance)))
+        
+        if len(current_batch) >= BATCH_SIZE:
+            storage.add_reachability_batch(current_batch)
+            total_inserted += len(current_batch)
+            current_batch = []
+            
+    # Insert remaining
+    if current_batch:
+        storage.add_reachability_batch(current_batch)
+        total_inserted += len(current_batch)
 
-    # Bulk insert
-    if reachability_entries:
-        storage.add_reachability_batch(reachability_entries)
+    # 4. Explicit cleanup
+    del reachability_data
+    gc.collect()
 
-    return len(reachability_entries)
+    return total_inserted
 
 
 def should_compute_closure(storage: StorageManager) -> bool:

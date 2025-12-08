@@ -281,6 +281,11 @@ Miller provides advanced capabilities beyond simple search.
 | `validate_imports` | "Dry run" import checking | SQLite Resolution |
 | `find_similar_implementation` | Deduplication / DRY enforcement | Code-to-Code Embeddings |
 
+## Usage HTTP
+
+```bash
+export MILLER_USE_MRL=false && export MALLOC_ARENA_MAX=2 && uv run miller-server-http --port 8765
+```
 
 ## Documentation
 
