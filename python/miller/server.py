@@ -202,7 +202,13 @@ def main_http(host: str = None, port: int = None):
 
     # Support environment variable configuration
     host = host or os.environ.get("MILLER_HOST", "127.0.0.1")
-    port = port or int(os.environ.get("MILLER_PORT", "8765"))
+    if port is None:
+        port_str = os.environ.get("MILLER_PORT", "8765")
+        try:
+            port = int(port_str)
+        except ValueError:
+            logger.warning(f"Invalid MILLER_PORT '{port_str}', using default 8765")
+            port = 8765
 
     logger.info(f"🚀 Starting Miller MCP server (HTTP mode)")
     logger.info(f"📡 Listening on http://{host}:{port}/mcp")
