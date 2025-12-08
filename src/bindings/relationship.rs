@@ -51,6 +51,11 @@ impl PyRelationship {
         self.inner.file_path.clone()
     }
 
+    #[setter]
+    fn set_file_path(&mut self, value: String) {
+        self.inner.file_path = value;
+    }
+
     #[getter]
     fn line_number(&self) -> u32 {
         self.inner.line_number

@@ -58,18 +58,32 @@ class EmbeddingManager:
     - GPU auto-detection (CUDA, MPS/Metal, or CPU)
     - Batch encoding for performance
     - L2 normalization for cosine similarity
-    - BGE-small model (384 dimensions)
+    - Jina-code-embeddings-0.5b model (896 dimensions, 8192 token context)
+    - Task-aware prefixes for optimal retrieval (NL→Code vs Code→Code)
+
+    Environment Variables:
+    - MILLER_EMBEDDING_MODEL: Override default model (for CPU/low-memory fallback)
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", device: str = "auto"):
+    # Default model: Jina-0.5B for deep semantic code understanding
+    # Override via MILLER_EMBEDDING_MODEL env var for BGE fallback on CPU
+    DEFAULT_MODEL = "jinaai/jina-code-embeddings-0.5b"
+
+    def __init__(self, model_name: str = None, device: str = "auto"):
         """
         Initialize embedding model.
 
         Args:
-            model_name: HuggingFace model identifier
+            model_name: HuggingFace model identifier (default: Jina-0.5B)
+                       Can be overridden via MILLER_EMBEDDING_MODEL env var
             device: Device to use ("auto", "cuda", "mps", "cpu")
         """
         logger = logging.getLogger("miller.embeddings")
+
+        # Dynamic model selection: explicit param > env var > default
+        # This allows CPU/low-memory users to fallback to BGE-small
+        if model_name is None:
+            model_name = os.getenv("MILLER_EMBEDDING_MODEL", self.DEFAULT_MODEL)
 
         # Auto-detect device with priority: CUDA > ROCm > XPU > MPS > DirectML > CPU
         # device_type: string identifier for logging/display ("cuda", "mps", "directml", "cpu")
@@ -129,13 +143,47 @@ class EmbeddingManager:
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
+        # Model configuration for Jina (or any model requiring trust_remote_code)
+        # Jina-0.5B requires trust_remote_code for its custom LastTokenPooling
+        model_kwargs = {
+            "trust_remote_code": True,
+        }
+
+        # FP16 optimization for CUDA: doubles throughput, halves VRAM usage
+        # RTX 5070 Ti (16GB) can handle Jina-0.5B (~1GB in FP16) with large batches
+        if self.device == "cuda":
+            model_kwargs["torch_dtype"] = torch.float16
+            logger.info("⚡ Using FP16 precision for CUDA (2x throughput)")
+
         with open(os.devnull, "w") as devnull, redirect_stdout(devnull), redirect_stderr(devnull):
-            self.model = SentenceTransformer(model_name, device=self.device)
+            self.model = SentenceTransformer(
+                model_name,
+                device=self.device,
+                model_kwargs=model_kwargs,
+            )
 
         self.model_name = model_name
 
-        # Get embedding dimension from model
+        # Set context length for Jina (paper evaluated at 8192 tokens)
+        # Can be overridden via MILLER_MAX_SEQ_LENGTH env var to reduce VRAM usage
+        # 4096 is usually sufficient for most code files while halving memory per item
+        default_seq_length = 8192
+        max_seq_length = int(os.getenv("MILLER_MAX_SEQ_LENGTH", str(default_seq_length)))
+        self.model.max_seq_length = max_seq_length
+
+        if max_seq_length != default_seq_length:
+            logger.info(f"📏 Using custom max sequence length: {max_seq_length} (default: {default_seq_length})")
+
+        # Get embedding dimension from model (896 for Jina, 384 for BGE)
         self.dimensions = self.model.get_sentence_embedding_dimension()
+
+        # Jina paper requirement (Table 1): Task-specific prefixes
+        # NL→Code (retrieval) vs Code→Code (similarity) use different prefixes
+        self.prefixes = {
+            "retrieval_query": "Find the most relevant code snippet given the following query:\n",
+            "retrieval_doc": "Candidate code snippet:\n",
+            "similarity_query": "Find an equivalent code snippet given the following code snippet:\n",
+        }
 
         logger.info(
             f"✅ Embedding model loaded: {model_name} ({self.dimensions}D vectors on {self.device_type})"
@@ -332,43 +380,91 @@ class EmbeddingManager:
         logger.info("ℹ️  MPS memory detection not available - using default batch size")
         return None
 
+    def _is_large_context_model(self) -> bool:
+        """
+        Check if current model has a large context window (>2048 tokens).
+
+        Large context models like Jina-0.5B (8192 tokens) require significantly
+        more VRAM per batch item compared to small context models like BGE-small (512 tokens).
+
+        Returns:
+            True if model has large context (requires conservative batching)
+        """
+        # Jina models have 8192 token context - 16x larger than BGE's 512
+        if "jina" in self.model_name.lower():
+            return True
+
+        # Check actual max_seq_length if available
+        if hasattr(self.model, "max_seq_length") and self.model.max_seq_length > 2048:
+            return True
+
+        return False
+
     def _calculate_batch_size_from_vram(self, vram_bytes: int) -> int:
         """
-        Calculate optimal batch size using Julie's DirectML-safe formula.
+        Calculate optimal batch size based on GPU VRAM and model context size.
 
-        Formula: batch_size = (VRAM_GB / 6.0) * 30
-        Clamped to [25, 250] range
+        Device-specific formulas adjusted for model context:
+        - CUDA (large context like Jina-0.5B): (VRAM_GB * 8), clamped to [8, 128]
+        - CUDA (small context like BGE): (VRAM_GB * 64), clamped to [64, 2048]
+        - DirectML/Others: (VRAM_GB / 6.0) * 30, clamped to [25, 250] - conservative
 
-        This formula is 40% more conservative than the original, specifically
-        tuned for DirectML fragility and tested on 6GB A1000.
+        Large context models (8192 tokens) require ~16x more VRAM per item than
+        small context models (512 tokens), hence the different formulas.
 
-        Real-world validation:
-        - 6GB A1000 @ 97.6% util: batch_size=50 → 55s batch + crash
-        - 6GB A1000: batch_size=30 → stable operation ✅
+        CUDA rationale:
+        - Dedicated NVIDIA GPUs have excellent memory management
+        - Large models: 16GB → 128 batch size (prevents VRAM spillover)
+        - Small models: 16GB → 1024 batch size (aggressive for throughput)
+
+        DirectML rationale (unchanged):
+        - Windows AMD/Intel GPUs are fragile under memory pressure
+        - Previous formula tested stable on 6GB A1000
 
         Args:
             vram_bytes: Total GPU VRAM in bytes
 
         Returns:
-            Optimal batch size (clamped to [25, 250])
+            Optimal batch size
         """
         logger = logging.getLogger("miller.embeddings")
 
         vram_gb = vram_bytes / 1_073_741_824.0
 
-        # Julie's DirectML-safe formula (40% more conservative)
-        # Background: DirectML on Windows is more fragile under memory pressure than CUDA
-        # Previous formula used total VRAM without accounting for already-allocated memory
-        calculated = int((vram_gb / 6.0) * 30.0)
+        if self.device_type == "cuda":
+            if self._is_large_context_model():
+                # Conservative formula for large context models (Jina-0.5B: 8192 tokens)
+                # Formula: VRAM_GB * 1, clamped to [8, 96]
+                # 16GB → 16 batch size, 8GB → 8, 4GB → 4
+                # This prevents VRAM spillover to shared memory (PCIe bottleneck)
+                calculated = int(vram_gb * 1)
+                batch_size = max(8, min(16, calculated)) + 1
 
-        # Clamp to safe range [25, 250]
-        # - Minimum 25: Ensures reasonable performance even on small GPUs
-        # - Maximum 250: Avoid timeout issues and excessive failure blast radius
+                logger.info(
+                    f"🚀 CUDA (Large Context): {vram_gb:.2f} GB VRAM → Batch size: {batch_size}"
+                )
+            else:
+                # Aggressive formula for small context models (BGE-small: 512 tokens)
+                # Formula: VRAM_GB * 64, clamped to [64, 2048]
+                # 16GB → 1024 batch size, 8GB → 512, 4GB → 256
+                calculated = int(vram_gb * 64)
+                batch_size = max(64, min(2048, calculated))
+
+                logger.info(
+                    f"🚀 CUDA (Small Context): {vram_gb:.2f} GB VRAM → Batch size: {batch_size}"
+                )
+
+            return batch_size
+
+        # Conservative formula for DirectML/MPS/XPU/Others
+        # Background: DirectML on Windows is fragile under memory pressure
+        # Formula: (VRAM_GB / 6.0) * 30, clamped to [25, 250]
+        calculated = int((vram_gb / 6.0) * 30.0)
         batch_size = max(25, min(250, calculated))
 
         logger.info(
             f"📊 GPU Memory: {vram_gb:.2f} GB → Dynamic batch size: {batch_size} "
-            f"(Julie's DirectML-safe formula)"
+            f"(conservative formula)"
         )
 
         return batch_size
@@ -531,36 +627,53 @@ class EmbeddingManager:
         # Update last use timestamp (for auto-unload tracking)
         self._last_use_time = time.time()
 
-    def embed_query(self, query: str) -> np.ndarray:
+    def embed_query(self, query: str, task: str = "retrieval") -> np.ndarray:
         """
-        Embed a single query string.
+        Embed a single query string with task-appropriate prefix.
+
+        Jina paper requirement: Different tasks use different prefixes for
+        optimal retrieval quality.
 
         Args:
             query: Text to embed
+            task: "retrieval" (NL→Code search) or "similarity" (Code→Code comparison)
 
         Returns:
-            L2-normalized embedding vector (384 dimensions)
+            L2-normalized embedding vector (dimensions depend on model)
         """
         # Ensure model is loaded on GPU (lazy reload if needed)
         self._ensure_loaded()
 
+        # Apply task-specific prefix (Jina paper Table 1 requirement)
+        if task == "similarity":
+            prefix = self.prefixes.get("similarity_query", "")
+        else:
+            prefix = self.prefixes.get("retrieval_query", "")
+
+        full_query = f"{prefix}{query}" if prefix else query
+
         # Encode and normalize
         embedding = self.model.encode(
-            query,
+            full_query,
             normalize_embeddings=True,  # L2 normalize
             convert_to_numpy=True,
         )
         return embedding.astype(np.float32)
 
-    def embed_batch(self, symbols: list[Any]) -> np.ndarray:
+    def embed_batch(self, symbols: list[Any], is_document: bool = True) -> np.ndarray:
         """
-        Embed a batch of symbols.
+        Embed a batch of symbols with code-like formatting.
+
+        Jina-0.5B is an autoregressive model trained on code. We format input
+        as pseudo-code (docstring as comment + signature) for better semantic
+        understanding compared to simple string concatenation.
 
         Args:
             symbols: List of PySymbol objects from extraction
+            is_document: If True, apply document prefix for indexing (default: True)
 
         Returns:
-            Array of embeddings (N x 384), L2-normalized
+            Array of embeddings (N x dimensions), L2-normalized
         """
         if not symbols:
             # Return empty array with correct shape
@@ -569,25 +682,35 @@ class EmbeddingManager:
         # Ensure model is loaded on GPU (lazy reload if needed)
         self._ensure_loaded()
 
-        # Build text representations for each symbol
+        # Build pseudo-code representations for each symbol
+        # This format works better for autoregressive models like Jina
         texts = []
         for sym in symbols:
-            # Combine name, signature, doc comment for rich representation
-            parts = [sym.name]
+            parts = []
 
+            # 1. Docstring as comment (if available) - helps semantic understanding
+            if hasattr(sym, "doc_comment") and sym.doc_comment:
+                parts.append(f"/* {sym.doc_comment} */")
+
+            # 2. Signature (most code-like) or fallback to kind + name
             if hasattr(sym, "signature") and sym.signature:
                 parts.append(sym.signature)
+            else:
+                # Fallback: simple declaration format
+                kind = getattr(sym, "kind", "symbol").lower()
+                parts.append(f"{kind} {sym.name}")
 
-            if hasattr(sym, "doc_comment") and sym.doc_comment:
-                parts.append(sym.doc_comment)
-
-            text = " ".join(parts)
+            text = "\n".join(parts)
             texts.append(text)
+
+        # Apply document prefix for indexing (Jina paper requirement)
+        if is_document:
+            prefix = self.prefixes.get("retrieval_doc", "")
+            if prefix:
+                texts = [f"{prefix}{t}" for t in texts]
 
         # Batch encode using dynamically calculated batch size
         # Batch size is calculated once during initialization based on GPU VRAM
-        # using Julie's DirectML-safe formula: (VRAM_GB / 6.0) * 30
-        # This prevents OOM crashes and GPU thrashing on memory-constrained GPUs
         embeddings = self.model.encode(
             texts,
             normalize_embeddings=True,  # L2 normalize
@@ -598,7 +721,7 @@ class EmbeddingManager:
 
         return embeddings.astype(np.float32)
 
-    def embed_texts(self, texts: list[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str], is_document: bool = True) -> np.ndarray:
         """
         Embed a batch of raw text strings.
 
@@ -607,15 +730,22 @@ class EmbeddingManager:
 
         Args:
             texts: List of text strings to embed
+            is_document: If True, apply document prefix for indexing (default: True)
 
         Returns:
-            Array of embeddings (N x 384), L2-normalized
+            Array of embeddings (N x dimensions), L2-normalized
         """
         if not texts:
             return np.empty((0, self.dimensions), dtype=np.float32)
 
         # Ensure model is loaded on GPU (lazy reload if needed)
         self._ensure_loaded()
+
+        # Apply document prefix for indexing (Jina paper requirement)
+        if is_document:
+            prefix = self.prefixes.get("retrieval_doc", "")
+            if prefix:
+                texts = [f"{prefix}{t}" for t in texts]
 
         # Batch encode
         embeddings = self.model.encode(

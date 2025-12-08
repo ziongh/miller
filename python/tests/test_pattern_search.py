@@ -133,8 +133,8 @@ class TestPatternFieldPopulation:
 
     def test_pattern_field_includes_signature(self):
         """code_pattern should include signature if present."""
-        vector_store = VectorStore(db_path=":memory:")
-        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
 
         # Create mock symbol with signature
         class MockSymbol:
@@ -163,8 +163,8 @@ class TestPatternFieldPopulation:
 
     def test_pattern_field_handles_missing_signature(self):
         """code_pattern should work even without signature."""
-        vector_store = VectorStore(db_path=":memory:")
-        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
 
         # Create mock symbol WITHOUT signature
         class MockSymbol:
@@ -197,8 +197,8 @@ class TestPatternSearch:
     @pytest.fixture
     def vector_store_with_csharp_code(self):
         """Fixture: VectorStore with C# code indexed."""
-        vector_store = VectorStore(db_path=":memory:")
-        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
 
         # Mock C# symbols with inheritance, generics, and attributes
         class MockSymbol:
@@ -291,8 +291,8 @@ class TestVectorStoreSearchRouting:
     @pytest.fixture
     def vector_store_with_data(self):
         """Fixture: VectorStore with sample data."""
-        vector_store = VectorStore(db_path=":memory:")
-        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
 
         class MockSymbol:
             def __init__(self, id, name, signature):
@@ -359,8 +359,8 @@ class TestSearchScoring:
     @pytest.fixture
     def vector_store_with_data(self):
         """Fixture with sample data."""
-        vector_store = VectorStore(db_path=":memory:")
-        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
 
         class MockSymbol:
             def __init__(self, id, name):
@@ -407,21 +407,21 @@ class TestEdgeCases:
 
     def test_empty_query_returns_empty_list(self):
         """Empty query should return [] not error."""
-        vector_store = VectorStore(db_path=":memory:")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
         results = vector_store.search("", method="pattern")
         assert results == []
         vector_store.close()
 
     def test_pattern_search_on_empty_database(self):
         """Pattern search on empty database should return [] not error."""
-        vector_store = VectorStore(db_path=":memory:")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
         results = vector_store._search_pattern(": BaseClass", 50)
         assert results == []
         vector_store.close()
 
     def test_very_long_pattern_query(self):
         """Very long queries should work without errors."""
-        vector_store = VectorStore(db_path=":memory:")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
         long_query = "ILogger<" + "A" * 500 + ">"
         results = vector_store._search_pattern(long_query, 10)
         assert isinstance(results, list)
@@ -429,14 +429,14 @@ class TestEdgeCases:
 
     def test_limit_zero_returns_empty(self):
         """limit=0 should return [] not error."""
-        vector_store = VectorStore(db_path=":memory:")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
         results = vector_store.search("test", method="pattern", limit=0)
         assert results == []
         vector_store.close()
 
     def test_negative_limit_returns_empty(self):
         """Negative limit should return [] not error."""
-        vector_store = VectorStore(db_path=":memory:")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
         results = vector_store.search("test", method="pattern", limit=-1)
         assert results == []
         vector_store.close()
@@ -448,8 +448,8 @@ class TestPerformance:
     @pytest.fixture
     def large_vector_store(self):
         """Fixture: VectorStore with 100 symbols."""
-        vector_store = VectorStore(db_path=":memory:")
-        embeddings = EmbeddingManager()
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
 
         class MockSymbol:
             def __init__(self, id, name, signature):

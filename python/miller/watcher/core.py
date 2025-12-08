@@ -1,71 +1,178 @@
 """
-Core file watching implementation using watchdog.
+Core file watching implementation with WSL2 fallback.
 
 This module provides the FileWatcher class that monitors a workspace
 directory and triggers callbacks when files change.
+
+On native platforms (Linux, macOS, Windows), uses miller_core.PyFileWatcher (Rust) for:
+- Zero GIL contention (file monitoring runs entirely in Rust)
+- Hash-based change detection (only notifies when content actually changes)
+- Efficient handling of 100k+ files
+- Cross-platform support (inotify, FSEvents, ReadDirectoryChangesW)
+
+On WSL2 with Windows-mounted paths (/mnt/c/, /mnt/d/, etc.), falls back to
+Python's watchdog library because inotify events don't propagate correctly
+across the 9P filesystem bridge. Native Linux paths within WSL2 use Rust.
 """
 
 import asyncio
 import logging
-import threading
-import time
+import os
+import platform
 from pathlib import Path
 from typing import Callable, Optional
 
-from miller.watcher.debouncer import DebounceQueue
-from miller.watcher.handlers import FileWatcherEventHandler
 from miller.watcher.types import FileEvent, FileWatcherProtocol
 
 logger = logging.getLogger(__name__)
 
 
+def is_wsl2() -> bool:
+    """
+    Detect if we're running inside WSL2.
+
+    Returns True if running in WSL2 environment, regardless of filesystem.
+    """
+    # Check for /proc/version containing "microsoft" (case insensitive)
+    try:
+        with open("/proc/version", "r") as f:
+            version = f.read().lower()
+            return "microsoft" in version or "wsl" in version
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    # Check WSL environment variable
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+
+    # Check platform
+    if platform.system() == "Linux":
+        try:
+            uname = os.uname()
+            return "microsoft" in uname.release.lower()
+        except AttributeError:
+            pass
+
+    return False
+
+
+def is_windows_mount(path: Path) -> bool:
+    """
+    Check if a path is on a Windows-mounted filesystem in WSL2.
+
+    Windows drives are mounted under /mnt/ (e.g., /mnt/c/, /mnt/d/).
+    These paths use the 9P protocol which doesn't support inotify properly.
+
+    Args:
+        path: Path to check (should be resolved/absolute)
+
+    Returns:
+        True if path is on a Windows mount, False otherwise
+    """
+    path_str = str(path.resolve())
+
+    # Check for /mnt/<drive letter>/ pattern
+    if path_str.startswith("/mnt/") and len(path_str) > 6:
+        # /mnt/c, /mnt/d, etc.
+        drive_letter = path_str[5]
+        if drive_letter.isalpha() and (len(path_str) == 6 or path_str[6] == "/"):
+            return True
+
+    return False
+
+
+# Cache WSL2 detection result
+_IS_WSL2: Optional[bool] = None
+
+
+def get_is_wsl2() -> bool:
+    """Get cached WSL2 detection result."""
+    global _IS_WSL2
+    if _IS_WSL2 is None:
+        _IS_WSL2 = is_wsl2()
+        if _IS_WSL2:
+            logger.info("Detected WSL2 environment")
+    return _IS_WSL2
+
+
+def needs_watchdog_fallback(workspace_path: Path) -> bool:
+    """
+    Determine if watchdog fallback is needed for the given workspace.
+
+    Fallback is only needed when BOTH conditions are true:
+    1. Running in WSL2 environment
+    2. Workspace is on a Windows-mounted filesystem (/mnt/c/, /mnt/d/, etc.)
+
+    Native Linux paths within WSL2 (e.g., /home/user/projects/) work fine
+    with the Rust inotify-based watcher.
+
+    Args:
+        workspace_path: Root directory of the workspace
+
+    Returns:
+        True if watchdog fallback should be used
+    """
+    if not get_is_wsl2():
+        return False
+
+    if is_windows_mount(workspace_path):
+        logger.info(
+            f"Workspace {workspace_path} is on Windows mount - using watchdog fallback"
+        )
+        return True
+
+    logger.debug(
+        f"Workspace {workspace_path} is on native Linux filesystem - using Rust watcher"
+    )
+    return False
+
+
 class FileWatcher:
     """
-    Concrete implementation of file watcher using watchdog library.
+    File watcher with automatic WSL2/Windows-mount fallback.
 
-    This class implements FileWatcherProtocol using the watchdog library.
+    On native platforms (including native Linux paths in WSL2), uses the
+    Rust-native PyFileWatcher for high performance with inotify/FSEvents/etc.
+
+    On WSL2 with Windows-mounted paths (/mnt/c/, /mnt/d/, etc.), falls back
+    to Python's watchdog library because inotify doesn't work across 9P.
 
     Constructor Args:
     -----------------
     workspace_path: Root directory to watch
     indexing_callback: Async function to call when files change
-        Signature: async def callback(events: list[tuple[FileEvent, Path]]) -> None
+        Signature: async def callback(events: list[tuple[FileEvent, Path, Optional[str]]]) -> None
+        Where the third element is the new file hash (None for deletions)
     ignore_patterns: Optional set of gitignore-style patterns to exclude
+    initial_hashes: Optional dict mapping file paths to their known hashes
 
     Example Usage:
     --------------
     >>> async def on_files_changed(events):
-    ...     for event_type, file_path in events:
+    ...     for event_type, file_path, new_hash in events:
     ...         if event_type == FileEvent.DELETED:
     ...             await storage.delete_file(file_path)
     ...         else:
     ...             await scanner._index_file(file_path)
+    ...             watcher.update_hash(str(file_path), new_hash)
     ...
     >>> watcher = FileWatcher(
     ...     workspace_path=Path("/workspace"),
     ...     indexing_callback=on_files_changed,
-    ...     ignore_patterns={".git", "node_modules", "*.pyc"}
+    ...     ignore_patterns={".git", "node_modules", "*.pyc"},
+    ...     initial_hashes={"src/main.py": "abc123..."}
     ... )
     >>> watcher.start()
     >>> # ... watcher runs in background ...
     >>> watcher.stop()
-
-    Implementation:
-    ---------------
-    1. Uses watchdog.observers.Observer for cross-platform watching
-    2. Uses watchdog.events.FileSystemEventHandler for callbacks
-    3. Uses asyncio.Queue for thread-safe event passing
-    4. Uses DebounceQueue to batch rapid changes
-    5. Respects pathspec patterns from .gitignore
-    6. Handles Windows/Unix path differences
     """
 
     def __init__(
         self,
         workspace_path: Path,
-        indexing_callback: Callable[[list[tuple[FileEvent, Path]]], None],
+        indexing_callback: Callable[[list[tuple[FileEvent, Path, Optional[str]]]], None],
         ignore_patterns: Optional[set[str]] = None,
-        debounce_delay: float = 0.2,
+        initial_hashes: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Initialize file watcher (not started yet).
@@ -75,16 +182,15 @@ class FileWatcher:
         workspace_path: Root directory to watch recursively
         indexing_callback: Async function called when files change
         ignore_patterns: Gitignore-style patterns to exclude
-        debounce_delay: Seconds to wait before flushing events (default: 0.2)
+        initial_hashes: Dict mapping file paths to their known hashes
+                       (used to detect if content actually changed)
 
         Raises:
         -------
         FileNotFoundError: If workspace_path doesn't exist
-        ValueError: If workspace_path is not a directory or debounce_delay invalid
+        ValueError: If workspace_path is not a directory
         TypeError: If indexing_callback not callable
         """
-        import pathspec
-
         # Validate workspace exists and is directory
         if not workspace_path.exists():
             raise FileNotFoundError(f"Workspace path does not exist: {workspace_path}")
@@ -95,33 +201,24 @@ class FileWatcher:
         if not callable(indexing_callback):
             raise TypeError("indexing_callback must be callable")
 
-        # Validate debounce delay
-        if debounce_delay <= 0 or debounce_delay > 10:
-            raise ValueError("debounce_delay must be between 0 and 10 seconds")
-
         self._workspace_path = workspace_path.resolve()
         self._indexing_callback = indexing_callback
-        self._debounce_delay = debounce_delay
+        self._ignore_patterns = list(ignore_patterns) if ignore_patterns else []
+        self._initial_hashes = initial_hashes or {}
 
-        # Set up ignore patterns using pathspec
-        self._ignore_patterns = ignore_patterns or set()
-        if self._ignore_patterns:
-            self._pathspec = pathspec.PathSpec.from_lines(
-                pathspec.patterns.GitWildMatchPattern, self._ignore_patterns
-            )
-        else:
-            self._pathspec = None
+        # Watcher instance (Rust or Python, depending on platform)
+        self._rust_watcher = None
+        self._watchdog_observer = None
 
-        # Initialize watchdog observer (not started)
-        self._observer: Optional["Observer"] = None  # noqa: F821
-        self._running = False
-
-        # Initialize debounce queue
-        self._debounce_queue: Optional[DebounceQueue] = None
+        # Watchdog fallback components
+        self._debounce_queue = None
+        self._event_handler = None
 
         # Event loop for async callbacks
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._loop_thread: Optional[threading.Thread] = None
+
+        # Track if we're using fallback (only for Windows mounts in WSL2)
+        self._use_fallback = needs_watchdog_fallback(self._workspace_path)
 
     def start(self) -> None:
         """
@@ -131,139 +228,251 @@ class FileWatcher:
         -------
         RuntimeError: If already running
         """
-        from watchdog.observers import Observer
-
-        if self._running:
+        if self.is_running():
             raise RuntimeError("FileWatcher is already running")
 
-        # Try to get running loop, otherwise create a new one
+        # Get or create event loop
         try:
             self._loop = asyncio.get_running_loop()
-            self._loop_thread = None  # Using existing loop
         except RuntimeError:
-            # No running loop, create new one in background thread
-            self._loop = asyncio.new_event_loop()
-            self._loop_thread = threading.Thread(
-                target=self._run_event_loop, daemon=True, name="FileWatcherEventLoop"
-            )
-            self._loop_thread.start()
+            # No running loop - we'll create one when needed
+            self._loop = None
 
-        # Create debounce queue with callback
+        if self._use_fallback:
+            self._start_watchdog()
+        else:
+            self._start_rust()
+
+    def _start_rust(self) -> None:
+        """Start the Rust-native file watcher."""
+        from miller import miller_core
+
+        # Create Rust watcher
+        self._rust_watcher = miller_core.PyFileWatcher(
+            str(self._workspace_path),
+            self._initial_hashes,
+            self._ignore_patterns,
+        )
+
+        logger.info(
+            f"Starting Rust file watcher for {self._workspace_path} "
+            f"({self._rust_watcher.tracked_file_count()} files tracked)"
+        )
+
+        # Start watching with callback bridge
+        self._rust_watcher.start(self._on_rust_events)
+
+    def _start_watchdog(self) -> None:
+        """Start the Python watchdog fallback (for WSL2)."""
+        from watchdog.observers import Observer
+        from miller.watcher.handlers import FileWatcherEventHandler
+        from miller.watcher.debouncer import DebounceQueue
+
+        logger.info(
+            f"Starting watchdog file watcher for {self._workspace_path} "
+            f"(WSL2 fallback mode)"
+        )
+
+        # Create debounce queue with flush callback
         self._debounce_queue = DebounceQueue(
-            debounce_delay=self._debounce_delay,
-            flush_callback=self._indexing_callback,
+            debounce_delay=0.2,
+            flush_callback=self._on_watchdog_flush,
             loop=self._loop,
         )
 
-        # Create event handler
-        handler = FileWatcherEventHandler(self)
-
-        # Initialize seen files with existing files in workspace
-        # This helps distinguish CREATED (new files) from MODIFIED (existing files)
-        for file_path in self._workspace_path.rglob("*"):
-            if file_path.is_file() and not self._should_ignore(file_path):
-                handler._seen_files.add(file_path)
+        # Create event handler (passes self - FileWatcher instance)
+        self._event_handler = FileWatcherEventHandler(watcher=self)
 
         # Create and start observer
-        self._observer = Observer()
-        self._observer.schedule(handler, str(self._workspace_path), recursive=True)
-        self._observer.start()
+        self._watchdog_observer = Observer()
+        self._watchdog_observer.schedule(
+            self._event_handler,
+            str(self._workspace_path),
+            recursive=True,
+        )
+        self._watchdog_observer.start()
 
-        self._running = True
+    async def handle_event(self, event_type: FileEvent, file_path: Path) -> None:
+        """
+        Handle file event from watchdog (WSL2 fallback mode).
 
-    def _run_event_loop(self) -> None:
-        """Run event loop in background thread."""
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
+        Called by FileWatcherEventHandler when a file system event occurs.
+        Adds the event to the debounce queue for batched processing.
+
+        Args:
+        -----
+        event_type: Type of file event (CREATED, MODIFIED, DELETED)
+        file_path: Absolute path to the changed file
+        """
+        # Check if path matches ignore patterns
+        if self._should_ignore(file_path):
+            return
+
+        # Add to debounce queue
+        if hasattr(self, "_debounce_queue") and self._debounce_queue:
+            self._debounce_queue.add(event_type, file_path)
+
+    def _should_ignore(self, file_path: Path) -> bool:
+        """Check if a file path should be ignored based on patterns."""
+        import fnmatch
+
+        rel_path = str(file_path.relative_to(self._workspace_path))
+
+        for pattern in self._ignore_patterns:
+            # Handle directory patterns (e.g., ".git", "node_modules")
+            if "/" not in pattern and "*" not in pattern:
+                # Simple name pattern - check each path component
+                for part in file_path.parts:
+                    if part == pattern:
+                        return True
+            # Handle glob patterns
+            elif fnmatch.fnmatch(rel_path, pattern):
+                return True
+            elif fnmatch.fnmatch(file_path.name, pattern):
+                return True
+
+        return False
+
+    def _on_rust_events(self, events: list[tuple[str, str, Optional[str]]]) -> None:
+        """
+        Bridge callback from Rust to Python.
+
+        Args:
+        -----
+        events: List of (event_type, file_path, new_hash) tuples from Rust
+        """
+        if not events:
+            return
+
+        # Convert to Python types
+        converted_events = []
+        for event_type_str, path_str, new_hash in events:
+            # Map string event type to enum
+            event_type = {
+                "created": FileEvent.CREATED,
+                "modified": FileEvent.MODIFIED,
+                "deleted": FileEvent.DELETED,
+            }.get(event_type_str, FileEvent.MODIFIED)
+
+            file_path = self._workspace_path / path_str
+            converted_events.append((event_type, file_path, new_hash))
+
+        logger.debug(f"Received {len(converted_events)} file change events from Rust watcher")
+        self._invoke_callback(converted_events)
+
+    def _on_watchdog_flush(self, events: list[tuple[FileEvent, Path]]) -> None:
+        """
+        Handle flushed events from watchdog debounce queue.
+
+        Args:
+        -----
+        events: List of (event_type, file_path) tuples from debouncer
+        """
+        if not events:
+            return
+
+        # Convert to 3-tuple format (with hash computation)
+        import hashlib
+
+        converted_events = []
+        for event_type, file_path in events:
+            new_hash = None
+            if event_type != FileEvent.DELETED and file_path.exists():
+                # Compute hash for non-deleted files
+                try:
+                    content = file_path.read_bytes()
+                    new_hash = hashlib.blake2b(content).hexdigest()
+                except (OSError, PermissionError):
+                    pass
+            converted_events.append((event_type, file_path, new_hash))
+
+        logger.debug(f"Received {len(converted_events)} file change events from watchdog")
+        self._invoke_callback(converted_events)
+
+    def _invoke_callback(self, events: list[tuple[FileEvent, Path, Optional[str]]]) -> None:
+        """Invoke the indexing callback with events."""
+        try:
+            if asyncio.iscoroutinefunction(self._indexing_callback):
+                # Async callback - need to run in event loop
+                if self._loop and self._loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        self._indexing_callback(events), self._loop
+                    )
+                else:
+                    # Create new event loop for this call
+                    asyncio.run(self._indexing_callback(events))
+            else:
+                # Sync callback
+                self._indexing_callback(events)
+        except Exception as e:
+            logger.error(f"Error in indexing callback: {e}")
 
     def stop(self) -> None:
         """
         Stop watching and clean up resources.
-
-        Flushes any pending debounced events before stopping.
         """
-        if not self._running:
-            return  # Safe to call if not running
+        if self._rust_watcher is not None:
+            logger.info("Stopping Rust file watcher")
+            self._rust_watcher.stop()
+            self._rust_watcher = None
 
-        # Stop observer first to prevent new events
-        if self._observer:
-            self._observer.stop()
-            self._observer.join(timeout=1.0)
-
-        # Give a grace period for in-flight events to be added to queue
-        # macOS FSEvents can be slow (up to 1-2 seconds latency)
-        time.sleep(0.5)
-
-        # Flush pending events
-        if self._debounce_queue and self._loop:
-            try:
-                future = asyncio.run_coroutine_threadsafe(self._debounce_queue.flush(), self._loop)
-                future.result(timeout=1.0)
-            except Exception:
-                # Best effort flush - may timeout due to platform event latency
-                pass
-
-        # Stop event loop if we created it
-        if self._loop and hasattr(self, "_loop_thread") and self._loop_thread:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            if self._loop_thread.is_alive():
-                self._loop_thread.join(timeout=2.0)
-
-        self._running = False
-        self._observer = None
-        self._debounce_queue = None
-        self._loop = None
+        if self._watchdog_observer is not None:
+            logger.info("Stopping watchdog file watcher")
+            self._watchdog_observer.stop()
+            self._watchdog_observer.join()
+            self._watchdog_observer = None
+            self._debounce_queue = None
+            self._event_handler = None
 
     def is_running(self) -> bool:
         """Check if watcher is currently active."""
-        return self._running
+        if self._rust_watcher is not None:
+            return self._rust_watcher.is_running()
+        if self._watchdog_observer is not None:
+            return self._watchdog_observer.is_alive()
+        return False
 
-    async def handle_event(self, event_type: FileEvent, file_path: Path) -> None:
+    def update_hash(self, file_path: str, new_hash: str) -> None:
         """
-        Handle file system event internally.
+        Update the known hash for a file.
 
-        This is called by the watchdog observer when files change.
+        Call this after successfully indexing a file to prevent
+        redundant re-indexing on subsequent saves without changes.
 
         Args:
         -----
-        event_type: Type of file event
-        file_path: Absolute path to the file that changed
+        file_path: Relative path to the file
+        new_hash: New Blake3 hash of file content
         """
-        # Validate file is within workspace
-        try:
-            file_path.relative_to(self._workspace_path)
-        except ValueError:
-            # File outside workspace, ignore
-            return
+        if self._rust_watcher:
+            self._rust_watcher.update_hash(file_path, new_hash)
+        # Note: Watchdog fallback doesn't track hashes (re-indexes on every change)
 
-        # Check if file should be ignored
-        if self._should_ignore(file_path):
-            return
+    def remove_hash(self, file_path: str) -> None:
+        """
+        Remove a file from hash tracking.
 
-        # Check file size (skip very large files >10MB)
-        if file_path.exists() and event_type != FileEvent.DELETED:
-            file_size = file_path.stat().st_size
-            if file_size > 10 * 1024 * 1024:  # 10MB
-                # Log warning and skip
-                return
+        Call this after a file is deleted.
 
-        # Add to debounce queue
-        if self._debounce_queue:
-            self._debounce_queue.add(event_type, file_path)
+        Args:
+        -----
+        file_path: Relative path to the file
+        """
+        if self._rust_watcher:
+            self._rust_watcher.remove_hash(file_path)
 
-    def _should_ignore(self, file_path: Path) -> bool:
-        """Check if file should be ignored based on patterns."""
-        if not self._pathspec:
-            return False
+    def tracked_file_count(self) -> int:
+        """Get the number of files being tracked."""
+        if self._rust_watcher:
+            return self._rust_watcher.tracked_file_count()
+        return len(self._initial_hashes)
 
-        # Get relative path for pattern matching
-        try:
-            rel_path = file_path.relative_to(self._workspace_path)
-        except ValueError:
-            return True  # Outside workspace
+    def get_tracked_files(self) -> list[str]:
+        """Get list of all tracked file paths."""
+        if self._rust_watcher:
+            return self._rust_watcher.get_tracked_files()
+        return list(self._initial_hashes.keys())
 
-        # Convert to Unix-style forward slashes
-        rel_path_str = str(rel_path).replace("\\", "/")
 
-        # Check if matches any ignore pattern
-        return self._pathspec.match_file(rel_path_str)
+# Legacy compatibility: Keep old class name as alias
+RustFileWatcher = FileWatcher

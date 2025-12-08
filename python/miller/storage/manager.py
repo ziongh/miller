@@ -9,8 +9,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
-from . import mutations, queries
-from .schema import StorageError, enable_wal, initialize_schema, _normalize_path
+from . import arrow_mutations, mutations, queries
+from .schema import (
+    StorageError,
+    enable_wal,
+    initialize_schema,
+    _normalize_path,
+    drop_identifier_indexes,
+    restore_identifier_indexes,
+)
 
 
 class StorageManager:
@@ -45,12 +52,16 @@ class StorageManager:
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row  # Access columns by name
 
-        # Enable WAL mode (for file-based databases)
+        # Enable foreign keys (must be enabled for ALL databases, including :memory:)
+        self.conn.execute("PRAGMA foreign_keys = ON")
+
         if db_path != ":memory:":
+            # Enable WAL with aggressive performance tuning
             enable_wal(self.conn)
 
-        # Enable foreign keys
-        self.conn.execute("PRAGMA foreign_keys = ON")
+            # Additional tuning (not in enable_wal as it's manager-specific)
+            # Increase cache size for larger transactions
+            self.conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
 
         # Initialize schema
         initialize_schema(self.conn)
@@ -139,6 +150,49 @@ class StorageManager:
         """Bulk insert relationships."""
         return mutations.add_relationships_batch(self.conn, relationships)
 
+    # Arrow-based batch operations (zero-copy from Rust)
+
+    def add_symbols_from_arrow(
+        self,
+        symbols_table: "pa.Table",
+        code_context_map: Optional[dict[str, str]] = None,
+        workspace_id: str = "primary",
+    ) -> int:
+        """Bulk insert symbols from Arrow table (zero-copy path)."""
+        return arrow_mutations.add_symbols_from_arrow(
+            self.conn, symbols_table, code_context_map, workspace_id
+        )
+
+    def add_identifiers_from_arrow(
+        self,
+        identifiers_table: "pa.Table",
+        workspace_id: str = "primary",
+    ) -> int:
+        """Bulk insert identifiers from Arrow table."""
+        return arrow_mutations.add_identifiers_from_arrow(
+            self.conn, identifiers_table, workspace_id
+        )
+
+    def add_relationships_from_arrow(
+        self,
+        relationships_table: "pa.Table",
+        workspace_id: str = "primary",
+    ) -> int:
+        """Bulk insert relationships from Arrow table."""
+        return arrow_mutations.add_relationships_from_arrow(
+            self.conn, relationships_table, workspace_id
+        )
+
+    def add_files_from_arrow(
+        self,
+        files_table: "pa.Table",
+        workspace_id: str = "primary",
+    ) -> int:
+        """Bulk insert file records from Arrow table."""
+        return arrow_mutations.add_files_from_arrow(
+            self.conn, files_table, workspace_id
+        )
+
     def get_relationships_by_file(self, file_path: str) -> list[dict]:
         """Get all relationships in a file."""
         return queries.get_relationships_by_file(self.conn, file_path)
@@ -157,6 +211,20 @@ class StorageManager:
         """Clear all reachability data."""
         mutations.clear_reachability(self.conn)
 
+    def update_reference_counts(self) -> int:
+        """
+        Update reference_count for all symbols based on incoming relationships.
+
+        This counts how many times each symbol is referenced, enabling
+        "importance weighting" in search rankings. Higher counts = more important.
+
+        Should be called after indexing is complete (e.g., end of workspace scan).
+
+        Returns:
+            Number of symbols updated
+        """
+        return mutations.update_reference_counts(self.conn)
+
     def clear_all(self) -> None:
         """
         Clear all data from all tables (for force re-indexing).
@@ -164,6 +232,20 @@ class StorageManager:
         Use this before a complete rebuild of the index.
         """
         mutations.clear_all(self.conn)
+
+    def clear_workspace(self, workspace_id: str) -> dict:
+        """
+        Clear all data for a specific workspace.
+
+        Use this when removing a workspace from the unified database.
+
+        Args:
+            workspace_id: Workspace identifier to clear
+
+        Returns:
+            Dict with counts of deleted records
+        """
+        return mutations.clear_workspace(self.conn, workspace_id)
 
     def get_reachability_for_target(self, target_id: str) -> list[dict]:
         """Get all symbols that can reach the target (upstream/callers)."""
@@ -221,6 +303,24 @@ class StorageManager:
         """Find functions that take a given type as a parameter."""
         return queries.find_functions_with_parameter_type(self.conn, type_name)
 
+    # Architecture and validation queries
+
+    def get_cross_directory_dependencies(
+        self, depth: int = 2, min_edge_count: int = 1
+    ) -> list[dict]:
+        """Get aggregated dependencies between directories for architecture mapping."""
+        return queries.get_cross_directory_dependencies(
+            self.conn, depth, min_edge_count
+        )
+
+    def get_exported_symbols(self, file_path: str = None) -> list[dict]:
+        """Get all exported/public symbols, optionally filtered by file."""
+        return queries.get_exported_symbols(self.conn, file_path)
+
+    def find_symbols_by_name_prefix(self, prefix: str, limit: int = 20) -> list[dict]:
+        """Find symbols whose name starts with a given prefix."""
+        return queries.find_symbols_by_name_prefix(self.conn, prefix, limit)
+
     # Atomic operations
 
     def incremental_update_atomic(
@@ -231,11 +331,15 @@ class StorageManager:
         identifiers: list,
         relationships: list,
         code_context_map: Optional[dict[str, str]] = None,
+        workspace_id: str = "primary",
     ) -> dict:
         """
         Perform atomic incremental update.
 
         See mutations.incremental_update_atomic for full documentation.
+
+        Args:
+            workspace_id: Workspace identifier for this batch (default: "primary")
         """
         return mutations.incremental_update_atomic(
             self.conn,
@@ -245,7 +349,43 @@ class StorageManager:
             identifiers,
             relationships,
             code_context_map,
+            workspace_id,
         )
+
+    # Bulk insert optimizations
+
+    def drop_identifier_indexes(self) -> None:
+        """
+        Temporarily drop identifier indexes to speed up massive bulk writes.
+
+        Use this before inserting >1000 files worth of identifiers.
+        Re-creating indexes once at the end is faster than maintaining
+        them during each insert.
+
+        Must call restore_identifier_indexes() when done!
+        """
+        drop_identifier_indexes(self.conn)
+
+    def restore_identifier_indexes(self) -> None:
+        """
+        Re-create identifier indexes after bulk writes.
+
+        Call this after drop_identifier_indexes() and bulk inserts are complete.
+        """
+        restore_identifier_indexes(self.conn)
+
+    def optimize(self) -> None:
+        """
+        Run database optimizations after heavy write operations.
+
+        - PRAGMA optimize: Updates query planner statistics
+        - wal_checkpoint(TRUNCATE): Clears WAL file for clean state
+
+        Safe to call periodically (e.g., after full workspace indexing).
+        """
+        self.conn.execute("PRAGMA optimize")
+        if self.db_path != ":memory:":
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     def close(self):
         """Close database connection."""

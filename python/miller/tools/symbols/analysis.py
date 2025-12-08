@@ -181,7 +181,7 @@ def calculate_importance_scores(symbols: list, storage_manager) -> tuple[dict[st
     """
     Calculate symbol importance using PageRank on the call graph.
 
-    Uses relationships table to build a directed graph and computes PageRank scores.
+    Uses Rust-based graph processing (petgraph + rayon) for performance.
     Also detects entry points (high in-degree, low out-degree).
 
     Args:
@@ -202,7 +202,7 @@ def calculate_importance_scores(symbols: list, storage_manager) -> tuple[dict[st
         )
 
     try:
-        import networkx as nx
+        from miller import miller_core
 
         # Build call graph from relationships table
         symbol_ids = [getattr(sym, "id", None) for sym in symbols]
@@ -222,54 +222,33 @@ def calculate_importance_scores(symbols: list, storage_manager) -> tuple[dict[st
 
         cursor = storage_manager.conn.cursor()
         cursor.execute(query, symbol_ids + symbol_ids)
-        edges = cursor.fetchall()
+        edges = [(row[0], row[1]) for row in cursor.fetchall() if row[0] and row[1]]
 
-        # Build directed graph
-        G = nx.DiGraph()
-
-        # Add all symbols as nodes (even if no edges)
-        for sid in symbol_ids:
-            G.add_node(sid)
-
-        # Add edges from relationships
-        for from_id, to_id in edges:
-            if from_id and to_id:
-                G.add_edge(from_id, to_id)
-
-        # Compute PageRank scores
-        if len(G.nodes()) > 0:
-            pagerank_scores = nx.pagerank(G, alpha=0.85)
-        else:
-            pagerank_scores = {}
-
-        # Normalize scores to 0-1 range
-        if pagerank_scores:
-            max_score = max(pagerank_scores.values())
-            min_score = min(pagerank_scores.values())
-            score_range = max_score - min_score
-
-            if score_range > 0:
-                normalized_scores = {
-                    node: (score - min_score) / score_range
-                    for node, score in pagerank_scores.items()
-                }
-            else:
-                # All scores equal, use uniform distribution
-                normalized_scores = {node: 0.5 for node in pagerank_scores}
-        else:
-            # No graph, use default
+        if not edges:
+            # No edges, return uniform scores
             default_score = 1.0 / max(len(symbol_ids), 1)
-            normalized_scores = {sid: default_score for sid in symbol_ids}
+            return (
+                {sid: default_score for sid in symbol_ids},
+                {sid: False for sid in symbol_ids}
+            )
 
-        # Detect entry points (high in-degree, low out-degree)
-        entry_points = {}
-        for node in G.nodes():
-            in_degree = G.in_degree(node)
-            out_degree = G.out_degree(node)
+        # Use Rust graph processor for PageRank and entry point detection
+        processor = miller_core.PyGraphProcessor(edges)
 
-            # Entry point criteria: called by at least 2 others, calls fewer than it's called by
-            is_entry = in_degree >= 2 and out_degree < in_degree
-            entry_points[node] = is_entry
+        # Get PageRank scores (already normalized to 0-1)
+        pagerank_results = processor.compute_page_rank(0.85, 100)
+        normalized_scores = dict(pagerank_results)
+
+        # Get entry points
+        entry_point_results = processor.detect_entry_points()
+        entry_points = dict(entry_point_results)
+
+        # Fill in defaults for symbols not in the graph
+        for sid in symbol_ids:
+            if sid not in normalized_scores:
+                normalized_scores[sid] = 0.5  # Default mid-range score
+            if sid not in entry_points:
+                entry_points[sid] = False
 
         return (normalized_scores, entry_points)
 

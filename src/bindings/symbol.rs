@@ -53,6 +53,11 @@ impl PySymbol {
         self.inner.file_path.clone()
     }
 
+    #[setter]
+    fn set_file_path(&mut self, value: String) {
+        self.inner.file_path = value;
+    }
+
     #[getter]
     fn start_line(&self) -> u32 {
         self.inner.start_line

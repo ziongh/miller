@@ -171,10 +171,10 @@ class TestTrueSemanticDiscovery:
 
         # Create vector store
         vector_path = tmp_path / "vectors.lance"
-        vector_store = VectorStore(str(vector_path))
+        vector_store = VectorStore(str(vector_path), expected_dim=384)
 
         # Get embeddings manager
-        embeddings = EmbeddingManager()
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
 
         # Index all symbols with embeddings
         cursor = storage.conn.cursor()

@@ -29,8 +29,9 @@ except ImportError:
     # For testing without building Rust extension
     miller_core = None
 
-# Maximum file content size for embedding (10KB)
-MAX_CONTENT_FOR_EMBEDDING = 10 * 1024
+# Jina-code-embeddings-0.5b sweet spot: 8192 tokens ≈ 32KB
+# This provides optimal retrieval quality per the Jina paper
+MAX_CONTENT_FOR_EMBEDDING = 32 * 1024
 
 # Languages that have tree-sitter parsers (symbol extraction available)
 # Files with other languages get file-level indexing only
@@ -138,8 +139,14 @@ def compute_code_context(content: str, symbols: list[Any], context_lines: int = 
     return context_map
 
 
-async def index_file(file_path: Path, workspace_root: Path, storage: StorageManager,
-                     embeddings: EmbeddingManager, vector_store: VectorStore) -> bool:
+async def index_file(
+    file_path: Path,
+    workspace_root: Path,
+    storage: StorageManager,
+    embeddings: EmbeddingManager,
+    vector_store: VectorStore,
+    workspace_id: str = "primary",
+) -> bool:
     """
     Index a single file (without timing instrumentation).
 
@@ -153,6 +160,7 @@ async def index_file(file_path: Path, workspace_root: Path, storage: StorageMana
         storage: SQLite storage manager
         embeddings: Embedding generator
         vector_store: LanceDB vector store
+        workspace_id: Workspace identifier for this file (default: "primary")
 
     Returns:
         True if successful, False if error
@@ -208,7 +216,9 @@ async def index_file(file_path: Path, workspace_root: Path, storage: StorageMana
             # Generate embeddings for symbols
             if result.symbols:
                 vectors = embeddings.embed_batch(result.symbols)
-                vector_store.update_file_symbols(relative_path, result.symbols, vectors)
+                vector_store.update_file_symbols(
+                    relative_path, result.symbols, vectors, workspace_id=workspace_id
+                )
         else:
             # File-level indexing path (no tree-sitter parser)
             # Create a synthetic file-level entry for FTS and semantic search
@@ -221,7 +231,9 @@ async def index_file(file_path: Path, workspace_root: Path, storage: StorageMana
             vectors = embeddings.embed_texts([embed_content])
 
             # Store in LanceDB with content for FTS
-            vector_store.update_file_symbols(relative_path, [file_symbol], vectors)
+            vector_store.update_file_symbols(
+                relative_path, [file_symbol], vectors, workspace_id=workspace_id
+            )
 
         return True
 
@@ -231,8 +243,14 @@ async def index_file(file_path: Path, workspace_root: Path, storage: StorageMana
         return False
 
 
-async def index_file_timed(file_path: Path, workspace_root: Path, storage: StorageManager,
-                          embeddings: EmbeddingManager, vector_store: VectorStore) -> Tuple[bool, float, float, float]:
+async def index_file_timed(
+    file_path: Path,
+    workspace_root: Path,
+    storage: StorageManager,
+    embeddings: EmbeddingManager,
+    vector_store: VectorStore,
+    workspace_id: str = "primary",
+) -> Tuple[bool, float, float, float]:
     """
     Index a single file with timing instrumentation.
 
@@ -246,6 +264,7 @@ async def index_file_timed(file_path: Path, workspace_root: Path, storage: Stora
         storage: SQLite storage manager
         embeddings: Embedding generator
         vector_store: LanceDB vector store
+        workspace_id: Workspace identifier for this file (default: "primary")
 
     Returns:
         Tuple of (success, extraction_time, embedding_time, db_time)
@@ -318,7 +337,9 @@ async def index_file_timed(file_path: Path, workspace_root: Path, storage: Stora
             if result.symbols:
                 embedding_start = time.time()
                 vectors = embeddings.embed_batch(result.symbols)
-                vector_store.update_file_symbols(relative_path, result.symbols, vectors)
+                vector_store.update_file_symbols(
+                    relative_path, result.symbols, vectors, workspace_id=workspace_id
+                )
                 embedding_time = time.time() - embedding_start
         else:
             # File-level indexing path (no tree-sitter parser)
@@ -332,7 +353,9 @@ async def index_file_timed(file_path: Path, workspace_root: Path, storage: Stora
             embedding_start = time.time()
             embed_content = content[:2048] if content else file_symbol.name
             vectors = embeddings.embed_texts([embed_content])
-            vector_store.update_file_symbols(relative_path, [file_symbol], vectors)
+            vector_store.update_file_symbols(
+                relative_path, [file_symbol], vectors, workspace_id=workspace_id
+            )
             embedding_time = time.time() - embedding_start
 
         return (True, extraction_time, embedding_time, db_time)

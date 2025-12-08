@@ -65,8 +65,8 @@ def benchmark_vector_store():
     - Related terms
     - Noise (unrelated symbols)
     """
-    vector_store = VectorStore(db_path=":memory:")
-    embeddings = EmbeddingManager()
+    embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
+    vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
     symbols = [
         # Authentication-related symbols

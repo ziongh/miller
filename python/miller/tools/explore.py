@@ -209,22 +209,25 @@ async def _explore_dead_code(
     limit: int,
 ) -> dict[str, Any]:
     """
-    Find unreferenced symbols (potential dead code).
+    Find unreferenced symbols (potential dead code) using graph analysis.
 
-    Dead code = symbols that:
-    - Are functions or classes (not variables/constants)
-    - Are not in test files
-    - Are not private (starting with _)
-    - Are not test-prefixed (test_, Test)
-    - Have no incoming relationships (not called by anyone)
-    - Have no identifier references from other files
+    Uses Rust-based graph processing with SCC detection to find:
+    1. Isolated functions (no one calls them)
+    2. Dead cycles ("islands") - groups of functions that only call each other
+       but are never called from outside
+
+    The algorithm:
+    1. Build call graph from relationships
+    2. Identify entry points (main, test_*, *Controller, handlers)
+    3. Use Rust GraphProcessor.find_dead_nodes() for fast reachability analysis
+    4. Verify candidates aren't textually referenced (safety check for dynamic languages)
 
     Args:
         storage: StorageManager instance
         limit: Maximum results to return
 
     Returns:
-        Dict with dead_code list and total_found count
+        Dict with dead_code list, dead_cycles list, and counts
     """
     # Get storage from global if not provided
     if storage is None:
@@ -232,57 +235,172 @@ async def _explore_dead_code(
         storage = server.storage
 
     if storage is None:
-        return {"error": "Storage not initialized", "dead_code": [], "total_found": 0}
+        return {"error": "Storage not initialized", "dead_code": [], "dead_cycles": [], "total_found": 0}
 
     try:
+        from miller import miller_core
+
         cursor = storage.conn.cursor()
 
-        # Find symbols that:
-        # 1. Are functions or classes
-        # 2. Not in test files
-        # 3. Not private (starting with _)
-        # 4. Not test-prefixed
-        # 5. Not called by anyone (no incoming relationships)
-        # 6. Not referenced in other files (no cross-file identifier references)
+        # Step 1: Fetch all call relationships for the graph
         cursor.execute("""
+            SELECT from_symbol_id, to_symbol_id
+            FROM relationships
+            WHERE kind IN ('call', 'calls', 'Call')
+        """)
+        edges = [(row[0], row[1]) for row in cursor.fetchall()]
+
+        if not edges:
+            # No relationships, fall back to simple query
+            return await _explore_dead_code_simple(storage, limit)
+
+        # Step 2: Identify entry points (symbols that should be considered "alive")
+        # Entry points include: main functions, test functions, handlers, controllers
+        cursor.execute("""
+            SELECT id FROM symbols
+            WHERE (
+                name = 'main'
+                OR name LIKE 'test\\_%' ESCAPE '\\'
+                OR name LIKE 'Test%'
+                OR name LIKE '%Controller'
+                OR name LIKE '%Handler'
+                OR name LIKE 'handle\\_%' ESCAPE '\\'
+                OR name LIKE '%Endpoint'
+                OR name = '__init__'
+                OR name = '__main__'
+            )
+            AND kind IN ('function', 'method', 'class')
+        """)
+        entry_points = [row[0] for row in cursor.fetchall()]
+
+        # Step 3: Use Rust graph processor for dead code detection
+        processor = miller_core.PyGraphProcessor(edges)
+        structurally_dead = set(processor.find_dead_nodes(entry_points))
+        dead_cycles_raw = processor.find_dead_cycles(entry_points)
+
+        if not structurally_dead:
+            return {"dead_code": [], "dead_cycles": [], "total_found": 0}
+
+        # Step 4: Filter to only functions/classes that are:
+        # - Not in test files
+        # - Not private (underscore prefix)
+        # - In the structurally dead set
+        dead_ids_list = list(structurally_dead)
+        placeholders = ",".join("?" * len(dead_ids_list))
+
+        cursor.execute(f"""
             SELECT s.id, s.name, s.kind, s.file_path, s.start_line, s.signature
             FROM symbols s
-            WHERE s.kind IN ('function', 'class')
-            AND s.name NOT LIKE 'test\\_%' ESCAPE '\\'
-            AND s.name NOT LIKE 'Test%'
+            WHERE s.id IN ({placeholders})
+            AND s.kind IN ('function', 'method', 'class')
             AND s.name NOT LIKE '\\_%' ESCAPE '\\'
             AND s.file_path NOT LIKE '%test%'
             AND s.file_path NOT LIKE '%fixture%'
-            -- Not called by anyone
-            AND s.id NOT IN (
-                SELECT DISTINCT to_symbol_id FROM relationships
-            )
-            -- Not referenced in other files
-            AND s.name NOT IN (
-                SELECT DISTINCT i.name FROM identifiers i
-                WHERE i.file_path != s.file_path
-            )
             ORDER BY s.file_path, s.name
-            LIMIT ?
-        """, (limit,))
+        """, dead_ids_list)
 
+        candidates = cursor.fetchall()
+
+        # Step 5: Safety check - verify candidates aren't textually referenced
+        # (protects against dynamic languages where calls may not be in relationships)
         dead_code = []
-        for row in cursor.fetchall():
-            dead_code.append({
-                "name": row[1],
-                "kind": row[2],
-                "file_path": row[3],
-                "start_line": row[4],
-                "signature": row[5],
-            })
+        for row in candidates:
+            sym_id, sym_name, sym_kind, file_path, start_line, signature = row
+
+            # Check if this symbol name appears in identifiers from other files
+            cursor.execute("""
+                SELECT COUNT(*) FROM identifiers
+                WHERE name = ? AND file_path != ?
+            """, (sym_name, file_path))
+            ref_count = cursor.fetchone()[0]
+
+            if ref_count == 0:
+                dead_code.append({
+                    "id": sym_id,
+                    "name": sym_name,
+                    "kind": sym_kind,
+                    "file_path": file_path,
+                    "start_line": start_line,
+                    "signature": signature,
+                    "reason": "unreachable_from_entry_points",
+                })
+
+            if len(dead_code) >= limit:
+                break
+
+        # Format dead cycles
+        dead_cycles = []
+        for cycle_nodes, cycle_size in dead_cycles_raw[:5]:  # Top 5 cycles
+            # Get symbol names for the cycle
+            cycle_ids = [n for n in cycle_nodes if n in structurally_dead]
+            if cycle_ids:
+                placeholders = ",".join("?" * len(cycle_ids))
+                cursor.execute(f"""
+                    SELECT name, file_path FROM symbols WHERE id IN ({placeholders})
+                """, cycle_ids)
+                cycle_info = [{"name": r[0], "file_path": r[1]} for r in cursor.fetchall()]
+                if cycle_info:
+                    dead_cycles.append({
+                        "size": cycle_size,
+                        "symbols": cycle_info,
+                    })
 
         return {
             "dead_code": dead_code,
+            "dead_cycles": dead_cycles,
             "total_found": len(dead_code),
+            "cycles_found": len(dead_cycles),
         }
 
     except Exception as e:
-        return {"error": str(e), "dead_code": [], "total_found": 0}
+        return {"error": str(e), "dead_code": [], "dead_cycles": [], "total_found": 0}
+
+
+async def _explore_dead_code_simple(
+    storage: StorageManager,
+    limit: int,
+) -> dict[str, Any]:
+    """
+    Simple dead code detection fallback when no relationships exist.
+
+    Uses basic SQL query to find symbols with no references.
+    """
+    cursor = storage.conn.cursor()
+
+    cursor.execute("""
+        SELECT s.id, s.name, s.kind, s.file_path, s.start_line, s.signature
+        FROM symbols s
+        WHERE s.kind IN ('function', 'class')
+        AND s.name NOT LIKE 'test\\_%' ESCAPE '\\'
+        AND s.name NOT LIKE 'Test%'
+        AND s.name NOT LIKE '\\_%' ESCAPE '\\'
+        AND s.file_path NOT LIKE '%test%'
+        AND s.file_path NOT LIKE '%fixture%'
+        AND s.name NOT IN (
+            SELECT DISTINCT i.name FROM identifiers i
+            WHERE i.file_path != s.file_path
+        )
+        ORDER BY s.file_path, s.name
+        LIMIT ?
+    """, (limit,))
+
+    dead_code = []
+    for row in cursor.fetchall():
+        dead_code.append({
+            "name": row[1],
+            "kind": row[2],
+            "file_path": row[3],
+            "start_line": row[4],
+            "signature": row[5],
+            "reason": "no_cross_file_references",
+        })
+
+    return {
+        "dead_code": dead_code,
+        "dead_cycles": [],
+        "total_found": len(dead_code),
+        "cycles_found": 0,
+    }
 
 
 async def _explore_hot_spots(

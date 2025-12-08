@@ -19,12 +19,12 @@ from pathlib import Path
 
 from miller import server_state
 from miller.logging_config import setup_logging
-from miller.watcher import FileEvent, FileWatcher
+from miller.watcher import FileEvent, MultiWorkspaceWatcher
 
 logger = setup_logging()
 
 
-async def _on_files_changed(events: list[tuple[FileEvent, Path]]):
+async def _on_files_changed(events: list[tuple[FileEvent, Path, str | None]]):
     """
     Callback for file watcher - re-indexes changed files in real-time.
 
@@ -32,46 +32,52 @@ async def _on_files_changed(events: list[tuple[FileEvent, Path]]):
     - Deduplicates events by file path (keeps latest event per file)
     - Batches deletions for efficiency
     - Processes independent files concurrently
+    - Updates Rust watcher's hash cache after successful indexing
 
     Args:
-        events: List of (event_type, file_path) tuples from watcher
+        events: List of (event_type, file_path, new_hash) tuples from watcher
+                new_hash is the Blake3 hash of new content (None for deletions)
     """
     if not events:
         return
 
     # Phase 1: Deduplicate events by file path (keep latest event per file)
+    # Store (event_type, new_hash) tuple for each path
     # DELETED events take priority - if a file is deleted, ignore earlier CREATED/MODIFIED
-    file_events: dict[Path, FileEvent] = {}
-    for event_type, file_path in events:
+    file_events: dict[Path, tuple[FileEvent, str | None]] = {}
+    for event_type, file_path, new_hash in events:
         if file_path in file_events:
             # If already seen and this is DELETED, override
             if event_type == FileEvent.DELETED:
-                file_events[file_path] = event_type
+                file_events[file_path] = (event_type, new_hash)
             # If previous was DELETED, keep it (don't resurrect deleted files)
-            elif file_events[file_path] == FileEvent.DELETED:
+            elif file_events[file_path][0] == FileEvent.DELETED:
                 pass
             # Otherwise, keep the later event (MODIFIED over CREATED)
             else:
-                file_events[file_path] = event_type
+                file_events[file_path] = (event_type, new_hash)
         else:
-            file_events[file_path] = event_type
+            file_events[file_path] = (event_type, new_hash)
 
     # Phase 2: Separate deletions from indexing operations
     deleted_files: list[str] = []
-    files_to_index: list[tuple[FileEvent, Path]] = []
+    files_to_index: list[tuple[FileEvent, Path, str | None]] = []
 
-    for file_path, event_type in file_events.items():
+    for file_path, (event_type, new_hash) in file_events.items():
         if event_type == FileEvent.DELETED:
             rel_path = str(file_path.relative_to(server_state.workspace_root)).replace("\\", "/")
             deleted_files.append(rel_path)
         else:
-            files_to_index.append((event_type, file_path))
+            files_to_index.append((event_type, file_path, new_hash))
 
     # Phase 3: Batch process deletions (efficient single operation)
     if deleted_files:
         try:
             for rel_path in deleted_files:
                 server_state.storage.delete_file(rel_path)
+                # Remove hash from Rust watcher's cache
+                if server_state.file_watcher:
+                    server_state.file_watcher.remove_hash(rel_path)
             server_state.vector_store.delete_files_batch(deleted_files)
             logger.info(f"🗑️  Deleted {len(deleted_files)} file(s) from index")
         except Exception as e:
@@ -79,26 +85,34 @@ async def _on_files_changed(events: list[tuple[FileEvent, Path]]):
 
     # Phase 4: Process indexing operations concurrently
     if files_to_index:
-        async def index_one(event_type: FileEvent, file_path: Path) -> tuple[bool, FileEvent, Path]:
-            """Index a single file and return result."""
+        async def index_one(
+            event_type: FileEvent, file_path: Path, new_hash: str | None
+        ) -> tuple[bool, FileEvent, Path, str | None]:
+            """Index a single file and return result with hash."""
             try:
                 success = await server_state.scanner._index_file(file_path)
-                return (success, event_type, file_path)
+                return (success, event_type, file_path, new_hash)
             except Exception as e:
                 logger.error(f"❌ Error indexing {file_path}: {e}", exc_info=True)
-                return (False, event_type, file_path)
+                return (False, event_type, file_path, new_hash)
 
         # Index all files concurrently
-        results = await asyncio.gather(*[index_one(et, fp) for et, fp in files_to_index])
+        results = await asyncio.gather(
+            *[index_one(et, fp, nh) for et, fp, nh in files_to_index]
+        )
 
-        # Log results and track if any succeeded
+        # Log results, track success, and update watcher hash cache
         any_success = False
-        for success, event_type, file_path in results:
+        for success, event_type, file_path, new_hash in results:
             rel_path = str(file_path.relative_to(server_state.workspace_root)).replace("\\", "/")
             if success:
                 any_success = True
                 action = "Indexed" if event_type == FileEvent.CREATED else "Updated"
                 logger.info(f"✏️  {action}: {rel_path}")
+                # Update Rust watcher's hash cache to prevent redundant re-indexing
+                # on subsequent saves without content changes
+                if new_hash and server_state.file_watcher:
+                    server_state.file_watcher.update_hash(rel_path, new_hash)
             else:
                 logger.warning(f"⚠️  Failed to index: {rel_path}")
 
@@ -222,7 +236,11 @@ async def _background_initialization_and_indexing():
             from miller.storage import StorageManager
             from miller.workspace import WorkspaceScanner
             from miller.workspace_registry import WorkspaceRegistry
-            from miller.workspace_paths import get_workspace_db_path, get_workspace_vector_path
+            from miller.workspace_paths import (
+                get_workspace_db_path,
+                get_workspace_vector_path,
+                ensure_miller_directories,
+            )
             from miller.embeddings import EmbeddingManager, VectorStore
             return (
                 StorageManager,
@@ -230,6 +248,7 @@ async def _background_initialization_and_indexing():
                 WorkspaceRegistry,
                 get_workspace_db_path,
                 get_workspace_vector_path,
+                ensure_miller_directories,
                 EmbeddingManager,
                 VectorStore,
             )
@@ -245,6 +264,7 @@ async def _background_initialization_and_indexing():
                 WorkspaceRegistry,
                 get_workspace_db_path,
                 get_workspace_vector_path,
+                ensure_miller_directories,
                 EmbeddingManager,
                 VectorStore,
             ) = _sync_heavy_imports()
@@ -256,6 +276,7 @@ async def _background_initialization_and_indexing():
                 WorkspaceRegistry,
                 get_workspace_db_path,
                 get_workspace_vector_path,
+                ensure_miller_directories,
                 EmbeddingManager,
                 VectorStore,
             ) = await asyncio.to_thread(_sync_heavy_imports)
@@ -274,22 +295,50 @@ async def _background_initialization_and_indexing():
             workspace_type="primary",
         )
         logger.info(f"📋 Workspace ID: {workspace_id}")
+        server_state.primary_workspace_id = workspace_id
 
-        # Use workspace-specific paths for database and vectors
+        # Ensure .miller directory exists (unified database goes here)
+        ensure_miller_directories()
+
+        # Use unified paths for database and vectors (single DB for all workspaces)
         db_path = get_workspace_db_path(workspace_id)
         vector_path = get_workspace_vector_path(workspace_id)
 
-        server_state.embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
+        # Initialize embedding model (uses Jina-0.5B by default, or MILLER_EMBEDDING_MODEL env var)
+        server_state.embeddings = EmbeddingManager(device="auto")
         server_state.storage = StorageManager(db_path=str(db_path))
+
+        # Initialize vector store with expected dimension from embedding model
+        # Pass storage so VectorStore can clear SQLite files table on reset
+        # (prevents "migration death spiral" bug - see _invalidate_sqlite_cache)
         server_state.vector_store = VectorStore(
-            db_path=str(vector_path), embeddings=server_state.embeddings
+            db_path=str(vector_path),
+            embeddings=server_state.embeddings,
+            expected_dim=server_state.embeddings.dimensions,
+            storage=server_state.storage,
         )
+
+        # ╔══════════════════════════════════════════════════════════════════════════════╗
+        # ║  SIGNAL CORE COMPONENTS READY                                                 ║
+        # ║                                                                               ║
+        # ║  At this point: storage, embeddings, and vector_store are initialized.        ║
+        # ║  Tools can now work (even while indexing runs in background).                 ║
+        # ║                                                                               ║
+        # ║  This is CRITICAL for the Windows pipe deadlock workaround:                   ║
+        # ║  - On Windows, imports run synchronously (5-15s)                              ║
+        # ║  - Tools await this event instead of returning error strings                  ║
+        # ║  - Once set, tools proceed normally                                           ║
+        # ╚══════════════════════════════════════════════════════════════════════════════╝
+        init_event = server_state.get_initialization_event()
+        init_event.set()
+        logger.info("✅ Core components ready - tools can now accept requests")
 
         server_state.scanner = WorkspaceScanner(
             workspace_root=server_state.workspace_root,
             storage=server_state.storage,
             embeddings=server_state.embeddings,
             vector_store=server_state.vector_store,
+            workspace_id=workspace_id,
         )
         logger.info("✅ Miller components initialized and ready")
 
@@ -304,6 +353,13 @@ async def _background_initialization_and_indexing():
                 f"{stats['updated']} updated, {stats['skipped']} skipped, "
                 f"{stats['deleted']} deleted, {stats['errors']} errors"
             )
+
+            # Run DB maintenance after heavy writes
+            # - PRAGMA optimize: Updates query planner statistics
+            # - wal_checkpoint(TRUNCATE): Clears WAL file for clean state
+            logger.info("🔧 Running DB optimization after indexing...")
+            server_state.storage.optimize()
+            logger.info("✅ DB optimized (query stats updated, WAL checkpointed)")
 
             # Compute transitive closure for fast impact analysis
             # Run in thread pool to avoid blocking the event loop (O(V·E) BFS)
@@ -339,20 +395,37 @@ async def _background_initialization_and_indexing():
         final_file_count = cursor.fetchone()[0]
         registry.update_workspace_stats(workspace_id, final_symbol_count, final_file_count)
 
-        # PHASE 3: Start file watcher for real-time updates
+        # PHASE 3: Start multi-workspace file watcher for real-time updates
         init_phase = "file_watcher"
-        logger.info("👁️  Starting file watcher for real-time indexing...")
+        logger.info("👁️  Starting multi-workspace file watcher for real-time indexing...")
         from miller.ignore_patterns import load_all_ignores
 
         ignore_spec = load_all_ignores(server_state.workspace_root)
         pattern_strings = {p.pattern for p in ignore_spec.patterns}
-        server_state.file_watcher = FileWatcher(
+
+        # Build initial hash map from existing indexed files
+        # This allows the Rust watcher to detect if content actually changed
+        # (prevents re-indexing when file is saved without changes)
+        indexed_files = server_state.storage.get_all_files()
+        initial_hashes = {f["path"]: f["hash"] for f in indexed_files if f.get("hash")}
+        logger.info(f"📊 Loaded {len(initial_hashes)} file hashes for change detection")
+
+        # Create multi-workspace watcher (manages watchers for all workspaces)
+        server_state.file_watcher = MultiWorkspaceWatcher()
+
+        # Store primary scanner in workspace_scanners map
+        server_state.workspace_scanners[workspace_id] = server_state.scanner
+
+        # Add primary workspace to the multi-workspace watcher
+        await server_state.file_watcher.add_workspace(
+            workspace_id=workspace_id,
             workspace_path=server_state.workspace_root,
-            indexing_callback=_on_files_changed,
+            scanner=server_state.scanner,
+            storage=server_state.storage,
+            vector_store=server_state.vector_store,
             ignore_patterns=pattern_strings,
-            debounce_delay=0.2,
+            initial_hashes=initial_hashes,
         )
-        server_state.file_watcher.start()
         logger.info("✅ File watcher active - workspace changes will be indexed automatically")
 
         # PHASE 4: Start auto-unload task for GPU memory management (Julie-style)
@@ -407,13 +480,13 @@ async def lifespan(_app):
 
     yield  # ← SERVER IS NOW READY! Client sees "Connected" immediately after this.
 
-    # SHUTDOWN: Stop file watcher and wait for background task
+    # SHUTDOWN: Stop file watchers and wait for background task
     logger.info("🛑 Miller server shutting down...")
 
-    if server_state.file_watcher and server_state.file_watcher.is_running():
-        logger.info("⏹️  Stopping file watcher...")
-        server_state.file_watcher.stop()
-        logger.info("✅ File watcher stopped")
+    if server_state.file_watcher:
+        logger.info("⏹️  Stopping all file watchers...")
+        server_state.file_watcher.stop_all()
+        logger.info("✅ All file watchers stopped")
 
     if not init_task.done():
         logger.info("⏳ Waiting for background initialization to complete...")

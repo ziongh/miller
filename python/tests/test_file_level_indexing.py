@@ -107,7 +107,7 @@ class TestFileLevelVectorStore:
         from miller.workspace.indexer import FileSymbol
 
         embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         # Create file symbol
         content = "* text=auto\n*.png binary"
@@ -125,7 +125,7 @@ class TestFileLevelVectorStore:
         from miller.workspace.indexer import FileSymbol
 
         embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         # Add file-level entry
         content = "* text=auto\n*.png binary\n*.jpg binary"
@@ -147,7 +147,7 @@ class TestFileLevelVectorStore:
         from miller import miller_core
 
         embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5")
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         # Add a code symbol with "binary" in name
         code = "def binary_search(arr, target): pass"
@@ -229,8 +229,8 @@ class TestKindWeighting:
 
         # File should have lower weight
         assert file_score < func_score
-        assert file_score == 0.5  # File weight is 0.5
-        assert func_score == 1.0  # Function weight is 1.5, capped at 1.0
+        assert file_score == 0.65  # File weight is 0.65
+        assert func_score == 1.0  # Function weight is 1.1, capped at 1.0
 
 
 class TestIgnorePatterns:

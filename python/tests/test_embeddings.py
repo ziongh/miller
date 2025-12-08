@@ -157,7 +157,7 @@ class TestVectorStore:
         """Test that VectorStore creates a LanceDB table."""
         from miller.embeddings import VectorStore
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", expected_dim=384)
         assert store is not None
 
     def test_add_symbols_with_embeddings(self):
@@ -172,7 +172,7 @@ class TestVectorStore:
         vectors = embeddings.embed_batch(result.symbols)
 
         # Store in LanceDB
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         count = store.add_symbols(result.symbols, vectors)
 
         assert count == 1
@@ -197,7 +197,7 @@ def delete_old_files(): pass
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Text search for "user" (uses hybrid search internally)
@@ -242,7 +242,7 @@ def delete_old_files():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Semantic search (natural language query)
@@ -279,7 +279,7 @@ def process_payment():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Hybrid: should combine keyword "user" + semantic "age computation"
@@ -304,7 +304,7 @@ def process_payment():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         results = store.search(query="hello", method="text", limit=1)
@@ -330,7 +330,7 @@ def process_payment():
         result1 = miller_core.extract_file(code1, "python", "test.py")
         vectors1 = embeddings.embed_batch(result1.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result1.symbols, vectors1)
 
         # Update with new code (rename function)
@@ -359,7 +359,7 @@ def process_payment():
         result = miller_core.extract_file(code, "python", "kid's_file.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Verify the symbols were added
@@ -390,6 +390,149 @@ def process_payment():
         assert not any(r["file_path"] == "kid's_file.py" for r in results)
 
 
+class TestMatryoshkaMRL:
+    """Test Matryoshka Representation Learning (MRL) for fast semantic search.
+
+    MRL uses short vectors (64D) for fast index search, then re-ranks with
+    full vectors (896D) for accuracy. This reduces index size by ~90%
+    while maintaining the same search quality.
+    """
+
+    def test_mrl_constants_defined(self):
+        """Test that MRL constants are properly defined."""
+        from miller.embeddings import VectorStore
+
+        assert hasattr(VectorStore, "MRL_SHORT_DIM")
+        assert VectorStore.MRL_SHORT_DIM == 64
+        assert VectorStore.DEFAULT_DIMENSION == 896
+
+    def test_schema_includes_short_vector(self):
+        """Test that schema includes both vector and short_vector columns."""
+        from miller.embeddings import VectorStore
+
+        store = VectorStore(db_path=":memory:", expected_dim=896)
+
+        # Create a symbol to populate the table
+        class FakeSym:
+            id = "test_id"
+            name = "test_func"
+            kind = "Function"
+            language = "python"
+            file_path = "test.py"
+            start_line = 1
+            end_line = 5
+            start_byte = 0
+            end_byte = 100
+            signature = "def test_func()"
+            doc_comment = "Test function"
+            hash = "abc123"
+
+        vectors = np.random.rand(1, 896).astype(np.float32)
+        store.add_symbols([FakeSym()], vectors)
+
+        # Schema should have both vector columns
+        schema_names = store._table.schema.names
+        assert "short_vector" in schema_names
+        assert "vector" in schema_names
+
+    def test_add_symbols_creates_short_vectors(self):
+        """Test that adding symbols creates both full and short vectors."""
+        from miller.embeddings import VectorStore
+
+        store = VectorStore(db_path=":memory:", expected_dim=896)
+
+        # Create fake symbol
+        class FakeSym:
+            id = "test_id"
+            name = "test_func"
+            kind = "Function"
+            language = "python"
+            file_path = "test.py"
+            start_line = 1
+            end_line = 5
+            start_byte = 0
+            end_byte = 100
+            signature = "def test_func()"
+            doc_comment = "Test function"
+            hash = "abc123"
+
+        symbols = [FakeSym()]
+        vectors = np.random.rand(1, 896).astype(np.float32)
+
+        store.add_symbols(symbols, vectors)
+
+        # Verify both vectors are stored
+        df = store._table.to_pandas()
+        assert len(df) == 1
+        assert len(df.iloc[0]["vector"]) == 896
+        assert len(df.iloc[0]["short_vector"]) == 64
+
+        # Verify short_vector is first 64 dims of full vector
+        full_vec = np.array(df.iloc[0]["vector"])
+        short_vec = np.array(df.iloc[0]["short_vector"])
+        np.testing.assert_array_almost_equal(short_vec, full_vec[:64])
+
+    def test_mrl_semantic_search_uses_short_vector_for_retrieval(self):
+        """Test that semantic search uses short_vector for fast retrieval."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager()
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
+
+        # Add some symbols
+        code = '''
+def authenticate_user():
+    """Authenticate a user with credentials."""
+    pass
+
+def process_payment():
+    """Process payment transaction."""
+    pass
+'''
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+        store.add_symbols(result.symbols, vectors)
+
+        # Semantic search should work (uses MRL internally)
+        results = store.search("user login authentication", method="semantic", limit=2)
+
+        assert len(results) > 0
+        # Auth-related function should rank higher
+        assert results[0]["name"] == "authenticate_user"
+        # Score should be in 0-1 range (from re-ranking)
+        assert 0 <= results[0]["score"] <= 1.0
+
+    def test_mrl_hybrid_search_works(self):
+        """Test that hybrid search uses MRL for the semantic component."""
+        from miller.embeddings import VectorStore, EmbeddingManager
+        from miller import miller_core
+
+        embeddings = EmbeddingManager()
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
+
+        code = '''
+def parse_config():
+    """Parse YAML configuration."""
+    pass
+
+def save_data():
+    """Save data to database."""
+    pass
+'''
+        result = miller_core.extract_file(code, "python", "test.py")
+        vectors = embeddings.embed_batch(result.symbols)
+        store.add_symbols(result.symbols, vectors)
+
+        # Hybrid search combines FTS + MRL semantic
+        results = store.search("configuration parsing yaml", method="hybrid", limit=2)
+
+        assert len(results) > 0
+        # Config-related function should rank highly
+        names = [r["name"] for r in results]
+        assert "parse_config" in names
+
+
 class TestTantivyFTS:
     """Test Tantivy full-text search integration (Phase 1 of FTS migration)."""
 
@@ -404,7 +547,7 @@ class TestTantivyFTS:
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Verify FTS index exists
@@ -439,7 +582,7 @@ def delete_old_files():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Text search with FTS should return results with scores
@@ -466,7 +609,7 @@ def delete_old_files():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Try SQL injection attack
@@ -504,7 +647,7 @@ def get_user_data():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Multi-word search: should find symbols containing these terms
@@ -543,7 +686,7 @@ def start_execution():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Test basic text matching (stemming may not be enabled by default)
@@ -599,7 +742,7 @@ def process_payment():
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Hybrid search should combine text (keyword "user") + semantic (age concepts)
@@ -629,7 +772,7 @@ def process_payment():
         result1 = miller_core.extract_file(code1, "python", "test.py")
         vectors1 = embeddings.embed_batch(result1.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result1.symbols, vectors1)
 
         # Update file with new symbols
@@ -689,7 +832,7 @@ class TestPerformance:
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Search should be fast
@@ -723,7 +866,7 @@ class TestFTSRetryMechanism:
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         # Track call count
@@ -765,7 +908,7 @@ class TestFTSRetryMechanism:
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         call_count = 0
@@ -802,7 +945,7 @@ class TestFTSRetryMechanism:
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         call_count = 0
@@ -833,7 +976,7 @@ class TestFTSRetryMechanism:
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         call_count = 0
@@ -864,7 +1007,7 @@ class TestFTSRetryMechanism:
         result = miller_core.extract_file(code, "python", "test.py")
         vectors = embeddings.embed_batch(result.symbols)
 
-        store = VectorStore(db_path=":memory:")
+        store = VectorStore(db_path=":memory:", embeddings=embeddings)
         store.add_symbols(result.symbols, vectors)
 
         call_count = 0

@@ -139,8 +139,8 @@ class TestWorkspaceScanner:
 
         # Create fresh components
         storage = StorageManager(":memory:")
-        embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
 
@@ -351,8 +351,8 @@ class TestWorkspaceIndexing:
         from miller.embeddings import EmbeddingManager, VectorStore
 
         storage = StorageManager(":memory:")
-        embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         scanner = WorkspaceScanner(test_workspace, storage, embeddings, vector_store)
 

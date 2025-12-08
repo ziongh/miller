@@ -2,10 +2,11 @@
 //
 // These functions provide the public API for Miller's extraction functionality.
 
-use super::PyExtractionResults;
+use super::{PyBatchFileResult, PyExtractionResults};
 use julie_extractors::{detect_language_from_extension, ExtractionResults, ExtractorManager};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use std::fs;
 use std::path::Path;
 
 /// Extract symbols, identifiers, and relationships from source code
@@ -237,6 +238,143 @@ pub fn extract_files_batch(
                 };
 
                 PyExtractionResults::from_extraction_results(results)
+            })
+            .collect()
+    });
+
+    Ok(results)
+}
+
+/// Extract files with Rust-side I/O (Zero-Copy optimization)
+///
+/// This function performs file reading, hashing, language detection, and
+/// symbol extraction entirely in Rust's parallel worker pool. This eliminates
+/// Python memory churn from allocating strings just to pass them to Rust.
+///
+/// # Performance Benefits
+/// - File I/O happens in parallel across all CPU cores
+/// - No GIL contention during file reads
+/// - Blake3 hashing is ~3x faster than Python's hashlib
+/// - Language detection happens without Python overhead
+/// - Memory usage is flatter (no Python string accumulation)
+///
+/// # Error Handling
+/// - Individual file read errors are captured in the result's `error` field
+/// - Extraction errors result in `results: None` but `content` still populated
+/// - The function never raises - all errors are returned in PyBatchFileResult
+///
+/// Args:
+///     file_paths (list[str]): List of relative file paths from workspace root
+///     workspace_root (str): Absolute path to workspace root directory
+///
+/// Returns:
+///     list[BatchFileResult]: Results containing content, hash, language, and extraction data
+///
+/// Example:
+///     >>> paths = ["src/main.py", "src/utils.rs", "README.md"]
+///     >>> results = extract_files_batch_with_io(paths, "/path/to/workspace")
+///     >>> for r in results:
+///     ...     if r.is_success:
+///     ...         print(f"{r.path}: {r.language}, {len(r.content)} bytes")
+#[pyfunction]
+#[pyo3(signature = (file_paths, workspace_root))]
+pub fn extract_files_batch_with_io(
+    py: Python<'_>,
+    file_paths: Vec<String>,
+    workspace_root: String,
+) -> PyResult<Vec<PyBatchFileResult>> {
+    use rayon::prelude::*;
+
+    let workspace_root_path = Path::new(&workspace_root);
+
+    // Release GIL for parallel I/O + CPU processing
+    let results = py.detach(move || {
+        file_paths
+            .par_iter()
+            .map(|rel_path| {
+                // 1. Resolve full path
+                let full_path = workspace_root_path.join(rel_path);
+
+                // 2. Read file content
+                let content = match fs::read_to_string(&full_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        return PyBatchFileResult::error(
+                            rel_path.clone(),
+                            format!("Read error: {}", e),
+                        );
+                    }
+                };
+
+                // 3. Compute Blake3 hash
+                let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+
+                // 4. Detect language from extension
+                let extension = full_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+                let language =
+                    detect_language_from_extension(extension).unwrap_or("text");
+
+                // 5. Extract symbols (if not a text file)
+                let results = if language == "text" {
+                    // Text files: no symbol extraction, but we still have content
+                    None
+                } else {
+                    let manager = ExtractorManager::new();
+
+                    // Extract symbols
+                    let symbols = manager
+                        .extract_symbols(rel_path, &content, workspace_root_path)
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "Warning: Failed to extract symbols from {}: {}",
+                                rel_path, e
+                            );
+                            Vec::new()
+                        });
+
+                    // Extract identifiers
+                    let identifiers = manager
+                        .extract_identifiers(rel_path, &content, &symbols)
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "Warning: Failed to extract identifiers from {}: {}",
+                                rel_path, e
+                            );
+                            Vec::new()
+                        });
+
+                    // Extract relationships
+                    let relationships = manager
+                        .extract_relationships(rel_path, &content, &symbols)
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "Warning: Failed to extract relationships from {}: {}",
+                                rel_path, e
+                            );
+                            Vec::new()
+                        });
+
+                    let extraction_results = ExtractionResults {
+                        symbols,
+                        identifiers,
+                        relationships,
+                        pending_relationships: Vec::new(),
+                        types: std::collections::HashMap::new(),
+                    };
+
+                    Some(PyExtractionResults::from_extraction_results(extraction_results))
+                };
+
+                PyBatchFileResult::success(
+                    rel_path.clone(),
+                    content,
+                    language.to_string(),
+                    hash,
+                    results,
+                )
             })
             .collect()
     });

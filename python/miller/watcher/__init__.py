@@ -2,8 +2,13 @@
 File system watcher for real-time workspace indexing.
 
 This module provides a file watcher that monitors the workspace for changes
-and automatically re-indexes modified files. It follows the pattern established
-by Julie's watcher implementation but uses Python's watchdog library.
+and automatically re-indexes modified files.
+
+Now uses Rust-native file watching (miller_core.PyFileWatcher) for:
+- Zero GIL contention (monitoring runs entirely in Rust)
+- Hash-based change detection (only notifies when content actually changes)
+- Efficient handling of 100k+ files
+- Cross-platform support (inotify, FSEvents, ReadDirectoryChangesW)
 
 CONTRACT DEFINITION (Test-First TDD - Phase 1: Define Contract)
 ===============================================================
@@ -123,15 +128,24 @@ Boundary conditions the tests must cover:
    - Convert Windows backslashes to forward slashes
 """
 
-from miller.watcher.core import FileWatcher
-from miller.watcher.debouncer import DebounceQueue
-from miller.watcher.handlers import FileWatcherEventHandler
+from miller.watcher.core import FileWatcher, RustFileWatcher
 from miller.watcher.types import FileEvent, FileWatcherProtocol
+from miller.watcher.multi_workspace import MultiWorkspaceWatcher
+
+# Legacy imports - kept for backwards compatibility but may be removed in future
+# The Rust watcher handles debouncing internally
+try:
+    from miller.watcher.debouncer import DebounceQueue
+    from miller.watcher.handlers import FileWatcherEventHandler
+except ImportError:
+    # These may be removed in future versions
+    DebounceQueue = None
+    FileWatcherEventHandler = None
 
 __all__ = [
     "FileEvent",
     "FileWatcher",
+    "RustFileWatcher",
     "FileWatcherProtocol",
-    "DebounceQueue",
-    "FileWatcherEventHandler",
+    "MultiWorkspaceWatcher",
 ]

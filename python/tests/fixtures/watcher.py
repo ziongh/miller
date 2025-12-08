@@ -28,13 +28,36 @@ def sample_file(temp_workspace):
     return file_path
 
 
+class WatcherWrapper:
+    """Wrapper that adds a small delay after start() for inotify initialization."""
+
+    def __init__(self, watcher):
+        self._watcher = watcher
+
+    def start(self):
+        import time
+        self._watcher.start()
+        # Give inotify time to fully initialize watches
+        time.sleep(0.2)
+
+    def __getattr__(self, name):
+        return getattr(self._watcher, name)
+
+
 @pytest.fixture
 def watcher(temp_workspace, mock_callback):
-    """Create FileWatcher instance (not started)."""
+    """Create FileWatcher instance (not started).
+
+    Note: debounce_delay is no longer configurable - the Rust watcher
+    handles debouncing internally with a 200ms window.
+
+    The wrapper adds a small delay after start() to allow inotify to
+    fully initialize before file operations begin.
+    """
     from miller.watcher import FileWatcher
-    return FileWatcher(
+    fw = FileWatcher(
         workspace_path=temp_workspace,
         indexing_callback=mock_callback,
         ignore_patterns={".git", "*.pyc", "__pycache__"},
-        debounce_delay=0.1,  # Short delay for faster tests
     )
+    return WatcherWrapper(fw)

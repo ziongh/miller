@@ -9,12 +9,12 @@ from typing import Literal, Optional
 from miller.workspace_registry import WorkspaceRegistry
 
 from .indexing import handle_index
-from .operations import handle_add, handle_clean, handle_refresh, handle_remove
+from .operations import handle_add, handle_clean, handle_optimize, handle_refresh, handle_remove
 from .stats import handle_health, handle_list, handle_stats
 
 
 async def manage_workspace(
-    operation: Literal["index", "list", "add", "remove", "stats", "clean", "refresh", "health"],
+    operation: Literal["index", "list", "add", "remove", "stats", "clean", "refresh", "health", "optimize"],
     path: Optional[str] = None,
     name: Optional[str] = None,
     workspace: Optional[str] = None,
@@ -23,7 +23,7 @@ async def manage_workspace(
     output_format: Literal["text", "json"] = "text",
 ) -> str:
     """
-    Manage workspaces: index, list, add, remove, stats, clean, refresh, health.
+    Manage workspaces: index, list, add, remove, stats, clean, refresh, health, optimize.
 
     Operations:
     - list: Show all registered workspaces
@@ -34,6 +34,7 @@ async def manage_workspace(
     - clean: Clean up orphaned data (workspaces with deleted paths)
     - refresh: Re-index existing workspace (REQUIRES workspace parameter)
     - health: System health check (registry status, aggregate stats)
+    - optimize: Force database compaction and cleanup to free disk space and improve speed
 
     Index vs Refresh (aligned with Julie):
     - index: For initial setup or force rebuild. Uses path, registers if new.
@@ -106,6 +107,9 @@ async def manage_workspace(
 
     elif operation == "health":
         return handle_health(registry, detailed, output_format)
+
+    elif operation == "optimize":
+        return await handle_optimize(registry, workspace_id)
 
     else:
         return f"Error: Operation '{operation}' not implemented yet"

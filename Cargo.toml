@@ -28,6 +28,25 @@ serde_json = "1.0"      # For metadata serialization
 tracing = "0.1"         # For logging
 blake3 = "1.5"          # Fast cryptographic hashing (3x faster than SHA-256)
 
+# Graph processing (transitive closure, PageRank)
+# Moves expensive graph algorithms from Python to parallelized Rust
+petgraph = "0.8"        # Fast graph data structures and algorithms
+rustc-hash = "2.1"      # Fast non-cryptographic hashing for node IDs
+
+# File watcher (Rust-native, replaces Python watchdog)
+# Moving file watching to Rust eliminates GIL contention and handles 100k+ files efficiently
+notify = "8.0"          # Cross-platform file system notifications
+notify-debouncer-full = "0.5" # Debouncing with rename tracking
+dashmap = "6.1"         # Thread-safe concurrent HashMap for hash tracking
+ignore = "0.4"          # Efficient .gitignore pattern matching (same as ripgrep)
+
+# Arrow for zero-copy Python data transfer (eliminates GC pressure)
+# pyo3-arrow provides seamless FFI between Rust arrow arrays and PyArrow
+# Versions: pyo3-arrow 0.15 requires arrow 57.x and pyo3 0.27.x
+arrow-array = "57"
+arrow-schema = "57"
+pyo3-arrow = "0.15"
+
 [dev-dependencies]
 tempfile = "3.14"  # For testing with temporary directories
 

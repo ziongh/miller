@@ -11,6 +11,12 @@ pub mod utils;
 // PyO3 bindings layer (Miller-specific)
 pub mod bindings;
 
+// Rust-native file watcher (replaces Python watchdog)
+pub mod watcher;
+
+// High-performance graph algorithms (transitive closure, PageRank)
+pub mod graph;
+
 /// Miller Core Python module
 ///
 /// Provides tree-sitter-based symbol extraction for 31 programming languages.
@@ -23,14 +29,26 @@ fn miller_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bindings::detect_language, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::supported_languages, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::extract_files_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::extract_files_batch_with_io, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::hash_content, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::hash_contents_batch, m)?)?;
+
+    // Arrow-based extraction (zero-copy Python data transfer)
+    m.add_function(wrap_pyfunction!(bindings::extract_files_to_arrow, m)?)?;
 
     // Add Python classes
     m.add_class::<bindings::PySymbol>()?;
     m.add_class::<bindings::PyIdentifier>()?;
     m.add_class::<bindings::PyRelationship>()?;
     m.add_class::<bindings::PyExtractionResults>()?;
+    m.add_class::<bindings::PyBatchFileResult>()?;
+    m.add_class::<bindings::PyArrowExtractionBatch>()?;
+
+    // Rust-native file watcher (replaces Python watchdog)
+    m.add_class::<watcher::PyFileWatcher>()?;
+
+    // High-performance graph algorithms
+    m.add_class::<graph::PyGraphProcessor>()?;
 
     Ok(())
 }

@@ -66,6 +66,10 @@ def get_symbols_by_ids(conn: sqlite3.Connection, symbol_ids: list[str]) -> dict[
     OPTIMIZED: Uses single WHERE IN query instead of N individual queries.
     This is the batch version of get_symbol_by_id() for search hydration.
 
+    Includes:
+    - All symbol fields (id, name, kind, file_path, reference_count, etc.)
+    - last_modified from files table (for staleness decay in search ranking)
+
     Args:
         conn: SQLite connection
         symbol_ids: List of symbol IDs to fetch
@@ -77,9 +81,15 @@ def get_symbols_by_ids(conn: sqlite3.Connection, symbol_ids: list[str]) -> dict[
         return {}
 
     # Build parameterized query with correct number of placeholders
+    # JOIN files to get last_modified for staleness decay scoring
     placeholders = ",".join("?" * len(symbol_ids))
     cursor = conn.execute(
-        f"SELECT * FROM symbols WHERE id IN ({placeholders})",
+        f"""
+        SELECT symbols.*, files.last_modified
+        FROM symbols
+        LEFT JOIN files ON symbols.file_path = files.path
+        WHERE symbols.id IN ({placeholders})
+        """,
         symbol_ids,
     )
 
@@ -421,4 +431,168 @@ def find_functions_with_parameter_type(conn: sqlite3.Connection, type_name: str)
         JOIN symbols target ON r.to_symbol_id = target.id
         WHERE r.kind = 'parameter' AND target.name = ?
     """, (type_name,))
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def get_cross_directory_dependencies(
+    conn: sqlite3.Connection,
+    depth: int = 2,
+    min_edge_count: int = 1,
+) -> list[dict]:
+    """
+    Get aggregated dependencies between directories for architecture mapping.
+
+    Aggregates relationships (calls, imports, references) between files and
+    groups them by directory structure up to a specified depth. This provides
+    a "zoom out" view of module dependencies.
+
+    Args:
+        conn: SQLite connection
+        depth: Directory depth to aggregate at (default: 2)
+               e.g., depth=2 for "src/auth" level from "src/auth/login.py"
+        min_edge_count: Minimum relationship count to include (default: 1)
+
+    Returns:
+        List of dicts with:
+        - source_dir: Source directory path
+        - target_dir: Target directory path
+        - edge_count: Number of relationships
+        - relationship_kinds: Comma-separated list of relationship types
+
+    Example:
+        >>> get_cross_directory_dependencies(conn, depth=2)
+        [
+            {"source_dir": "src/auth", "target_dir": "src/db", "edge_count": 45, ...},
+            {"source_dir": "src/api", "target_dir": "src/utils", "edge_count": 23, ...},
+        ]
+    """
+    # Build SQL to extract directory prefix at specified depth
+    # We use a combination of substr and instr to extract path components
+    # This is SQLite-compatible and handles both / and \ path separators
+
+    cursor = conn.execute(
+        """
+        WITH dir_edges AS (
+            SELECT
+                -- Extract source directory: get path up to depth components
+                -- Using recursive substring extraction for cross-platform support
+                CASE
+                    WHEN instr(from_sym.file_path, '/') > 0 THEN
+                        rtrim(
+                            substr(from_sym.file_path, 1,
+                                instr(
+                                    substr(from_sym.file_path || '/',
+                                        instr(from_sym.file_path || '/', '/') + 1
+                                    ) || '/',
+                                    '/'
+                                ) + instr(from_sym.file_path || '/', '/') - 1
+                            ),
+                            '/'
+                        )
+                    ELSE from_sym.file_path
+                END as source_dir,
+                CASE
+                    WHEN instr(to_sym.file_path, '/') > 0 THEN
+                        rtrim(
+                            substr(to_sym.file_path, 1,
+                                instr(
+                                    substr(to_sym.file_path || '/',
+                                        instr(to_sym.file_path || '/', '/') + 1
+                                    ) || '/',
+                                    '/'
+                                ) + instr(to_sym.file_path || '/', '/') - 1
+                            ),
+                            '/'
+                        )
+                    ELSE to_sym.file_path
+                END as target_dir,
+                r.kind as relationship_kind
+            FROM relationships r
+            JOIN symbols from_sym ON r.from_symbol_id = from_sym.id
+            JOIN symbols to_sym ON r.to_symbol_id = to_sym.id
+            WHERE from_sym.file_path != to_sym.file_path
+        )
+        SELECT
+            source_dir,
+            target_dir,
+            COUNT(*) as edge_count,
+            GROUP_CONCAT(DISTINCT relationship_kind) as relationship_kinds
+        FROM dir_edges
+        WHERE source_dir != target_dir
+        GROUP BY source_dir, target_dir
+        HAVING COUNT(*) >= ?
+        ORDER BY edge_count DESC
+        """,
+        (min_edge_count,),
+    )
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def get_exported_symbols(conn: sqlite3.Connection, file_path: str = None) -> list[dict]:
+    """
+    Get all exported/public symbols, optionally filtered by file.
+
+    Used for import validation - checks if a symbol is available for import.
+
+    Args:
+        conn: SQLite connection
+        file_path: Optional file path filter
+
+    Returns:
+        List of symbol dicts with id, name, kind, file_path, visibility
+    """
+    if file_path:
+        cursor = conn.execute(
+            """
+            SELECT id, name, kind, file_path, visibility
+            FROM symbols
+            WHERE file_path = ?
+            AND (visibility IS NULL OR visibility IN ('public', 'exported', ''))
+            AND kind NOT IN ('parameter', 'variable', 'local')
+            """,
+            (file_path,),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT id, name, kind, file_path, visibility
+            FROM symbols
+            WHERE (visibility IS NULL OR visibility IN ('public', 'exported', ''))
+            AND kind NOT IN ('parameter', 'variable', 'local')
+            """
+        )
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def find_symbols_by_name_prefix(
+    conn: sqlite3.Connection,
+    prefix: str,
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Find symbols whose name starts with a given prefix.
+
+    Used for import validation to suggest corrections for typos.
+
+    Args:
+        conn: SQLite connection
+        prefix: Name prefix to search for
+        limit: Maximum results
+
+    Returns:
+        List of symbol dicts
+    """
+    cursor = conn.execute(
+        """
+        SELECT id, name, kind, file_path, visibility
+        FROM symbols
+        WHERE name LIKE ? || '%'
+        AND kind NOT IN ('parameter', 'variable', 'local')
+        ORDER BY
+            CASE WHEN name = ? THEN 0 ELSE 1 END,  -- Exact match first
+            length(name)  -- Shorter names next
+        LIMIT ?
+        """,
+        (prefix, prefix, limit),
+    )
     return [dict(row) for row in cursor.fetchall()]

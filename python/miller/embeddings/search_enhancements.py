@@ -1,10 +1,13 @@
 """Search result enhancement and ranking logic for VectorStore.
 
 Provides methods to improve search relevance through field matching,
-position-based boosting, kind-based weighting, and quality filtering.
+position-based boosting, kind-based weighting, staleness decay,
+importance weighting, and quality filtering.
 """
 
+import math
 import re
+import time
 
 
 def preprocess_query(query: str, method: str) -> str:
@@ -147,24 +150,27 @@ def apply_kind_weighting(result: dict) -> float:
     Returns:
         Weighted score (0.0-1.0 after normalization)
     """
+    # Kind weights are intentionally modest to avoid overshadowing relevance scores.
+    # Previously 1.5x caused even low-relevance results to hit 1.0 ceiling.
+    # Weights are tuned so unrelated queries stay below 80% of keyword matches.
     KIND_WEIGHTS = {
-        "Function": 1.5,
-        "Class": 1.5,
-        "Method": 1.3,
-        "Interface": 1.2,
-        "Type": 1.2,
-        "Struct": 1.2,
-        "Enum": 1.1,
-        "Variable": 0.8,
-        "Field": 0.8,
-        "Constant": 0.9,
-        "Parameter": 0.7,
+        "Function": 1.1,
+        "Class": 1.1,
+        "Method": 1.05,
+        "Interface": 1.05,
+        "Type": 1.05,
+        "Struct": 1.05,
+        "Enum": 1.0,
+        "Variable": 0.9,
+        "Field": 0.9,
+        "Constant": 0.95,
+        "Parameter": 0.85,
         # Deboost noise - you want definitions, not these
-        "Import": 0.4,
-        "Namespace": 0.6,
+        "Import": 0.6,
+        "Namespace": 0.7,
         # File-level entries (text files without parsers)
         # Ranked lower than symbols so code results appear first
-        "File": 0.5,
+        "File": 0.65,
     }
 
     base_score = result.get("score", 0.0)
@@ -173,6 +179,95 @@ def apply_kind_weighting(result: dict) -> float:
     # Normalize kind to title case (data has "function", dict has "Function")
     weight = KIND_WEIGHTS.get(kind.title(), 1.0)  # Default 1.0 for unknown kinds
     return min(base_score * weight, 1.0)  # Clamp to 1.0
+
+
+def calculate_staleness_factor(
+    last_modified: int | None,
+    now: int | None = None,
+    decay_rate: float = 0.1,
+    min_factor: float = 0.5,
+) -> float:
+    """
+    Calculate staleness decay factor based on file modification time.
+
+    Older code is slightly penalized as it may be deprecated or less relevant.
+    The decay is gradual (-10% per year by default) with a floor (50% by default)
+    to ensure old but still-valid code isn't completely buried.
+
+    Formula: factor = max(min_factor, 1.0 - decay_rate * years_old)
+
+    Args:
+        last_modified: Unix timestamp of last file modification (from files.last_modified)
+        now: Current timestamp (defaults to time.time())
+        decay_rate: Score reduction per year (default: 0.1 = 10% per year)
+        min_factor: Minimum factor floor (default: 0.5 = 50% of original score)
+
+    Returns:
+        Staleness factor (0.5-1.0) to multiply with score
+
+    Example:
+        - File modified today → factor = 1.0
+        - File modified 1 year ago → factor = 0.9
+        - File modified 5 years ago → factor = 0.5 (floor)
+    """
+    if last_modified is None:
+        return 1.0  # No timestamp available, no penalty
+
+    if now is None:
+        now = int(time.time())
+
+    # Calculate age in years
+    age_seconds = now - last_modified
+    if age_seconds <= 0:
+        return 1.0  # Future timestamp or current = no decay
+
+    years_old = age_seconds / (365.25 * 24 * 60 * 60)
+
+    # Apply decay with floor
+    factor = 1.0 - (decay_rate * years_old)
+    return max(min_factor, factor)
+
+
+def calculate_importance_boost(
+    reference_count: int | None,
+    log_base: float = 2.0,
+    boost_factor: float = 0.1,
+    max_boost: float = 1.5,
+) -> float:
+    """
+    Calculate importance boost based on incoming reference count.
+
+    Frequently referenced symbols are boosted as they're likely more important
+    ("central" to the codebase). The boost is logarithmic to avoid extreme
+    scores for highly-referenced core utilities.
+
+    Formula: boost = min(max_boost, 1.0 + boost_factor * log2(1 + count))
+
+    Args:
+        reference_count: Number of incoming references (from symbols.reference_count)
+        log_base: Base for logarithmic scaling (default: 2.0)
+        boost_factor: Multiplier for log value (default: 0.1 = 10% per doubling)
+        max_boost: Maximum boost factor (default: 1.5 = 50% max increase)
+
+    Returns:
+        Importance boost factor (1.0-1.5) to multiply with score
+
+    Example:
+        - 0 references → boost = 1.0 (no boost)
+        - 1 reference → boost = 1.1
+        - 7 references → boost = 1.3
+        - 31 references → boost = 1.5 (capped)
+        - 1000 references → boost = 1.5 (capped)
+    """
+    if reference_count is None or reference_count <= 0:
+        return 1.0  # No references or missing data = no boost
+
+    # Logarithmic scaling: log2(1 + count) gives nice progression
+    # 1 ref = 1.0, 3 refs = 2.0, 7 refs = 3.0, 15 refs = 4.0, etc.
+    log_value = math.log(1 + reference_count, log_base)
+    boost = 1.0 + (boost_factor * log_value)
+
+    return min(max_boost, boost)
 
 
 def filter_low_quality_results(results: list[dict], min_score: float = 0.05) -> list[dict]:
@@ -192,21 +287,32 @@ def filter_low_quality_results(results: list[dict], min_score: float = 0.05) -> 
     return [r for r in results if r.get("score", 0.0) >= min_score]
 
 
-def apply_search_enhancements(results: list[dict], query: str, method: str) -> list[dict]:
+def apply_search_enhancements(
+    results: list[dict],
+    query: str,
+    method: str,
+    apply_data_quality: bool = False,
+) -> list[dict]:
     """
     Apply all search quality enhancements to results.
 
-    Enhancements applied:
+    Enhancements applied (in order):
     1. Field match boosting (name > signature > doc)
     2. Match position boosting (exact > prefix > suffix)
     3. Symbol kind weighting (functions/classes > variables)
-    4. Quality filtering (remove low scores)
-    5. Re-sort by enhanced scores
+    4. [Optional] Data quality adjustments (requires hydrated results):
+       - Staleness decay (older code slightly penalized)
+       - Importance boost (frequently referenced symbols boosted)
+    5. Quality filtering (remove low scores)
+    6. Re-sort by enhanced scores
 
     Args:
         results: Raw search results from FTS/vector search
         query: Original search query
         method: Search method used
+        apply_data_quality: If True, apply staleness/importance adjustments.
+                           Requires results to have 'last_modified' and 'reference_count'
+                           fields (from search hydration).
 
     Returns:
         Enhanced and re-ranked results
@@ -229,20 +335,67 @@ def apply_search_enhancements(results: list[dict], query: str, method: str) -> l
         result["score"] = score  # Update for kind weighting
         score = apply_kind_weighting(result)
 
-        # Store final enhanced score
+        # Store enhanced score
         result["score"] = score
 
-    # Re-normalize scores to 0.0-1.0 range after boosting
-    if results:
-        max_score = max(r.get("score", 0.0) for r in results)
-        if max_score > 0:
-            for r in results:
-                r["score"] = r["score"] / max_score
+    # NOTE: We intentionally do NOT re-normalize after boosting.
+    # Re-normalization would make every query's best result = 1.0,
+    # losing information about absolute match quality.
+    # A query for "xyz123notfound" should have lower scores than "run".
+    # Boost functions already cap at 1.0 with min(..., 1.0).
 
     # Filter low-quality results (remove noise)
-    results = filter_low_quality_results(results, min_score=0.05)
+    # Use a higher threshold since scores aren't re-normalized
+    results = filter_low_quality_results(results, min_score=0.1)
 
     # Re-sort by enhanced scores
+    results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+
+    return results
+
+
+def apply_data_quality_enhancements(results: list[dict]) -> list[dict]:
+    """
+    Apply data quality enhancements based on staleness and importance.
+
+    This is called AFTER hydration (when results have 'last_modified' and
+    'reference_count' from SQLite) and AFTER initial search enhancements.
+
+    Adjustments:
+    - Staleness decay: Older files are slightly penalized (-10% per year, min 50%)
+    - Importance boost: Highly-referenced symbols are boosted (up to +50%)
+
+    These are intentionally conservative to avoid burying legitimate old code
+    or over-promoting popular utilities.
+
+    Args:
+        results: Hydrated search results with last_modified and reference_count
+
+    Returns:
+        Results with adjusted scores, re-sorted
+    """
+    if not results:
+        return results
+
+    current_time = int(time.time())
+
+    for result in results:
+        score = result.get("score", 0.0)
+
+        # Apply staleness decay (penalize old code slightly)
+        last_modified = result.get("last_modified")
+        staleness_factor = calculate_staleness_factor(last_modified, now=current_time)
+        score *= staleness_factor
+
+        # Apply importance boost (boost frequently-referenced symbols)
+        reference_count = result.get("reference_count")
+        importance_boost = calculate_importance_boost(reference_count)
+        score *= importance_boost
+
+        # Cap at 1.0 after all adjustments
+        result["score"] = min(score, 1.0)
+
+    # Re-sort by adjusted scores
     results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
     return results

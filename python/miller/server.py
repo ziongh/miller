@@ -58,6 +58,9 @@ from miller.tools_wrappers import (
     trace_call_path,
     fast_explore,
     rename_symbol,
+    get_architecture_map,
+    validate_imports,
+    find_similar_implementation,
 )
 
 
@@ -74,6 +77,11 @@ mcp.tool(output_schema=None)(fast_explore)     # Returns text string (default: t
 
 # Register refactoring tools
 mcp.tool(output_schema=None)(rename_symbol)  # Returns text/JSON (default: text)
+
+# Register agent tooling (architecture/validation/similarity)
+mcp.tool(output_schema=None)(get_architecture_map)       # Returns mermaid/ascii/json (default: mermaid)
+mcp.tool(output_schema=None)(validate_imports)           # Returns validation report text
+mcp.tool(output_schema=None)(find_similar_implementation)  # Returns similarity report text
 
 # Register memory tools
 # output_schema=None ensures raw string output (not JSON wrapped)
@@ -121,6 +129,9 @@ __all__ = [
     "checkpoint",
     "recall",
     "plan",
+    "get_architecture_map",
+    "validate_imports",
+    "find_similar_implementation",
 ]
 
 
@@ -179,6 +190,15 @@ def main_http(host: str = None, port: int = None):
         port: Port to listen on (default: 8765, or MILLER_PORT env var)
     """
     import os
+
+    # Enable console logging for HTTP mode
+    # Unlike STDIO mode, HTTP doesn't use stdout/stdin for the MCP protocol,
+    # so it's safe to log to stderr for visibility
+    setup_logging(console=True)
+
+    # Enable visual progress bars for HTTP mode
+    # This allows tqdm-style progress bars on stderr during indexing
+    server_state.console_mode = True
 
     # Support environment variable configuration
     host = host or os.environ.get("MILLER_HOST", "127.0.0.1")

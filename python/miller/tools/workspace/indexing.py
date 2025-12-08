@@ -1,8 +1,10 @@
 """Workspace indexing operations."""
 
+import asyncio
 from pathlib import Path
 from typing import Optional
 
+from miller import server_state
 from miller.workspace_registry import WorkspaceRegistry
 
 from .helpers import index_workspace_and_update_registry
@@ -14,9 +16,12 @@ async def handle_index(
     """
     Handle index operation - index current or specified workspace.
 
+    IMPORTANT: Uses SHARED instances from server_state for unified database architecture.
+    All workspaces share the same SQLite database and LanceDB vector store.
+
     Behavior (aligned with Julie):
     - If workspace already indexed and force=False: returns "already indexed" message
-    - If force=True: clears and rebuilds index from scratch
+    - If force=True: clears THIS workspace's data and rebuilds (NOT all workspaces!)
     - Registers workspace if not already registered
 
     Args:
@@ -27,14 +32,16 @@ async def handle_index(
     Returns:
         Indexing result message
     """
-    from miller.embeddings import EmbeddingManager, VectorStore
-    from miller.storage import StorageManager
     from miller.workspace import WorkspaceScanner
-    from miller.workspace_paths import (
-        ensure_workspace_directories,
-        get_workspace_db_path,
-        get_workspace_vector_path,
-    )
+    from miller.workspace_paths import ensure_miller_directories
+
+    # CRITICAL: Use shared instances from server_state for unified database architecture
+    if not server_state.storage or not server_state.embeddings or not server_state.vector_store:
+        return "Error: Server not fully initialized. Please wait for initialization to complete."
+
+    storage = server_state.storage
+    embeddings = server_state.embeddings
+    vector_store = server_state.vector_store
 
     # Determine workspace path
     if path:
@@ -66,50 +73,37 @@ async def handle_index(
         )
         workspace_type = "primary"
 
-    # Ensure workspace directories exist
-    ensure_workspace_directories(workspace_id)
+    # Ensure .miller directory exists (unified database goes here)
+    ensure_miller_directories()
 
-    # Get workspace-specific paths
-    db_path = get_workspace_db_path(workspace_id)
-    vector_path = get_workspace_vector_path(workspace_id)
-
-    # Check if already indexed (has symbols) when not forcing
+    # Check if already indexed (has symbols for THIS workspace) when not forcing
     if not force:
-        if db_path.exists():
-            import sqlite3
+        cursor = storage.conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM symbols WHERE workspace_id = ?",
+            (workspace_id,)
+        )
+        symbol_count = cursor.fetchone()[0]
 
-            try:
-                conn = sqlite3.connect(str(db_path))
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM symbols")
-                symbol_count = cursor.fetchone()[0]
-                conn.close()
+        if symbol_count > 0:
+            return (
+                f"✅ Workspace already indexed: {workspace_path}\n"
+                f"  {symbol_count:,} symbols\n"
+                f"  Use force=True to rebuild index."
+            )
 
-                if symbol_count > 0:
-                    return (
-                        f"✅ Workspace already indexed: {workspace_path}\n"
-                        f"  {symbol_count:,} symbols\n"
-                        f"  Use force=True to rebuild index."
-                    )
-            except Exception:
-                pass  # DB doesn't exist or is empty, proceed with indexing
-
-    # Initialize components for indexing
-    embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="auto")
-    storage = StorageManager(db_path=str(db_path))
-    vector_store = VectorStore(db_path=str(vector_path), embeddings=embeddings)
-
-    # If force=True, clear existing data from both SQLite and LanceDB
+    # If force=True, clear existing data for THIS WORKSPACE ONLY (not all workspaces!)
     if force:
-        storage.clear_all()
-        vector_store.clear_all()
+        storage.clear_workspace(workspace_id)
+        vector_store.clear_workspace(workspace_id)
 
-    # Create scanner
+    # Create scanner for this workspace (uses shared storage/embeddings/vector_store)
     scanner = WorkspaceScanner(
         workspace_root=workspace_path,
         storage=storage,
         embeddings=embeddings,
         vector_store=vector_store,
+        workspace_id=workspace_id,
     )
 
     # Run indexing
@@ -117,18 +111,24 @@ async def handle_index(
         stats = await scanner.index_workspace()
 
         # Compute transitive closure for reachability queries
-        import asyncio
         from miller.closure import compute_transitive_closure
 
         closure_count = await asyncio.to_thread(
             compute_transitive_closure, storage, 10
         )
 
-        # Get final counts
+        # Get final counts for THIS workspace only
         cursor = storage.conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM symbols")
+        cursor.execute(
+            "SELECT COUNT(*) FROM symbols WHERE workspace_id = ?",
+            (workspace_id,)
+        )
         symbol_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(DISTINCT file_path) FROM symbols")
+
+        cursor.execute(
+            "SELECT COUNT(DISTINCT file_path) FROM files WHERE workspace_id = ?",
+            (workspace_id,)
+        )
         file_count = cursor.fetchone()[0]
 
         # Update registry with stats
@@ -158,9 +158,7 @@ async def handle_index(
 
         result.append("\nReady for search and navigation!")
 
-        storage.close()
         return "\n".join(result)
 
     except Exception as e:
-        storage.close()
         return f"❌ Indexing failed: {e}"

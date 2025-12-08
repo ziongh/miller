@@ -7,6 +7,7 @@ Provides keyword, pattern, semantic, and hybrid search across indexed codebases.
 import logging
 from typing import Any, Literal, Optional, Union
 
+from miller.embeddings.search_enhancements import apply_data_quality_enhancements
 from miller.tools.search_filters import apply_file_pattern_filter, apply_language_filter
 
 logger = logging.getLogger("miller.search")
@@ -23,6 +24,8 @@ async def fast_search(
     expand_limit: int = 5,
     language: Optional[str] = None,
     file_pattern: Optional[str] = None,
+    kind_filter: Optional[list[str]] = None,
+    use_mrl: Optional[bool] = None,
     # These are injected by server.py
     vector_store=None,
     storage=None,
@@ -84,6 +87,18 @@ async def fast_search(
                 When True, each result includes a 'context' field with direct callers
                 and callees. Enables "understanding, not just locations".
         expand_limit: Maximum callers/callees to include per result (default: 5).
+        kind_filter: Optional list of symbol kinds to filter by (e.g., ["class", "function"]).
+                    When None (default), intent is auto-detected from query:
+                    - "how is X defined?" → filters to class/struct/function/etc.
+                    - "where is X used?" → filters to variable/parameter/field/etc.
+                    - Ambiguous queries → no filtering (returns all kinds)
+                    Use this to manually override intent detection if needed.
+        use_mrl: Override Matryoshka Representation Learning (MRL) for this search.
+                - None: Use server default (configurable via MILLER_USE_MRL env var)
+                - True: Force MRL enabled (faster: short-vector retrieval + re-ranking)
+                - False: Force MRL disabled (more accurate: direct full-vector search)
+                MRL provides ~10x faster search with similar accuracy for large datasets.
+                Disable for small datasets or when maximum accuracy is critical.
         vector_store: VectorStore instance (injected by server)
         storage: StorageManager instance (injected by server)
         embeddings: EmbeddingManager instance (injected by server)
@@ -132,7 +147,7 @@ async def fast_search(
         )
 
         # Search in workspace-specific store
-        results = workspace_vector_store.search(query, method=method, limit=limit)
+        results = workspace_vector_store.search(query, method=method, limit=limit, kind_filter=kind_filter, use_mrl=use_mrl)
 
         # Hydrate with full data from workspace-specific SQLite
         from miller.storage import StorageManager
@@ -146,11 +161,16 @@ async def fast_search(
             active_storage = workspace_storage
     else:
         # Use default vector store (primary workspace)
-        results = vector_store.search(query, method=method, limit=limit)
+        results = vector_store.search(query, method=method, limit=limit, kind_filter=kind_filter, use_mrl=use_mrl)
 
         # Hydrate with full data from primary workspace SQLite
         if storage is not None:
             results = _hydrate_search_results(results, storage)
+
+    # Apply data quality enhancements (staleness decay + importance boost)
+    # This uses last_modified and reference_count from hydration
+    if results:
+        results = apply_data_quality_enhancements(results)
 
     # Re-rank results using cross-encoder (skip for pattern search - exact match)
     # Pattern search uses FTS which already has precise ranking
@@ -181,10 +201,11 @@ async def fast_search(
         else:
             logger.info(f"🔄 Text search max score ({max_score:.2f}) below threshold ({LOW_SCORE_THRESHOLD}), attempting semantic fallback")
         # Try semantic search as fallback
+        # Preserve kind_filter and use_mrl in fallback to maintain consistent behavior
         if workspace_vector_store is not None:
-            results = workspace_vector_store.search(query, method="semantic", limit=limit)
+            results = workspace_vector_store.search(query, method="semantic", limit=limit, kind_filter=kind_filter, use_mrl=use_mrl)
         else:
-            results = vector_store.search(query, method="semantic", limit=limit)
+            results = vector_store.search(query, method="semantic", limit=limit, kind_filter=kind_filter, use_mrl=use_mrl)
 
         # Hydrate semantic results
         if results:
@@ -192,6 +213,9 @@ async def fast_search(
                 results = _hydrate_search_results(results, workspace_storage)
             elif storage is not None:
                 results = _hydrate_search_results(results, storage)
+
+            # Apply data quality enhancements to semantic fallback results too
+            results = apply_data_quality_enhancements(results)
 
             # Apply filters to semantic results too
             if language is not None:

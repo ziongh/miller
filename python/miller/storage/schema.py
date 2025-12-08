@@ -32,7 +32,13 @@ def _normalize_path(path: str) -> str:
 
 def enable_wal(conn: sqlite3.Connection) -> None:
     """
-    Enable Write-Ahead Logging for concurrent access.
+    Enable Write-Ahead Logging with aggressive performance tuning.
+
+    Optimizations for high-throughput identifier writes:
+    - Larger autocheckpoint (~40MB) reduces checkpoint frequency
+    - Memory mapping reduces read I/O during heavy writes
+    - Temp tables in RAM avoid disk spills
+    - Longer busy timeout prevents lock failures
 
     Args:
         conn: SQLite connection
@@ -49,11 +55,68 @@ def enable_wal(conn: sqlite3.Connection) -> None:
             f"Failed to enable WAL mode (got '{mode}'). This filesystem may not support WAL."
         )
 
-    # Set busy timeout (wait up to 5 seconds for locks)
-    conn.execute("PRAGMA busy_timeout = 5000")
-
-    # Set synchronous to NORMAL (safe with WAL, faster than FULL)
+    # SYNCHRONOUS = NORMAL: Safe with WAL, writes pass to OS cache without force-flush
     conn.execute("PRAGMA synchronous = NORMAL")
+
+    # AUTOCHECKPOINT: Default is 1000 pages (~4MB). We use 10000 (~40MB).
+    # Checkpoints happen less often but in larger, more efficient batches.
+    conn.execute("PRAGMA wal_autocheckpoint = 10000")
+
+    # MMAP: Allow SQLite to access DB as if it were RAM (512MB mapping).
+    # Greatly reduces read I/O lag during heavy writes.
+    conn.execute(f"PRAGMA mmap_size = {512 * 1024 * 1024}")
+
+    # BUSY TIMEOUT: Wait up to 10 seconds for locks (longer for big transactions)
+    conn.execute("PRAGMA busy_timeout = 10000")
+
+    # TEMP STORE: Keep temp tables/indices in RAM, not disk
+    conn.execute("PRAGMA temp_store = MEMORY")
+
+
+def migrate_schema(conn: sqlite3.Connection) -> None:
+    """
+    Apply schema migrations to existing databases.
+
+    This handles adding new columns that weren't in the original schema.
+    SQLite's CREATE TABLE IF NOT EXISTS won't modify existing tables,
+    so we need explicit ALTER TABLE statements.
+
+    Args:
+        conn: SQLite connection
+    """
+    cursor = conn.cursor()
+
+    # Helper to check if column exists in a table
+    def has_column(table: str, column: str) -> bool:
+        cursor.execute(f"PRAGMA table_info({table})")
+        return column in {row[1] for row in cursor.fetchall()}
+
+    # Helper to check if table exists
+    def table_exists(table: str) -> bool:
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,)
+        )
+        return cursor.fetchone() is not None
+
+    # Check if symbols table exists
+    if not table_exists("symbols"):
+        return  # Table doesn't exist yet, will be created fresh
+
+    # Add reference_count column if missing (added for importance-based sorting)
+    if not has_column("symbols", "reference_count"):
+        cursor.execute("ALTER TABLE symbols ADD COLUMN reference_count INTEGER DEFAULT 0")
+
+    # Migration: Add workspace_id columns (for unified multi-workspace database)
+    # All existing data gets 'primary' as default workspace
+    tables_needing_workspace_id = ["files", "symbols", "identifiers", "relationships"]
+    for table in tables_needing_workspace_id:
+        if table_exists(table) and not has_column(table, "workspace_id"):
+            cursor.execute(
+                f"ALTER TABLE {table} ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'primary'"
+            )
+
+    conn.commit()
 
 
 def create_indexes(conn: sqlite3.Connection) -> None:
@@ -87,10 +150,49 @@ def create_indexes(conn: sqlite3.Connection) -> None:
         # These optimize queries like: WHERE target_id IN (...) AND min_distance = 1
         "CREATE INDEX IF NOT EXISTS idx_reach_target_dist ON reachability(target_id, min_distance)",
         "CREATE INDEX IF NOT EXISTS idx_reach_source_dist ON reachability(source_id, min_distance)",
+        # Reference count index for importance-based sorting
+        "CREATE INDEX IF NOT EXISTS idx_symbols_refcount ON symbols(reference_count DESC)",
+        # Workspace indexes (for filtering by workspace and efficient workspace deletion)
+        "CREATE INDEX IF NOT EXISTS idx_files_workspace ON files(workspace_id)",
+        "CREATE INDEX IF NOT EXISTS idx_symbols_workspace ON symbols(workspace_id)",
+        "CREATE INDEX IF NOT EXISTS idx_identifiers_workspace ON identifiers(workspace_id)",
+        "CREATE INDEX IF NOT EXISTS idx_relationships_workspace ON relationships(workspace_id)",
     ]
 
     for index_sql in indexes:
         conn.execute(index_sql)
+
+
+def drop_identifier_indexes(conn: sqlite3.Connection) -> None:
+    """
+    Temporarily drop identifier indexes for faster bulk inserts.
+
+    During massive scans (>1000 files), updating indexes on each insert
+    is slower than:
+    1. Drop indexes
+    2. Bulk insert all data
+    3. Re-create indexes once
+
+    Args:
+        conn: SQLite connection
+    """
+    conn.execute("DROP INDEX IF EXISTS idx_identifiers_name")
+    conn.execute("DROP INDEX IF EXISTS idx_identifiers_file")
+    conn.execute("DROP INDEX IF EXISTS idx_identifiers_containing")
+    conn.commit()
+
+
+def restore_identifier_indexes(conn: sqlite3.Connection) -> None:
+    """
+    Re-create identifier indexes after bulk inserts.
+
+    Args:
+        conn: SQLite connection
+    """
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_identifiers_name ON identifiers(name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_identifiers_file ON identifiers(file_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_identifiers_containing ON identifiers(containing_symbol_id)")
+    conn.commit()
 
 
 def initialize_schema(conn: sqlite3.Connection) -> None:
@@ -101,9 +203,11 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         conn: SQLite connection
     """
     # Files table
+    # path format: "{workspace_id}:{relative_path}" for global uniqueness
     conn.execute("""
         CREATE TABLE IF NOT EXISTS files (
             path TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'primary',
             language TEXT NOT NULL,
             hash TEXT NOT NULL,
             size INTEGER NOT NULL,
@@ -115,9 +219,11 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
     """)
 
     # Symbols table (core data)
+    # workspace_id denormalized for efficient filtering
     conn.execute("""
         CREATE TABLE IF NOT EXISTS symbols (
             id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'primary',
             name TEXT NOT NULL,
             kind TEXT NOT NULL,
             language TEXT NOT NULL,
@@ -138,7 +244,8 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             last_indexed INTEGER DEFAULT 0,
             semantic_group TEXT,
             confidence REAL DEFAULT 1.0,
-            content_type TEXT DEFAULT NULL
+            content_type TEXT DEFAULT NULL,
+            reference_count INTEGER DEFAULT 0
         )
     """)
 
@@ -146,6 +253,7 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS identifiers (
             id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'primary',
             name TEXT NOT NULL,
             kind TEXT NOT NULL,
             language TEXT NOT NULL,
@@ -165,9 +273,12 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
     """)
 
     # Relationships table
+    # Note: from_symbol_id and to_symbol_id can be from DIFFERENT workspaces!
+    # This enables cross-workspace call tracing.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS relationships (
             id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'primary',
             from_symbol_id TEXT NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
             to_symbol_id TEXT NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
@@ -188,6 +299,9 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (source_id, target_id)
         )
     """)
+
+    # Apply migrations for existing databases (adds new columns if needed)
+    migrate_schema(conn)
 
     # Create indexes
     create_indexes(conn)

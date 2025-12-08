@@ -150,8 +150,8 @@ class TestFullWorkflow:
 
         # Step 1: Initialize components (like server.py does)
         storage = StorageManager(":memory:")
-        embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         scanner = WorkspaceScanner(
             workspace_root=integration_workspace,
@@ -239,8 +239,8 @@ class TestMCPServerLifecycle:
 
         # Simulate server startup
         storage = StorageManager(":memory:")
-        embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         scanner = WorkspaceScanner(
             integration_workspace, storage, embeddings, vector_store
@@ -319,8 +319,8 @@ class TestEdgeCases:
         binary_file.write_bytes(b"\x00\x01\x02\xFF\xFE")
 
         storage = StorageManager(":memory:")
-        embeddings = EmbeddingManager(device="cpu")
-        vector_store = VectorStore(db_path=":memory:")
+        embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+        vector_store = VectorStore(db_path=":memory:", embeddings=embeddings)
 
         scanner = WorkspaceScanner(
             integration_workspace, storage, embeddings, vector_store

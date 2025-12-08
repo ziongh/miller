@@ -163,8 +163,9 @@ def _compute_semantic_similarity(name1: str, name2: str, embeddings) -> float:
         import numpy as np
 
         # Generate embeddings for both names
-        vec1 = embeddings.embed_query(name1)
-        vec2 = embeddings.embed_query(name2)
+        # Use task="similarity" for Code→Code comparison (Jina paper requirement)
+        vec1 = embeddings.embed_query(name1, task="similarity")
+        vec2 = embeddings.embed_query(name2, task="similarity")
 
         # Compute cosine similarity (vectors should already be normalized)
         similarity = float(np.dot(vec1, vec2))
@@ -228,8 +229,9 @@ def semantic_neighbors(
     searchable_text = " ".join(text_parts)
 
     # Generate embedding for the source symbol
+    # Use task="similarity" for Code→Code neighbor search (Jina paper requirement)
     try:
-        query_vector = embeddings.embed_query(searchable_text)
+        query_vector = embeddings.embed_query(searchable_text, task="similarity")
     except Exception as e:
         logger.debug(f"Failed to embed symbol for semantic search: {e}")
         return []

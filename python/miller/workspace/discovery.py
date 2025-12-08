@@ -141,7 +141,11 @@ def scan_workspace(
         language = miller_core.detect_language(str(file_path))
         if language:
             indexable_files.append(file_path)
-            all_paths.add(rel_str)
+            # Only add to all_paths if file will actually be indexed
+            # Text files are discovered (for vendor detection) but not indexed,
+            # so they shouldn't be tracked for incremental indexing checks
+            if language != "text":
+                all_paths.add(rel_str)
 
             # Track max mtime while we're here
             try:

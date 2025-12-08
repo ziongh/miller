@@ -473,3 +473,222 @@ class Derived(Base):
 
         old_sym = storage.get_symbol_by_name("old_func")
         assert old_sym is None
+
+
+class TestCrossBatchForeignKeys:
+    """Test handling of cross-batch foreign key references.
+
+    When indexing large codebases in batches, relationships may reference
+    symbols that are in different batches (not yet indexed or in a later batch).
+    The incremental_update_atomic function must handle these gracefully.
+    """
+
+    def test_relationships_with_invalid_target_are_filtered(self):
+        """Test that relationships referencing non-existent symbols are skipped."""
+        from miller.storage import StorageManager
+        from miller.storage.mutations import incremental_update_atomic
+        from unittest.mock import MagicMock
+
+        storage = StorageManager(":memory:")
+
+        # Create mock symbols for file1
+        sym1 = MagicMock()
+        sym1.id = "sym_func1"
+        sym1.name = "func1"
+        sym1.kind = "function"
+        sym1.signature = "def func1()"
+        sym1.file_path = "file1.py"
+        sym1.start_line = 1
+        sym1.end_line = 2
+        sym1.parent_id = None
+        sym1.language = "python"
+        sym1.doc_comment = None
+        sym1.code_context = None
+
+        # Create a relationship pointing to a non-existent symbol
+        rel = MagicMock()
+        rel.id = "rel_1"
+        rel.from_symbol_id = "sym_func1"  # Exists in this batch
+        rel.to_symbol_id = "sym_nonexistent"  # Does NOT exist
+        rel.kind = "calls"
+        rel.file_path = "file1.py"
+        rel.line_number = 1
+
+        # Call incremental_update_atomic
+        result = incremental_update_atomic(
+            conn=storage.conn,
+            files_to_clean=[],
+            file_data=[("file1.py", "python", "def func1(): pass", "hash1", 17)],
+            symbols=[sym1],
+            identifiers=[],
+            relationships=[rel],
+        )
+
+        # Relationship should be skipped, not cause FK error
+        assert result["relationships_added"] == 0
+        assert result["relationships_skipped"] == 1
+        assert result["symbols_added"] == 1
+
+    def test_relationships_with_valid_refs_are_inserted(self):
+        """Test that relationships with valid symbol refs are inserted correctly."""
+        from miller.storage import StorageManager
+        from miller.storage.mutations import incremental_update_atomic
+        from unittest.mock import MagicMock
+
+        storage = StorageManager(":memory:")
+
+        # Create two mock symbols
+        sym1 = MagicMock()
+        sym1.id = "sym_func1"
+        sym1.name = "func1"
+        sym1.kind = "function"
+        sym1.signature = "def func1()"
+        sym1.file_path = "file1.py"
+        sym1.start_line = 1
+        sym1.end_line = 2
+        sym1.parent_id = None
+        sym1.language = "python"
+        sym1.doc_comment = None
+        sym1.code_context = None
+
+        sym2 = MagicMock()
+        sym2.id = "sym_func2"
+        sym2.name = "func2"
+        sym2.kind = "function"
+        sym2.signature = "def func2()"
+        sym2.file_path = "file1.py"
+        sym2.start_line = 4
+        sym2.end_line = 5
+        sym2.parent_id = None
+        sym2.language = "python"
+        sym2.doc_comment = None
+        sym2.code_context = None
+
+        # Create a valid relationship
+        rel = MagicMock()
+        rel.id = "rel_1"
+        rel.from_symbol_id = "sym_func2"  # Exists
+        rel.to_symbol_id = "sym_func1"  # Exists
+        rel.kind = "calls"
+        rel.file_path = "file1.py"
+        rel.line_number = 5
+
+        result = incremental_update_atomic(
+            conn=storage.conn,
+            files_to_clean=[],
+            file_data=[("file1.py", "python", "code", "hash1", 100)],
+            symbols=[sym1, sym2],
+            identifiers=[],
+            relationships=[rel],
+        )
+
+        assert result["relationships_added"] == 1
+        assert "relationships_skipped" not in result or result["relationships_skipped"] == 0
+
+    def test_identifiers_with_invalid_containing_symbol_are_skipped(self):
+        """Test that identifiers with invalid containing_symbol_id are skipped."""
+        from miller.storage import StorageManager
+        from miller.storage.mutations import incremental_update_atomic
+        from unittest.mock import MagicMock
+
+        storage = StorageManager(":memory:")
+
+        sym1 = MagicMock()
+        sym1.id = "sym_func1"
+        sym1.name = "func1"
+        sym1.kind = "function"
+        sym1.signature = "def func1()"
+        sym1.file_path = "file1.py"
+        sym1.start_line = 1
+        sym1.end_line = 2
+        sym1.parent_id = None
+        sym1.language = "python"
+        sym1.doc_comment = None
+        sym1.code_context = None
+
+        # Create identifier with invalid containing_symbol_id
+        ident = MagicMock()
+        ident.id = "ident_1"
+        ident.name = "some_var"
+        ident.kind = "variable"
+        ident.language = "python"
+        ident.file_path = "file1.py"
+        ident.start_line = 2
+        ident.start_column = 5
+        ident.end_line = 2
+        ident.end_column = 13
+        ident.start_byte = 10
+        ident.end_byte = 18
+        ident.containing_symbol_id = "sym_nonexistent"  # Invalid!
+        ident.target_symbol_id = None
+        ident.confidence = 1.0
+        ident.code_context = None
+
+        result = incremental_update_atomic(
+            conn=storage.conn,
+            files_to_clean=[],
+            file_data=[("file1.py", "python", "code", "hash1", 100)],
+            symbols=[sym1],
+            identifiers=[ident],
+            relationships=[],
+        )
+
+        assert result["identifiers_added"] == 0
+        assert result["identifiers_skipped"] == 1
+
+    def test_identifier_target_set_to_null_if_invalid(self):
+        """Test that target_symbol_id is set to NULL if it references invalid symbol."""
+        from miller.storage import StorageManager
+        from miller.storage.mutations import incremental_update_atomic
+        from unittest.mock import MagicMock
+
+        storage = StorageManager(":memory:")
+
+        sym1 = MagicMock()
+        sym1.id = "sym_func1"
+        sym1.name = "func1"
+        sym1.kind = "function"
+        sym1.signature = "def func1()"
+        sym1.file_path = "file1.py"
+        sym1.start_line = 1
+        sym1.end_line = 3
+        sym1.parent_id = None
+        sym1.language = "python"
+        sym1.doc_comment = None
+        sym1.code_context = None
+
+        # Create identifier with valid containing but invalid target
+        ident = MagicMock()
+        ident.id = "ident_1"
+        ident.name = "external_func"
+        ident.kind = "call"
+        ident.language = "python"
+        ident.file_path = "file1.py"
+        ident.start_line = 2
+        ident.start_column = 5
+        ident.end_line = 2
+        ident.end_column = 18
+        ident.start_byte = 25
+        ident.end_byte = 38
+        ident.containing_symbol_id = "sym_func1"  # Valid
+        ident.target_symbol_id = "sym_external"  # Invalid - from another file
+        ident.confidence = 1.0
+        ident.code_context = None
+
+        result = incremental_update_atomic(
+            conn=storage.conn,
+            files_to_clean=[],
+            file_data=[("file1.py", "python", "code", "hash1", 100)],
+            symbols=[sym1],
+            identifiers=[ident],
+            relationships=[],
+        )
+
+        # Identifier should be inserted (containing is valid)
+        assert result["identifiers_added"] == 1
+
+        # But target_symbol_id should be NULL
+        cursor = storage.conn.cursor()
+        cursor.execute("SELECT target_symbol_id FROM identifiers WHERE id = ?", ("ident_1",))
+        row = cursor.fetchone()
+        assert row[0] is None
