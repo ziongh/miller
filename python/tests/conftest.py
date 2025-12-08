@@ -109,7 +109,8 @@ def vector_store():
     temp_dir = Path(tempfile.mkdtemp(prefix="miller_vector_test_"))
     db_path = temp_dir / "vectors.lance"
 
-    store = VectorStore(db_path=str(db_path), expected_dim=384)
+    # Use Jina model dimension (896D) - this is the default EmbeddingManager model
+    store = VectorStore(db_path=str(db_path), expected_dim=896)
     yield store
 
     # Cleanup
@@ -147,9 +148,10 @@ def clean_server_storage():
     server_state.storage = StorageManager(db_path=":memory:")
 
     # Initialize embeddings manager if not already initialized (expensive operation)
+    # Use Jina model (896D) for consistency with default EmbeddingManager
     if server_state.embeddings is None:
         from miller.embeddings import EmbeddingManager
-        server_state.embeddings = EmbeddingManager(model_name="BAAI/bge-small-en-v1.5", device="cpu")
+        server_state.embeddings = EmbeddingManager(device="cpu")  # Uses default Jina model
 
     # Create vector store with embeddings (for correct dimension)
     server_state.vector_store = VectorStore(db_path=":memory:", embeddings=server_state.embeddings)

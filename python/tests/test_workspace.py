@@ -107,21 +107,25 @@ class TestFileDiscovery:
         # Should NOT include files from node_modules
         assert not any("node_modules" in str(f) for f in files)
 
-    def test_walk_directory_filters_by_supported_languages(self, test_workspace, storage_manager, vector_store):
-        """Test that only supported file types are returned."""
+    def test_walk_directory_includes_text_files(self, test_workspace, storage_manager, vector_store):
+        """Test that text files (without parsers) ARE included for file-level indexing.
+
+        Since file-level indexing was added, files without tree-sitter parsers
+        are still indexed as "text" type for FTS/semantic search.
+        """
         from miller.workspace import WorkspaceScanner
         from miller.embeddings import EmbeddingManager
 
-        # Add an unsupported file type
-        (test_workspace / "data.xyz").write_text("unsupported")
+        # Add a text file type (no tree-sitter parser)
+        (test_workspace / "data.xyz").write_text("some content")
 
         embeddings = EmbeddingManager(device="cpu")
 
         scanner = WorkspaceScanner(test_workspace, storage_manager, embeddings, vector_store)
         files = scanner._walk_directory()
 
-        # Should not include unsupported file
-        assert not any(f.suffix == ".xyz" for f in files)
+        # Text files should be included for file-level indexing
+        assert any(f.suffix == ".xyz" for f in files)
 
 
 class TestChangeDetection:
@@ -513,15 +517,16 @@ class TestIncrementalIndexing:
         assert stats["deleted"] == 1
 
         # Verify symbols were removed from SQLite (CASCADE)
+        # Paths are now workspace-qualified (e.g., "primary:src/utils.py")
         files = storage_manager.get_all_files()
-        assert not any(f["path"] == str(deleted_file) for f in files)
+        qualified_path = "primary:src/utils.py"
+        assert not any(f["path"] == qualified_path for f in files)
 
         # CRITICAL: Verify symbols were also removed from LanceDB vector store
         # This is the bug - deletions only hit SQLite, not LanceDB
         results = vector_store.search(query="utils", method="text", limit=100)
-        deleted_path = "src/utils.py"
-        assert not any(r.get("file_path") == deleted_path for r in results), \
-            f"Found stale vector for deleted file {deleted_path} in LanceDB"
+        assert not any(r.get("file_path") == qualified_path for r in results), \
+            f"Found stale vector for deleted file {qualified_path} in LanceDB"
 
 
 class TestSingleFileIndexing:
@@ -559,10 +564,10 @@ class TestSingleFileIndexing:
         # Should succeed
         assert result is True
 
-        # File should be in database
+        # File should be in database (paths are now workspace-qualified)
         files = storage_manager.get_all_files()
         file_paths = [f["path"] for f in files]
-        assert "src/single.py" in file_paths
+        assert "primary:src/single.py" in file_paths
 
     @pytest.mark.asyncio
     async def test_index_file_updates_existing_file(self, test_workspace, storage_manager, vector_store):
@@ -578,9 +583,9 @@ class TestSingleFileIndexing:
         test_file.write_text("def original(): pass")
         await scanner._index_file(test_file)
 
-        # Get original symbol count
+        # Get original symbol count (paths are workspace-qualified)
         cursor = storage_manager.conn.execute(
-            "SELECT COUNT(*) FROM symbols WHERE file_path = ?", ("src/updatable.py",)
+            "SELECT COUNT(*) FROM symbols WHERE file_path = ?", ("primary:src/updatable.py",)
         )
         original_count = cursor.fetchone()[0]
 
@@ -590,7 +595,7 @@ class TestSingleFileIndexing:
 
         # Should have updated symbols (not duplicated)
         cursor = storage_manager.conn.execute(
-            "SELECT COUNT(*) FROM symbols WHERE file_path = ?", ("src/updatable.py",)
+            "SELECT COUNT(*) FROM symbols WHERE file_path = ?", ("primary:src/updatable.py",)
         )
         new_count = cursor.fetchone()[0]
 

@@ -13,6 +13,7 @@ background initialization and indexing.
 """
 
 import asyncio
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -284,7 +285,13 @@ async def _background_initialization_and_indexing():
         logger.info(f"✅ Imports complete ({time.time()-t0:.1f}s)")
 
         init_phase = "workspace_setup"
-        server_state.workspace_root = Path.cwd()
+        # Check for env var override (from MADS CLI)
+        env_workspace = os.environ.get("MILLER_WORKSPACE")
+        if env_workspace:
+            server_state.workspace_root = Path(env_workspace).resolve()
+        else:
+            server_state.workspace_root = Path.cwd()
+            
         logger.info(f"📁 Workspace root: {server_state.workspace_root}")
 
         # Register primary workspace first to get workspace_id

@@ -51,23 +51,47 @@ def find_references(
     # Handle qualified names (e.g., "Class.method")
     cursor = storage.conn.cursor()
     if "." in symbol_name:
-        # Qualified name: find methods/attributes with parent
-        parts = symbol_name.split(".", 1)
-        parent_name, child_name = parts[0], parts[1]
+        # Qualified name: find methods/attributes with parent/ancestor
+        # Use rsplit to handle "Namespace.Class.Method" -> ancestor="Namespace.Class", child="Method"
+        parts = symbol_name.rsplit(".", 1)
+        ancestor_path = parts[0]
+        child_name = parts[1]
+        
+        # We strictly check against the immediate component provided in the query
+        # e.g. "Akrual.PUDiario.Prop" -> look for Prop with ancestor PUDiario
+        ancestor_name = ancestor_path.rsplit(".", 1)[-1] if "." in ancestor_path else ancestor_path
 
-        # Find symbols where parent.name matches and child name matches
+        # Recursive CTE to find child symbol that has specific ancestor
         query = """
-            SELECT child.id
-            FROM symbols child
-            JOIN symbols parent ON child.parent_id = parent.id
-            WHERE parent.name = ? AND child.name = ?
+            WITH RECURSIVE Ancestors(id, parent_id, name, origin_id) AS (
+                -- Base case: symbols matching child name
+                SELECT s.id, s.parent_id, s.name, s.id
+                FROM symbols s
+                WHERE s.name = ?
+                CONTEXT_FILTER_PLACEHOLDER
+
+                UNION ALL
+
+                -- Recursive step: walk up the parent tree
+                SELECT p.id, p.parent_id, p.name, a.origin_id
+                FROM symbols p
+                JOIN Ancestors a ON p.id = a.parent_id
+            )
+            SELECT DISTINCT origin_id
+            FROM Ancestors
+            WHERE name = ?
         """
-        params = [parent_name, child_name]
-
+        
+        params = [child_name]
+        
         if context_file:
-            query += " AND child.file_path = ?"
+            query = query.replace("CONTEXT_FILTER_PLACEHOLDER", "AND s.file_path = ?")
             params.append(context_file)
-
+        else:
+            query = query.replace("CONTEXT_FILTER_PLACEHOLDER", "")
+            
+        params.append(ancestor_name)
+        
         cursor.execute(query, params)
     else:
         # Simple name: find all symbols with this name
@@ -129,7 +153,10 @@ def find_references(
         FROM identifiers i
         WHERE i.name = ?
     """
-    ident_params: List[Any] = [symbol_name]
+    # Note: For identifiers search, we always use the leaf name (child_name if qualified)
+    # Identifiers don't track parent info directly in the name
+    search_name = symbol_name.rsplit(".", 1)[-1] if "." in symbol_name else symbol_name
+    ident_params: List[Any] = [search_name]
 
     # Apply kind filter to identifiers if specified
     if kind_filter:
@@ -178,6 +205,11 @@ def find_references(
         file_path = row[3]
         line_number = row[4]
         kind = row[2]
+        
+        # Optional: Filter identifiers if we found specific symbol_ids
+        # Only include identifiers that match the resolved symbols? 
+        # Identifiers table doesn't link to definition symbol ID directly in all cases (target_symbol_id is optional/sparse).
+        # So we keep the name-based match for robustness.
 
         ref_key = (file_path, line_number)
         if ref_key in seen_refs:

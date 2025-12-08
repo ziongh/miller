@@ -150,6 +150,11 @@ async def index_file(
     """
     Index a single file (without timing instrumentation).
 
+    Uses incremental_update_atomic() for database writes to ensure:
+    1. Deferred FK constraint checking (parent_id can reference symbols in same batch)
+    2. Workspace-qualified paths (consistent with batch indexing)
+    3. Atomic rollback on any failure
+
     Handles two cases:
     1. Files with tree-sitter parsers: Full symbol extraction + embeddings
     2. Files without parsers (language="text"): File-level entry for FTS/semantic search
@@ -165,6 +170,8 @@ async def index_file(
     Returns:
         True if successful, False if error
     """
+    from ..workspace_paths import make_qualified_path
+
     if miller_core is None:
         return False
 
@@ -182,17 +189,11 @@ async def index_file(
         # Compute hash using Rust blake3 (3x faster than SHA-256)
         file_hash = miller_core.hash_content(content)
 
-        # Store file metadata (using relative path)
-        storage.add_file(
-            file_path=relative_path,
-            language=language,
-            content=content,
-            hash=file_hash,
-            size=len(content),
-        )
-
         # Check if this language has a tree-sitter parser
         has_parser = language in LANGUAGES_WITH_PARSERS
+
+        # Prepare file data tuple for atomic update
+        file_data = [(relative_path, language, content, file_hash, len(content))]
 
         if has_parser:
             # Full symbol extraction path
@@ -201,28 +202,44 @@ async def index_file(
             # Compute code context for grep-style search output
             code_context_map = compute_code_context(content, result.symbols) if result.symbols else {}
 
-            # Store symbols (with computed code_context)
-            if result.symbols:
-                storage.add_symbols_batch(result.symbols, code_context_map)
+            # Use atomic update for database writes
+            # This handles:
+            # - Deferred FK constraints (parent_id references work)
+            # - Workspace-qualified paths
+            # - Topological sorting of symbols
+            storage.incremental_update_atomic(
+                files_to_clean=[relative_path],  # Delete old data first
+                file_data=file_data,
+                symbols=result.symbols or [],
+                identifiers=result.identifiers or [],
+                relationships=result.relationships or [],
+                code_context_map=code_context_map,
+                workspace_id=workspace_id,
+            )
 
-            # Store identifiers
-            if result.identifiers:
-                storage.add_identifiers_batch(result.identifiers)
-
-            # Store relationships
-            if result.relationships:
-                storage.add_relationships_batch(result.relationships)
-
-            # Generate embeddings for symbols
+            # Generate embeddings for symbols and update vector store
             if result.symbols:
                 vectors = embeddings.embed_batch(result.symbols)
+                # Vector store needs qualified path to match SQLite
+                qualified_path = make_qualified_path(workspace_id, relative_path)
                 vector_store.update_file_symbols(
-                    relative_path, result.symbols, vectors, workspace_id=workspace_id
+                    qualified_path, result.symbols, vectors, workspace_id=workspace_id
                 )
         else:
             # File-level indexing path (no tree-sitter parser)
             # Create a synthetic file-level entry for FTS and semantic search
             logger.debug(f"File-level indexing for {relative_path} (language={language})")
+
+            # For text files, just update the file record (no symbols)
+            storage.incremental_update_atomic(
+                files_to_clean=[relative_path],
+                file_data=file_data,
+                symbols=[],
+                identifiers=[],
+                relationships=[],
+                code_context_map={},
+                workspace_id=workspace_id,
+            )
 
             file_symbol = FileSymbol.from_file(relative_path, content, language)
 
@@ -230,16 +247,17 @@ async def index_file(
             embed_content = content[:2048] if content else file_symbol.name
             vectors = embeddings.embed_texts([embed_content])
 
-            # Store in LanceDB with content for FTS
+            # Store in LanceDB with qualified path
+            qualified_path = make_qualified_path(workspace_id, relative_path)
             vector_store.update_file_symbols(
-                relative_path, [file_symbol], vectors, workspace_id=workspace_id
+                qualified_path, [file_symbol], vectors, workspace_id=workspace_id
             )
 
         return True
 
     except Exception as e:
         # Log error but continue with other files
-        logger.warning(f"Failed to index {file_path}: {e}")
+        logger.warning(f"Failed to index {file_path} (ws={workspace_id}): {e}")
         return False
 
 
@@ -253,6 +271,11 @@ async def index_file_timed(
 ) -> Tuple[bool, float, float, float]:
     """
     Index a single file with timing instrumentation.
+
+    Uses incremental_update_atomic() for database writes to ensure:
+    1. Deferred FK constraint checking (parent_id can reference symbols in same batch)
+    2. Workspace-qualified paths (consistent with batch indexing)
+    3. Atomic rollback on any failure
 
     Handles two cases:
     1. Files with tree-sitter parsers: Full symbol extraction + embeddings
@@ -269,6 +292,8 @@ async def index_file_timed(
     Returns:
         Tuple of (success, extraction_time, embedding_time, db_time)
     """
+    from ..workspace_paths import make_qualified_path
+
     if miller_core is None:
         return (False, 0.0, 0.0, 0.0)
 
@@ -285,67 +310,66 @@ async def index_file_timed(
         # Compute file hash using Rust blake3 (3x faster than SHA-256)
         file_hash = miller_core.hash_content(content)
 
-        # Phase 1: Database writes (file metadata)
-        db_start = time.time()
-
-        # Store file metadata
-        storage.add_file(
-            file_path=relative_path,
-            language=language,
-            content=content,
-            hash=file_hash,
-            size=len(content),
-        )
-
         # Check if this language has a tree-sitter parser
         has_parser = language in LANGUAGES_WITH_PARSERS
 
+        # Prepare file data tuple for atomic update
+        file_data = [(relative_path, language, content, file_hash, len(content))]
+
         extraction_time = 0.0
         embedding_time = 0.0
+        db_time = 0.0
 
         if has_parser:
-            db_time = time.time() - db_start
-
-            # Phase 1b: Tree-sitter extraction
+            # Phase 1: Tree-sitter extraction
             extraction_start = time.time()
             result = miller_core.extract_file(
                 content=content, language=language, file_path=relative_path
             )
             extraction_time = time.time() - extraction_start
 
-            # Phase 2: More database writes (symbols, identifiers, relationships)
-            db_start2 = time.time()
-
             # Compute code context for grep-style search output
             code_context_map = compute_code_context(content, result.symbols) if result.symbols else {}
 
-            # Store symbols (with computed code_context)
-            if result.symbols:
-                storage.add_symbols_batch(result.symbols, code_context_map)
-
-            # Store identifiers
-            if result.identifiers:
-                storage.add_identifiers_batch(result.identifiers)
-
-            # Store relationships
-            if result.relationships:
-                storage.add_relationships_batch(result.relationships)
-
-            db_time += time.time() - db_start2
+            # Phase 2: Atomic database writes (file + symbols + identifiers + relationships)
+            db_start = time.time()
+            storage.incremental_update_atomic(
+                files_to_clean=[relative_path],  # Delete old data first
+                file_data=file_data,
+                symbols=result.symbols or [],
+                identifiers=result.identifiers or [],
+                relationships=result.relationships or [],
+                code_context_map=code_context_map,
+                workspace_id=workspace_id,
+            )
+            db_time = time.time() - db_start
 
             # Phase 3: Generate embeddings for symbols
             if result.symbols:
                 embedding_start = time.time()
                 vectors = embeddings.embed_batch(result.symbols)
+                # Vector store needs qualified path to match SQLite
+                qualified_path = make_qualified_path(workspace_id, relative_path)
                 vector_store.update_file_symbols(
-                    relative_path, result.symbols, vectors, workspace_id=workspace_id
+                    qualified_path, result.symbols, vectors, workspace_id=workspace_id
                 )
                 embedding_time = time.time() - embedding_start
         else:
             # File-level indexing path (no tree-sitter parser)
-            db_time = time.time() - db_start
-
             logger.debug(f"File-level indexing for {relative_path} (language={language})")
+
+            # Phase 2: Atomic database write (file only, no symbols)
+            db_start = time.time()
+            storage.incremental_update_atomic(
+                files_to_clean=[relative_path],
+                file_data=file_data,
+                symbols=[],
+                identifiers=[],
+                relationships=[],
+                code_context_map={},
+                workspace_id=workspace_id,
+            )
+            db_time = time.time() - db_start
 
             file_symbol = FileSymbol.from_file(relative_path, content, language)
 
@@ -353,8 +377,10 @@ async def index_file_timed(
             embedding_start = time.time()
             embed_content = content[:2048] if content else file_symbol.name
             vectors = embeddings.embed_texts([embed_content])
+            # Store in LanceDB with qualified path
+            qualified_path = make_qualified_path(workspace_id, relative_path)
             vector_store.update_file_symbols(
-                relative_path, [file_symbol], vectors, workspace_id=workspace_id
+                qualified_path, [file_symbol], vectors, workspace_id=workspace_id
             )
             embedding_time = time.time() - embedding_start
 
