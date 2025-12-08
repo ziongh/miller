@@ -52,3 +52,7 @@ Thumbs.db
 # Debug scripts
 debug_*.py
 .venv-*/
+
+scripts/
+
+llm_extracted_content.txt
