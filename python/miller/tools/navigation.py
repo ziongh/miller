@@ -177,9 +177,17 @@ def _format_refs_as_text(result: dict[str, Any]) -> str:
             line = ref.get("line", 0)
             kind = ref.get("kind", "reference")
             context = ref.get("context")
-
-            # Format: file:line (kind)
-            output.append(f"  {file_path}:{line} ({kind})")
+            
+            # Format access type icon
+            access = ref.get("access", "unknown")
+            access_icon = ""
+            if access == "write":
+                access_icon = "[W] " # Write/Update
+            elif access == "read":
+                access_icon = "[R] " # Read/Access
+            
+            # Format: file:line (kind) [R/W]
+            output.append(f"  {file_path}:{line} ({kind}) {access_icon}")
 
             # Add context line if available
             if context:

@@ -268,8 +268,21 @@ async def _explore_dead_code(
                 OR name LIKE '%Endpoint'
                 OR name = '__init__'
                 OR name = '__main__'
+                -- Expanded entry points for ASP.NET / Razor / Frameworks
+                OR name IN ('Configure', 'ConfigureServices', 'Startup', 'Program')
+                OR name LIKE 'OnGet%'
+                OR name LIKE 'OnPost%'
+                OR name LIKE 'OnPut%'
+                OR name LIKE 'OnDelete%'
+                OR name LIKE 'OnInitialized%'
+                OR name IN ('Invoke', 'InvokeAsync')
+                OR file_path LIKE '%Program.cs'
+                OR file_path LIKE '%Startup.cs'
+                -- Razor pages are entry points
+                OR file_path LIKE '%.cshtml'
+                OR file_path LIKE '%.razor'
             )
-            AND kind IN ('function', 'method', 'class')
+            AND kind IN ('function', 'method', 'class', 'constructor')
         """)
         entry_points = [row[0] for row in cursor.fetchall()]
 
